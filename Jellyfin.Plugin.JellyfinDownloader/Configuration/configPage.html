@@ -2,6 +2,9 @@
 <html lang="zh-CN">
 <head>
   <title>Jellyfin Downloader</title>
+</head>
+<body>
+  <div id="JellyfinDownloaderConfigPage" data-role="page" class="page type-interior pluginConfigurationPage">
   <style>
     /* 统一节奏：每个配置项固定两行
        第一行 = 标题 + 状态/输入框/操作按钮
@@ -39,9 +42,6 @@
     /* 第二行里的整行输入框 */
     #JellyfinDownloaderConfigPage .emby-input.jdl-input-block { width: 100%; }
   </style>
-</head>
-<body>
-  <div id="JellyfinDownloaderConfigPage" data-role="page" class="page type-interior pluginConfigurationPage">
     <div data-role="content">
       <div class="content-primary">
         <form id="jdl-config-form">
@@ -108,10 +108,12 @@
         </form>
       </div>
     </div>
-  </div>
   <script type="text/javascript">
     (function () {
-      function q(id) { return document.querySelector('#' + id); }
+      // Jellyfin 的视图容器会轮转保留多份页面，必须把查找范围钉在本页 div 上，
+      // 否则 document.querySelector 可能命中隐藏的旧副本。
+      var root = (document.currentScript && document.currentScript.closest('[data-role="page"]')) || document;
+      function q(id) { return root.querySelector('#' + id); }
 
       if (!window.ApiClient || !ApiClient.ajax || !ApiClient.getUrl) {
         var statusNode = q('jdl-backend-status');
@@ -243,5 +245,6 @@
       load();
     })();
   </script>
+  </div>
 </body>
 </html>
