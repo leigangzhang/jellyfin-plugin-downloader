@@ -15,7 +15,12 @@
 
     #JellyfinDownloaderConfigPage .jdl-row + .jdl-row { margin-top: 6px; }
 
-    #JellyfinDownloaderConfigPage .jdl-row .inputLabel { margin: 0; }
+    /* 第一行的标签统一占位，后面的控件因此对齐到同一列 */
+    #JellyfinDownloaderConfigPage .jdl-row .inputLabel {
+      margin: 0;
+      flex: 0 0 96px;
+    }
+
     #JellyfinDownloaderConfigPage .jdl-row .fieldDescription { margin: 0; }
 
     #JellyfinDownloaderConfigPage .jdl-row__actions {
@@ -25,16 +30,10 @@
       flex-wrap: wrap;
     }
 
-    /* 第一行里的输入框：端口固定窄宽，其余随行宽伸缩 */
-    #JellyfinDownloaderConfigPage .emby-input.jdl-input-port {
-      width: 130px;
-      flex: 0 0 130px;
-    }
-
+    /* 第一行里的输入框：统一固定宽度，不随状态文案伸缩 */
     #JellyfinDownloaderConfigPage .emby-input.jdl-input-inline {
-      width: auto;
-      flex: 1 1 240px;
-      min-width: 160px;
+      width: 300px;
+      flex: 0 0 300px;
     }
 
     /* 第二行里的整行输入框 */
@@ -64,7 +63,7 @@
           <div class="inputContainer">
             <div class="jdl-row">
               <label class="inputLabel inputLabelUnfocused" for="jdl-port">端口</label>
-              <input id="jdl-port" type="number" min="1" max="65535" step="1" class="emby-input jdl-input-port" />
+              <input id="jdl-port" type="number" min="1" max="65535" step="1" class="emby-input jdl-input-inline" />
             </div>
             <div class="jdl-row">
               <span class="fieldDescription">后端在本机监听的端口，默认 8123；保存后会自动重启后端。</span>
@@ -75,13 +74,13 @@
             <div class="jdl-row">
               <label class="inputLabel inputLabelUnfocused" for="jdl-python">Python 解释器</label>
               <input id="jdl-python" type="text" class="emby-input jdl-input-inline" placeholder="留空 = 自动探测" />
-              <span id="jdl-python-line" class="fieldDescription"></span>
               <span class="jdl-row__actions">
                 <button id="jdl-python-install" type="button" is="emby-button" class="raised">安装 / 更换 Python</button>
               </span>
             </div>
             <div class="jdl-row">
               <span class="fieldDescription">留空自动探测（需 3.9+），也可手填路径。</span>
+              <span id="jdl-python-line" class="fieldDescription"></span>
             </div>
           </div>
 
