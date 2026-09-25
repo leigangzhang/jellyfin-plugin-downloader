@@ -105,7 +105,7 @@ cd jellyfin-plugin-downloader
 https://raw.githubusercontent.com/leigangzhang/jellyfin-plugin-downloader/main/manifest.json
 ```
 
-控制台 → 插件 → **仓库** → 添加上面这个地址 → 在插件目录里找到 **Jellyfin Downloader** → 安装 → 按提示重启 Jellyfin。这条路径不需要本机装 .NET SDK，安装包由 [Release v1.0.0.0](https://github.com/leigangzhang/jellyfin-plugin-downloader/releases/tag/v1.0.0.0) 提供（`sourceUrl` + `checksum` 已填好）。
+控制台 → 插件 → **仓库** → 添加上面这个地址 → 在插件目录里找到 **Jellyfin Downloader** → 安装 → 按提示重启 Jellyfin。这条路径不需要本机装 .NET SDK，安装包由 [Releases](https://github.com/leigangzhang/jellyfin-plugin-downloader/releases/latest) 提供（`manifest.json` 里的 `sourceUrl` + `checksum` 已填好）。
 
 > 两条路径等价：源码构建适合改完代码自测，插件仓库适合装在别的机器上或图省事。
 
