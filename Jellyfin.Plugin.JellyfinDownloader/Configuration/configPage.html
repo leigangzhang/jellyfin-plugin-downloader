@@ -16,6 +16,10 @@
               <button id="jdl-backend-restart" type="button" is="emby-button" class="raised">重启后端</button>
             </div>
             <div id="jdl-backend-diag" class="fieldDescription" style="margin-top:6px"></div>
+            <div id="jdl-python-line" class="fieldDescription" style="margin-top:6px"></div>
+            <div id="jdl-python-install-wrap" style="display:none;margin-top:6px">
+              <button id="jdl-python-install" type="button" is="emby-button" class="raised">安装 Python</button>
+            </div>
             <div class="fieldDescription">后端随插件启用自动启动，无需手动开启；如启动失败或异常，可在这里查看状态并「重启后端」。</div>
           </div>
 
@@ -54,7 +58,7 @@
 
       function q(id) { return document.querySelector('#' + id); }
 
-      if (!window.ApiClient || !ApiClient.getPluginConfiguration) {
+      if (!window.ApiClient || !ApiClient.ajax || !ApiClient.getUrl) {
         var statusNode = q('jdl-backend-status');
         if (statusNode) {
           statusNode.textContent = '请从 控制台 → 插件 → Jellyfin Downloader 打开本页（独立打开时缺少 ApiClient）';
@@ -80,6 +84,28 @@
         if (window.Dashboard && Dashboard.alert) { Dashboard.alert(message); }
       }
 
+      // Python：探到就把「路径 + 版本 + 来源」直接展示出来；没探到才露「安装 Python」
+      function renderPython(status) {
+        var line = q('jdl-python-line');
+        var wrap = q('jdl-python-install-wrap');
+        if (!line) { return; }
+        var found = status && (status.pythonFound || status.pythonOk);
+        if (found && status.pythonOk) {
+          line.textContent = 'Python：' + status.python
+            + (status.pythonVersion ? '（' + status.pythonVersion + '，' + status.pythonSource + '）' : '（' + status.pythonSource + '）');
+          if (wrap) { wrap.style.display = 'none'; }
+          return;
+        }
+        if (found && !status.pythonOk) {
+          line.textContent = '检测到 ' + status.python
+            + (status.pythonVersion ? '（' + status.pythonVersion + '）' : '')
+            + '，但后端需要 Python 3.9 或更高版本。';
+        } else {
+          line.textContent = '未检测到可用的 python3（后端需要 3.9+）。';
+        }
+        if (wrap) { wrap.style.display = ''; }
+      }
+
       function renderStatus(status) {
         var text = q('jdl-backend-status');
         var diag = q('jdl-backend-diag');
@@ -89,6 +115,7 @@
         parts.push(status.managed ? '插件管理' : (status.running ? '外部进程' : '—'));
         text.textContent = parts.join(' · ');
         diag.textContent = '监听端口 ' + (status.port || '?');
+        renderPython(status);
         var media = q('jdl-media-root');
         if (media) {
           var libs = (status.mediaLibraryPaths || []).join('、');
@@ -107,7 +134,7 @@
       }
 
       function load() {
-        ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+        ajax('GET', 'config').then(function (config) {
           q('jdl-port').value = config.BackendPort || 8123;
           q('jdl-staging').value = config.StagingRoot || '';
           q('jdl-media').value = config.MediaRoot || '';
@@ -117,16 +144,11 @@
         });
       }
 
-      function collect(config) {
-        config.BackendPort = parseInt(q('jdl-port').value, 10) || 8123;
-        config.StagingRoot = (q('jdl-staging').value || '').trim();
-        config.MediaRoot = (q('jdl-media').value || '').trim();
-        return config;
-      }
-
       function save() {
-        return ApiClient.getPluginConfiguration(pluginId).then(function (config) {
-          return ApiClient.updatePluginConfiguration(pluginId, collect(config));
+        return ajax('POST', 'config', {
+          BackendPort: parseInt(q('jdl-port').value, 10) || 8123,
+          StagingRoot: (q('jdl-staging').value || '').trim(),
+          MediaRoot: (q('jdl-media').value || '').trim()
         });
       }
 
@@ -146,6 +168,24 @@
       q('jdl-backend-refresh').addEventListener('click', function () {
         q('jdl-backend-status').textContent = '刷新中…';
         refreshStatus();
+      });
+
+      q('jdl-python-install').addEventListener('click', function () {
+        var line = q('jdl-python-line');
+        line.textContent = '正在准备安装…';
+        ajax('POST', 'python/install', {}).then(function (result) {
+          if (result && result.status) { renderPython(result.status); }
+          var lines = [(result && result.detail) || '已给出安装指引'];
+          if (result && result.command) { lines.push('推荐命令：' + result.command); }
+          if (result && result.url) { lines.push('下载页：' + result.url); }
+          line.textContent = lines.join('　·　');
+          if (result && result.options && result.options.length) {
+            line.textContent += '　（可选：' + result.options.join('；') + '）';
+          }
+          setTimeout(refreshStatus, 2000);
+        }).catch(function (error) {
+          line.textContent = '安装指引获取失败：' + (error && error.status ? error.status : '网络错误');
+        });
       });
 
       q('jdl-backend-restart').addEventListener('click', function () {
