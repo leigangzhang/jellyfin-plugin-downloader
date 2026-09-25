@@ -34,10 +34,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 JF="${JMD_JELLYFIN_ROOT:-$HOME/Library/Application Support/jellyfin}"
-PLUGIN_DIR_NAME="JellyfinDownloader_1.0.0.0"
+PLUGIN_DIR_NAME="JellyfinDownloader_1.0.0.0"            # 源码 install.sh 装出来的目录名
+PLUGIN_DIR_NAME_CATALOG="Jellyfin Downloader_1.0.0.0"    # Jellyfin 插件仓库装出来的目录名（取显示名，带空格）
 PLUGIN_GUID="b7f3e2a1-6c4d-4e9b-9a21-7d5c8e1f0a33"
 PLUGIN_VERSION="1.0.0.0"
-DEST="${JF}/plugins/${PLUGIN_DIR_NAME}"
 CONF_DIR="${JF}/plugins/configurations"
 CONF="${CONF_DIR}/Jellyfin.Plugin.JellyfinDownloader.xml"
 BACKEND_LOG="${CONF_DIR}/jellyfin-downloader-backend.log"
@@ -87,6 +87,21 @@ SNAP="${BACKUP_ROOT}/jellyfin-downloader-uninstall-${TS}"
 [ -d "$JF" ] || die "Jellyfin 数据根不存在：${JF}"
 
 jellyfin_running() { pgrep -f "/Applications/Jellyfin.app/Contents/MacOS" >/dev/null 2>&1; }
+
+# 已安装的插件目录（两种来源都认）：以 meta.json 里的 guid 为准，目录名变了也能找到；
+# meta.json 缺失/损坏时回退到两个已知目录名。
+plugin_dirs() {
+  local d
+  {
+    for d in "${JF}/plugins"/*/; do
+      [ -f "${d}meta.json" ] || continue
+      if grep -q "${PLUGIN_GUID}" "${d}meta.json" 2>/dev/null; then printf '%s\n' "${d%/}"; fi
+    done
+    for d in "${JF}/plugins/${PLUGIN_DIR_NAME}" "${JF}/plugins/${PLUGIN_DIR_NAME_CATALOG}"; do
+      if [ -d "$d" ]; then printf '%s\n' "$d"; fi
+    done
+  } | sort -u
+}
 http() { curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$1" 2>/dev/null || echo 000; }
 body() { curl -s --max-time 8 "$1" 2>/dev/null || true; }
 
@@ -101,7 +116,7 @@ check() { if [ "$2" = "$3" ]; then ok "$1" "$3"; else bad "$1" "$2" "$3"; fi; }
 
 do_checks() { # $1 = normal | verify
   local mode="$1"
-  local conf_left inj resid script_code style_code manifest_code
+  local conf_left inj resid script_code style_code manifest_code dirs
   conf_left="$(ls "$CONF_DIR" 2>/dev/null | grep -ci 'jellyfindownloader\|jellyfin-downloader' || true)"
   resid="$(grep -ril --exclude-dir=log --exclude='*.db*' --exclude='system.xml' \
             "jellyfindownloader\|${PLUGIN_GUID}" "$JF" 2>/dev/null | wc -l | tr -d ' ' || true)"
@@ -113,9 +128,10 @@ do_checks() { # $1 = normal | verify
     inj="$(body "${BASE_URL}/web/index.html" | grep -c 'JellyfinDownloader' || true)"
   fi
 
+  dirs="$(plugin_dirs)"
   say "自检"
   # --- 文件层面：卸载动作是否真落盘（任何时候都必须过）---
-  check "插件目录已删除"                          "absent" "$([ -d "$DEST" ] && echo present || echo absent)"
+  check "插件目录已删除"                          "absent" "$([ -z "$dirs" ] && echo absent || echo "present: $(printf '%s' "$dirs" | tr '\n' ' ')")"
   check "插件配置/后端日志残留数"                  "0"      "${conf_left:-0}"
   if [ "$SKIP_HTTP" = 1 ]; then
     note "HTTP 检查（图标/注入）" "已按 JMD_SKIP_HTTP=1 跳过"
@@ -172,7 +188,11 @@ if [ "$DRY_RUN" = 1 ]; then
   say "DRY-RUN：只显示计划，不修改任何文件、不碰任何进程"
   if jellyfin_running; then JF_STATE="运行中（本脚本不会停它、也不会重启它）"; else JF_STATE="未运行"; fi
   info "Jellyfin        : ${JF_STATE}"
-  info "插件目录        : ${DEST} $([ -d "$DEST" ] && echo '(存在，将删除)' || echo '(不存在)')"
+  if [ -n "$(plugin_dirs)" ]; then
+    info "插件目录        : $(plugin_dirs | tr '\n' ' ')（存在，将删除）"
+  else
+    info "插件目录        : （不存在）"
+  fi
   info "插件配置        : ${CONF} $([ -f "$CONF" ] && echo '(存在，将删除)' || echo '(不存在)')"
   info "配置备份/后端日志: ${CONF_DIR} 下 Jellyfin.Plugin.JellyfinDownloader.xml.bak-*、jellyfin-downloader-backend.log"
   if [ -f "$SYS" ] && grep -qi jellyfindownloader "$SYS"; then REPO_STATE="存在"; else REPO_STATE="不存在"; fi
@@ -202,17 +222,19 @@ else
   say "留档改前内容（回滚用）"
   mkdir -p "${SNAP}/removed-config" "${SNAP}/pre-clean-config" "${SNAP}/plugin" "${SNAP}/legacy"
   SNAP_ITEMS=0
-  if [ -d "$DEST" ]; then
+  while IFS= read -r d; do
+    [ -n "$d" ] || continue
+    name="$(basename "$d")"
     if [ "$PURGE_DATA" = 1 ]; then
-      run ditto --norsrc --noextattr "$DEST" "${SNAP}/plugin/${PLUGIN_DIR_NAME}" 2>/dev/null \
-        || run cp -R "$DEST" "${SNAP}/plugin/${PLUGIN_DIR_NAME}"
-      info "插件本体已留档（--purge-data：运行数据不留）"
+      run ditto --norsrc --noextattr "$d" "${SNAP}/plugin/${name}" 2>/dev/null \
+        || run cp -R "$d" "${SNAP}/plugin/${name}"
+      info "插件本体已留档（--purge-data：运行数据不留）：${name}"
     else
-      run ditto "$DEST" "${SNAP}/plugin/${PLUGIN_DIR_NAME}"
-      info "插件本体 + 运行数据（backend/state）已留档"
+      run ditto "$d" "${SNAP}/plugin/${name}"
+      info "插件本体 + 运行数据（backend/state）已留档：${name}"
     fi
     SNAP_ITEMS=$((SNAP_ITEMS + 1))
-  fi
+  done < <(plugin_dirs)
   for f in "$CONF" "$BACKEND_LOG" "${CONF}".bak-*; do
     if [ -f "$f" ]; then run cp -p "$f" "${SNAP}/removed-config/"; SNAP_ITEMS=$((SNAP_ITEMS + 1)); fi
   done
@@ -225,7 +247,10 @@ else
     SNAP_ITEMS=$((SNAP_ITEMS + 1))
   fi
   if [ "$PURGE_DATA" = 1 ]; then
-    run rm -rf "${SNAP}/plugin/${PLUGIN_DIR_NAME}/backend/state"
+    while IFS= read -r d; do
+      [ -n "$d" ] || continue
+      run rm -rf "${SNAP}/plugin/$(basename "$d")/backend/state"
+    done < <(plugin_dirs)
   fi
   if [ "$SNAP_ITEMS" -gt 0 ]; then
     ( cd "$SNAP" && find . -type f ! -name 'MANIFEST.sha256' -print0 | sort -z | xargs -0 shasum -a 256 > MANIFEST.sha256 ) || true
@@ -239,13 +264,18 @@ fi
 # 2. 删插件目录（运行中的 Jellyfin 已把 DLL 映射进内存，删文件不影响它继续服务）
 # ---------------------------------------------------------------------------
 say "删除插件目录"
-if [ -d "$DEST" ]; then
-  run rm -rf "$DEST"
-  info "已删除 ${DEST}"
-else
-  info "${DEST} 本就不存在（Jellyfin 后台卸载按钮已删）"
+DELETED=0
+while IFS= read -r d; do
+  [ -n "$d" ] || continue
+  run rm -rf "$d"
+  info "已删除 ${d}"
+  DELETED=1
+done < <(plugin_dirs)
+if [ "$DELETED" = 0 ]; then
+  info "没有已安装的插件目录（Jellyfin 后台卸载按钮可能已删掉）"
 fi
-for d in "${JF}/plugins/${PLUGIN_DIR_NAME}".* "${JF}/plugins/.${PLUGIN_DIR_NAME}"*; do
+for d in "${JF}/plugins/${PLUGIN_DIR_NAME}".* "${JF}/plugins/.${PLUGIN_DIR_NAME}"* \
+         "${JF}/plugins/${PLUGIN_DIR_NAME_CATALOG}".* "${JF}/plugins/.${PLUGIN_DIR_NAME_CATALOG}"*; do
   if [ -e "$d" ]; then warn "发现残留目录 $d"; run rm -rf "$d"; fi
 done
 
