@@ -1,0 +1,16 @@
+{
+  "category": "General",
+  "changelog": "初始版本：详情页「获取资源」入口，搜索+打分后列出 ≥60 分候选。",
+  "description": "在电影/剧集/单集详情页提供「获取资源」入口（仅管理员）。",
+  "guid": "b7f3e2a1-6c4d-4e9b-9a21-7d5c8e1f0a33",
+  "name": "Jellyfin Downloader",
+  "overview": "详情页「获取资源」：搜索源、打分，列出 ≥60 分候选。",
+  "owner": "ray",
+  "targetAbi": "10.11.11.0",
+  "timestamp": "2026-09-24T00:00:00.0000000Z",
+  "version": "1.0.0.0",
+  "status": "Active",
+  "autoUpdate": false,
+  "imagePath": "/Users/ray/Library/Application Support/jellyfin/plugins/JellyfinDownloader_1.0.0.0/icon.png",
+  "assemblies": []
+}

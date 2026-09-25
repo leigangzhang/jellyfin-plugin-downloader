@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>Jellyfin Downloader</title>
+</head>
+<body>
+  <div id="JellyfinDownloaderConfigPage" data-role="page" class="page type-interior pluginConfigurationPage">
+    <div data-role="content">
+      <div class="content-primary">
+        <form id="jdl-config-form">
+          <div class="inputContainer">
+            <label class="inputLabel inputLabelUnfocused">后端服务</label>
+            <div style="display:flex;align-items:center;gap:14px;margin-top:6px;flex-wrap:wrap">
+              <span id="jdl-backend-status" class="fieldDescription" style="margin:0">读取中…</span>
+              <button id="jdl-backend-refresh" type="button" is="emby-button" class="raised">刷新状态</button>
+              <button id="jdl-backend-restart" type="button" is="emby-button" class="raised">重启后端</button>
+            </div>
+            <div id="jdl-backend-diag" class="fieldDescription" style="margin-top:6px"></div>
+            <div class="fieldDescription">后端随插件启用自动启动，无需手动开启；如启动失败或异常，可在这里查看状态并「重启后端」。</div>
+          </div>
+
+          <div class="inputContainer">
+            <label class="inputLabel inputLabelUnfocused" for="jdl-port">端口</label>
+            <input id="jdl-port" type="number" min="1" max="65535" step="1" class="emby-input" />
+            <div class="fieldDescription">后端监听端口，默认 8123。</div>
+          </div>
+
+          <div class="inputContainer">
+            <label class="inputLabel inputLabelUnfocused" for="jdl-staging">暂存目录</label>
+            <input id="jdl-staging" type="text" class="emby-input" placeholder="留空 = /Volumes/XIAOMI SSD2/.staging" />
+            <div class="fieldDescription">下载先落到这里（半成品不污染媒体库），验证通过后再归档进库。留空使用后端默认值。改完保存后点「重启后端」生效。</div>
+          </div>
+
+          <div class="inputContainer">
+            <label class="inputLabel inputLabelUnfocused">媒体库落点</label>
+            <div id="jdl-media-root" class="fieldDescription" style="margin:6px 0 0">读取中…</div>
+            <div class="fieldDescription">落点由 Jellyfin 的媒体库配置解析：取各库路径的公共父目录作为根，下面按 Movies / TV Shows / Shows / Records 分类。只读，想改就去改 Jellyfin 的库路径。</div>
+          </div>
+
+          <button id="jdl-save" type="button" is="emby-button" class="raised button-submit block">保存</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  <script type="text/javascript">
+    (function () {
+      var pluginId = 'b7f3e2a1-6c4d-4e9b-9a21-7d5c8e1f0a33';
+
+      function q(id) { return document.querySelector('#' + id); }
+
+      if (!window.ApiClient || !ApiClient.getPluginConfiguration) {
+        var statusNode = q('jdl-backend-status');
+        if (statusNode) {
+          statusNode.textContent = '请从 控制台 → 插件 → Jellyfin Downloader 打开本页（独立打开时缺少 ApiClient）';
+        }
+        return;
+      }
+
+      function pluginUrl(path) {
+        var base = '/JellyfinDownloader/' + path;
+        return window.ApiClient && ApiClient.getUrl ? ApiClient.getUrl(base) : base;
+      }
+
+      function ajax(type, path, data) {
+        var options = { type: type, url: pluginUrl(path), dataType: 'json' };
+        if (data !== undefined) {
+          options.data = JSON.stringify(data);
+          options.contentType = 'application/json';
+        }
+        return ApiClient.ajax(options);
+      }
+
+      function note(message) {
+        if (window.Dashboard && Dashboard.alert) { Dashboard.alert(message); }
+      }
+
+      function renderStatus(status) {
+        var text = q('jdl-backend-status');
+        var diag = q('jdl-backend-diag');
+        if (!status) { text.textContent = '状态未知'; return; }
+        var parts = [status.running ? '运行中' : '已停止'];
+        if (status.pid) { parts.push('pid ' + status.pid); }
+        parts.push(status.managed ? '插件管理' : (status.running ? '外部进程' : '—'));
+        text.textContent = parts.join(' · ');
+        diag.textContent = '监听端口 ' + (status.port || '?');
+        var media = q('jdl-media-root');
+        if (media) {
+          var libs = (status.mediaLibraryPaths || []).join('、');
+          media.textContent = '库根：' + (status.mediaRoot || '?')
+            + '（' + (status.mediaRootSource || '未知来源') + '）'
+            + '；暂存：' + (status.stagingRoot || '?')
+            + (status.stagingConfigured ? '（配置页指定）' : '（默认）')
+            + (libs ? '；读到库路径：' + libs : '');
+        }
+      }
+
+      function refreshStatus() {
+        return ajax('GET', 'backend/status').then(renderStatus).catch(function (error) {
+          q('jdl-backend-status').textContent = '状态读取失败：' + (error && error.status ? error.status : '网络错误');
+        });
+      }
+
+      function load() {
+        ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+          q('jdl-port').value = config.BackendPort || 8123;
+          q('jdl-staging').value = config.StagingRoot || '';
+          return refreshStatus();
+        }).catch(function (error) {
+          q('jdl-backend-status').textContent = '配置读取失败：' + (error && error.status ? error.status : '网络错误');
+        });
+      }
+
+      function collect(config) {
+        config.BackendPort = parseInt(q('jdl-port').value, 10) || 8123;
+        config.StagingRoot = (q('jdl-staging').value || '').trim();
+        return config;
+      }
+
+      function save() {
+        return ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+          return ApiClient.updatePluginConfiguration(pluginId, collect(config));
+        });
+      }
+
+      q('jdl-save').addEventListener('click', function () {
+        q('jdl-backend-status').textContent = '保存中…';
+        save().then(function () {
+          if (window.Dashboard && Dashboard.processPluginConfigurationUpdateResult) {
+            Dashboard.processPluginConfigurationUpdateResult();
+          }
+          q('jdl-backend-status').textContent = '已保存，正在刷新状态…';
+          return refreshStatus();
+        }).catch(function (error) {
+          q('jdl-backend-status').textContent = '保存失败：' + (error && error.status ? error.status : '网络错误');
+        });
+      });
+
+      q('jdl-backend-refresh').addEventListener('click', function () {
+        q('jdl-backend-status').textContent = '刷新中…';
+        refreshStatus();
+      });
+
+      q('jdl-backend-restart').addEventListener('click', function () {
+        q('jdl-backend-status').textContent = '重启中…';
+        ajax('POST', 'backend/restart', {}).then(function (result) {
+          if (result && result.detail) { note(result.detail); }
+          renderStatus(result && result.status);
+        }).catch(function (error) {
+          q('jdl-backend-status').textContent = '重启失败：' + (error && error.status ? error.status : '网络错误');
+          refreshStatus();
+        });
+      });
+
+      load();
+    })();
+  </script>
+</body>
+</html>
