@@ -1,0 +1,21 @@
+[
+  {
+    "guid": "b7f3e2a1-6c4d-4e9b-9a21-7d5c8e1f0a33",
+    "name": "Jellyfin Downloader",
+    "description": "在电影 / 剧集 / 单集详情页提供「获取资源」入口（仅管理员）。",
+    "overview": "详情页「获取资源」：搜索源、打分，列出 ≥60 分候选。",
+    "owner": "ray",
+    "category": "General",
+    "imageUrl": "https://raw.githubusercontent.com/leigangzhang/jellyfin-plugin-downloader/main/icon.png",
+    "versions": [
+      {
+        "version": "1.0.0.0",
+        "changelog": "初始版本：详情页「获取资源」入口，搜索+打分后列出 ≥60 分候选。",
+        "targetAbi": "10.11.11.0",
+        "sourceUrl": "https://github.com/leigangzhang/jellyfin-plugin-downloader/releases/download/v1.0.0.0/JellyfinDownloader_1.0.0.0.zip",
+        "checksum": "3152c96bd6010d008dc96cec56524fa5",
+        "timestamp": "2026-09-25T06:38:00.0000000Z"
+      }
+    ]
+  }
+]
