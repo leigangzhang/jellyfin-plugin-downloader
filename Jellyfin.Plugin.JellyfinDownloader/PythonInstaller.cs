@@ -27,9 +27,20 @@ public static class PythonInstaller
             };
 
             var (started, message) = TryRun("/usr/bin/xcode-select", "--install");
-            var detail = started
-                ? "已弹出「安装命令行开发者工具」对话框：确认安装后系统会提供 /usr/bin/python3（无需 sudo）。装完回到本页点「刷新状态」。"
-                : "未能自动唤出安装对话框（" + message + "）。可以手动执行下面的命令，或从 python.org 下载安装包。";
+            string detail;
+            if (started)
+            {
+                detail = "已弹出「安装命令行开发者工具」对话框：确认安装后系统会提供 /usr/bin/python3（无需 sudo）。装完回到本页点「刷新状态」。";
+            }
+            else if (message.Contains("already installed", StringComparison.OrdinalIgnoreCase))
+            {
+                // 按钮常驻后，在已装好的机器上点它属于正常情况，别报成错误
+                detail = "本机的命令行开发者工具已安装，/usr/bin/python3 可以直接用。要装更新的版本，可以用下面的命令或 python.org 安装包。";
+            }
+            else
+            {
+                detail = "未能自动唤出安装对话框（" + message + "）。可以手动执行下面的命令，或从 python.org 下载安装包。";
+            }
 
             return (started, detail, "xcode-select --install", "https://www.python.org/downloads/macos/", options);
         }
