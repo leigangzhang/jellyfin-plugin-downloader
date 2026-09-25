@@ -11,5 +11,8 @@ __pycache__/
 # 运行时数据：pool / watches / pan / marks / snapshots 由插件自己维护，不入库
 backend/state/
 
+# 插件备份归档（本地快照，不入库）
+backups/
+
 # macOS
 .DS_Store

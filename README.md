@@ -1,124 +1,220 @@
-# Jellyfin Downloader 插件
+# Jellyfin Downloader
 
-在 Jellyfin 电影 / 剧集 / 单集详情页注入「获取资源」按钮（仅管理员）：触发本机搜索与打分，列出 ≥60 分候选，支持复制磁力 / 提交迅雷 / 后台监控（云盘候选可打开分享页）。风格与 Jellyfin 原生一致。
+把「找资源 → 打分 → 交给迅雷下载 → 校验 → 归档进媒体库」整条链路，搬进 Jellyfin 自己的详情页。
 
-## 结构
+装好之后，电影 / 剧集 / 单集详情页会多出一个 **「获取资源」** 按钮（仅管理员可见）。点一下：插件从多个来源收集候选（磁力 + 迅雷云盘分享），按统一权重打分排序，列出达到阈值的结果；你挑一个提交，剩下的（下载监控、六层校验、规范命名、归档到媒体库、刷新媒体库）都由后端自动完成。全程不用离开 Jellyfin。
+
+> 这是一个"真" .NET 插件（`net9.0`，targetAbi `10.11.11.0`），**自带一份零第三方依赖的 Python 后端**。后端脚本是从作者本人的下载 skill 里剥离出来的自包含副本，随插件目录走，不依赖任何外部 skill 或额外安装。
+
+---
+
+## 功能一览
+
+| 能力 | 说明 |
+|---|---|
+| 详情页入口 | 电影 / 剧集 / 单集页面的「获取资源」按钮，仅管理员可见（前端隐藏 + 后端校验双重把关） |
+| 多来源候选 | 按优先级逐级降级：结构化搜索 API → 浏览器发现 → 本地 Pansou 实例（可选）；磁力与迅雷云盘分享同池比较 |
+| 统一打分 | `100 × (0.34·画质 + 0.28·下载速度 + 0.26·观看体验 + 0.12·适配成本)`，候选全量排名，**不按规则硬淘汰** |
+| 面板决策 | 面板里列出每个候选的总分与四维拆解（画质/速度/体验/适配）、体积、码率、字幕、片源，可调最低分阈值 |
+| 分季抓取 | 剧集页先拉季列表；选定季后再抓，快照按 `<剧名>.sNN.*.json` 分季存放，切季不重复搜索 |
+| 严格按季 | 默认开启：搜索只带季关键词，并隐藏没标季号的候选与同名噪音条目 |
+| 实测速度 | 可对头部候选做短测，把实测吞吐写回分数后重新排名（实测只影响"速度"分，不越过画质与体验） |
+| 提交与监控 | 提交到迅雷、在线改保存路径与选片、测真实 ETA，不合格只清理本次任务；合格则启动后台 watcher |
+| 六层校验 | `ffprobe` 流信息 → 三段抽样解码 → 集号/残片/重复大文件 → Jellyfin 数据库对账 → 临时文件与结构卫生 → 硬字幕启发式 |
+| 自动归档 | 校验通过后按 `剧名 S01E01.ext` / `片名 (年份).ext` 规范命名，同盘原子移动到媒体库并触发库刷新 |
+| 云盘通道 | 迅雷云盘分享链接作为一等候选：转存前按标题粗排，转存后用本机云盘缓存里的真实文件清单精排 |
+
+---
+
+## 它是怎么工作的
 
 ```
-Jellyfin.Plugin.JellyfinDownloader/
-├── Plugin.cs                      # IPlugin + IHasWebPages（配置页）
-├── PluginServiceRegistrator.cs    # 注册注入中间件
-├── BackendManager.cs              # 后端进程启停与状态
-├── Middleware/                    # 改写 /web/index.html，追加 script/style
-├── Controllers/                   # /JellyfinDownloader/{script,style,config,api/**}
-├── Configuration/                 # 插件配置 + 配置页 HTML
-└── Web/                           # inject.js / style.css（内嵌资源）
-backend/                           # 自带独立后端（16 个 py，已与 skill 剥离）
-meta.json                          # targetAbi 10.11.11.0
+┌──────────────────────── Jellyfin（8096）────────────────────────┐
+│  jellyfin-web/index.html                                        │
+│      ▲ 请求时由中间件追加 <script>/<link>                        │
+│      │                                                          │
+│  JellyfinDownloaderController                                   │
+│    /JellyfinDownloader/script|style     内嵌的 inject.js / css  │
+│    /JellyfinDownloader/config|seasons   配置与季列表            │
+│    /JellyfinDownloader/backend/*        后端进程管理            │
+│    /JellyfinDownloader/python/*         Python 探测与安装       │
+│    /JellyfinDownloader/api/{**path} ────┐ 同源代理，无需 CORS   │
+│    /JellyfinDownloader/manifest.json    └ 可选：本地插件仓库    │
+└─────────────────────────────────────────┼───────────────────────┘
+                                          ▼
+                      Python 后端 127.0.0.1:8123（仅本机）
+                      console_server.py（标准库 http.server，零依赖）
+                        /api/search      建候选池 + 打分排名
+                        /api/snapshot    面板快照（任务/候选/标记）
+                        /api/submit      提交迅雷
+                        /api/watch       起 watcher（下载→校验→归档）
+                        /api/verify      手工复验
+                        /api/cleanup     清理残留
+                        /api/pan/*       云盘转存/取回状态机
+                        /api/mark        人工标记
+                        /api/publish     面板产物发布/回滚
+                                          │
+                        后端脚本（backend/*.py）│
+                        ├─ 迅雷数据库 / 云盘缓存（只读）
+                        ├─ aria2c（种子元数据、测速）
+                        └─ ffprobe/ffmpeg（媒体验证）
 ```
 
-`backend/` 是插件的独立后端：含 `console_server.py`、`build_console.py` 及其依赖的
-14 个脚本（candidate_score / media_download_lib / probe_magnets / search_pool /
-pan_* / submit_xunlei / watch_download / verify_media / cleanup_download …）。
-入口与依赖同目录，`MAIN_SCRIPTS` 指向自身，**不再引用 `~/.agents/skills`**；
+要点：
 
-## 数据（插件自持，与 skill 隔离）
+- **前端注入不依赖别的插件**。插件自己注册 ASP.NET 中间件改写 `/web/index.html`，把 `<script>`/`<link>` 追加进去（所以不需要装 File Transformation）。
+- **后端只绑 `127.0.0.1`**，浏览器侧一律经 Jellyfin 同源代理访问，因此没有 CORS 问题，也不用给后端单独做鉴权。
+- **后端随 Jellyfin 生命周期起停**：插件加载即拉起后端，Jellyfin 优雅退出时把后端及其子进程一起收掉。
+- **写操作都落在后端脚本里**，后端自身不改迅雷数据库，所有下载先落 `.staging`，校验通过才进媒体库。
 
-插件自带后端**自己维护全部数据**，全部落在 `backend/state/` 下，随插件目录走：
+---
 
-```
-backend/state/
-├── pool/<片名>.json              # 候选池（按整剧累积，含 metadata/健康度缓存）
-├── watches/<ih>.json + .log      # watcher 运行态与日志
-├── pan/<片名>.json + .log        # 云盘转存状态机
-├── marks/<片名>.json             # 面板人工标记
-└── snapshots/<片名>[.sNN].{probe,context,pan}.json   # 分季抓取快照
-```
+## 环境要求
 
-- 数据根 = `<本文件同级>/state`，可用 **`JMD_DATA_DIR`** 整体覆盖；
-  `JMD_CONSOLE_STATE_DIR` 仍可只覆盖 marks/snapshots 这一部分。
-- `install.sh` 重装时会保留整个 `backend/state/`（含迁移过来的历史 pool/watches）。
-- 主 skill 的 `~/Library/Application Support/JellyfinDownloader/` 插件**不再读写**，
-  两边完全隔离；插件目录删掉不会影响 skill，反过来的历史数据也已复制进插件。
-- **数据格式以插件这份脚本为准**：若与 skill 侧脚本写出的格式出现冲突，
-  按插件写出的格式走（skill 侧只作历史基线，不再作为对齐目标）。
+| 组件 | 说明 |
+|---|---|
+| Jellyfin | 10.11.x（`targetAbi 10.11.11.0`，实测 v10.11.11） |
+| 操作系统 | **macOS**。迅雷客户端数据库、"下载到本地"、云盘缓存等路径都是 macOS 专属 |
+| Python | **3.9+**，后端只用标准库。插件会自动探测（配置项 → PATH → 常见安装位置），也可以手工指定或一键安装 |
+| .NET SDK | **9.0**，仅构建时需要。`build.sh` 默认使用 Homebrew 的 `dotnet@9` |
+| 迅雷（Thunder） | 桌面客户端，用于提交下载与云盘转存/取回 |
+| aria2c | 抓种子元数据与实测速度：`brew install aria2` |
+| ffmpeg / ffprobe | 媒体验证与抽样解码：`brew install ffmpeg` |
 
-## 构建与安装
+---
+
+## 快速开始
 
 ```bash
-./build.sh     # 需要 .NET 9 SDK（brew install dotnet@9）
-./install.sh   # 构建 + 拷贝到 Jellyfin 插件目录 + 重启 Jellyfin
+git clone git@github.com:leigangzhang/jellyfin-plugin-downloader.git
+cd jellyfin-plugin-downloader
+
+./build.sh      # dotnet publish → ./out（需要 .NET 9 SDK）
+./install.sh    # 安装到 Jellyfin 插件目录并重启 Jellyfin
 ```
 
-## 后端启停（不走 launchd）
+`install.sh` 会：先停掉 Jellyfin → 复制 DLL / `meta.json` / `icon.png` / `backend/` → 保留原有的 `backend/state/`（历史快照与标记不丢）→ `open -n /Applications/Jellyfin.app` 重新拉起。
 
-后端随插件启用自动启动，不需要单独点「启动」：
+> 之所以先停服再覆盖：运行中的进程可能在复制途中读到半个 DLL，触发 `BadImageFormatException: Bad IL range`。
 
-- 插件加载时（Jellyfin 启动 / 插件启用）通过 `IHostedService` 自动拉起 **插件自带的 `backend/console_server.py`**（默认 `127.0.0.1:8123`，脚本字段留空即用自带路径）；后端已在运行则直接识别、不重复拉起。
-- Jellyfin 退出时，插件会自动停掉自己拉起的后端（`StopAsync` → `StopQuietly`）。
-- 配置页（控制台 → 插件 → Jellyfin Downloader）只保留 **端口 / 后端服务状态（运行中/已停止 · pid · 管理方式）+「刷新状态」「重启后端」/ 暂存目录 / 媒体库落点（只读）**。最低分数、后端地址、Python 解释器、启动脚本都不再暴露，走内置默认（`127.0.0.1:8123`、自带脚本、阈值 60）。
-- 后端日志：`~/Library/Application Support/jellyfin/plugins/configurations/jellyfin-downloader-backend.log`。
+**首次配置**：控制台 → 插件 → **Jellyfin Downloader**
 
-## 媒体库落点与暂存目录
-
-- **媒体目录**（配置页「媒体目录」，`MediaRoot`）：留空时由插件从 Jellyfin 的库配置解析——取各库路径的公共父目录作为 `MEDIA_ROOT`，下面按 Movies / TV Shows / Shows / Records 分类；也解析不到时退回占位默认 `~/Media`。
-- **暂存目录**（配置页「暂存目录」，`StagingRoot`）：留空时按「同盘暂存」推导为媒体目录的兄弟目录 `.staging`（例如媒体目录是 `/path/to/media`，暂存就是 `/path/to/.staging`），保证归档能用同盘 `mv` 原子完成；媒体目录层级太浅时退回 `~/Downloads/.staging`。
-- 源码里不含任何机器相关路径：Python 解释器默认用 PATH 上的 `python3`，两个目录默认都从上表推导，可在配置页覆盖（也可以直接改 `Jellyfin.Plugin.JellyfinDownloader.xml`）。
-- **Python 自动检测**：配置页「后端服务」一栏会探测系统解释器（配置项 → PATH 上的 `python3`/`python` → 常见位置：Homebrew / 官方框架 / pyenv / conda / uv），展示选中的**路径 + 版本 + 来源**。多版本并存时自动选版本最高的（例如系统自带 3.9 与 pyenv 3.14 同时存在，会挑 3.14）；最低要求 3.9。
-- 探测不到（或版本低于 3.9）时配置页会出现**「安装 Python」按钮**：macOS 上会唤出 `xcode-select --install` 系统对话框（自带 `/usr/bin/python3`，无需 sudo），并同时给出 `brew install python` 与 python.org 下载页；Linux/Windows 只给命令与下载页，插件不会代跑 `sudo`、也不静默安装。
-- 插件启动后端时把这两个值作为 `JMD_MEDIA_ROOT` / `JMD_STAGING_ROOT` 环境变量传给后端，`media_download_lib` 读到就采用，读不到才用自己内置的硬编码兜底。
-
-## 进程管理（防无限增长 / 失控）
-
-后端是长驻单实例，靠三样东西保证不会越积越多：
-
-- **pidfile 单实例**：后端启动时把 pid 写进 `backend/state/console_server.pid`，退出/收到信号时删除。重复启动会检测到 pidfile 里还活着的进程并直接拒绝（`exit 2`）；`install.sh` 里那次 Jellyfin 重启遗留的旧后端就是靠这个 + 端口检查挡掉的。
-- **进程组回收**：后端每次跑 `search_pool` / `probe_magnets` / `pan_*` 都用 `start_new_session=True` 放进独立进程组，超时或退出时按组整体 `SIGTERM→SIGKILL`，连带把 `probe_magnets` 再 spawn 出来的 `aria2c` 一起收掉。以前超时只杀直接子进程，`aria2c` 会变成孤儿一直挂着。
-- **优雅停止**：插件 `Stop()`/`StopQuietly()` 先发 `SIGTERM`，后端收到后按组清掉所有子进程、删 pidfile 再退出；5 秒内没退才 `SIGKILL` 兜底。直接 `SIGKILL` 会跳过收尾、留下孤儿。
-
-验证过的三条：重复启动被拒（`拒绝重复启动`）；`SIGTERM` 后进程退出且 pidfile 删除；杀掉子进程的进程组时，其孙进程（`aria2c` 等价物）一并消失、无孤儿。
-
-## 右上角入口：搜库里没有的资源
-
-顶部导航栏「搜索 / 个人资料」图标左边还有一个 **获取资源图标**（`arrow_downward`，单个向下的箭头），点开是**手动搜索面板**：片名 / 别名·原名 / 年份 / 类型（剧集·综艺 或 电影）/ 季 / 集，填完点「搜索」。
-
-- **库里没有也能搜**：不依赖详情页、不依赖 `check_exists` 命中；后端照样跑 查重 → 搜索 → 打分 → 测速，候选动作（复制磁力 / 提交迅雷 / 后台监控 / 打开云盘）与详情页面板完全一致。提交时 `final_dir` 由后端按 `片名 (年份)` 推导到媒体库里，扫库即可见。
-- **不对库外条目做任何隐式写入**：只写 `pool/<片名>.json` 与 `state/snapshots/<片名>[.sNN].*`（和详情页同一套命名空间，重复搜同一部会命中同一份快照）。
-- **改了条件不会自动开抓**：搜索一次要几分钟，所以表单改动只在搜索栏下方提示「搜索条件已修改：[按新条件搜索]」；回车键也能直接搜。
-- 在详情页点这个入口会自动带入当前条目的片名 / 原名 / 年份 / 类型 / 季集（单集页带 S01E01，季页带季号），改一改就能搜别的。
-- 面板动作统一打到 `panel.item` 上（`panelTarget()`），避免手动面板打开时详情页的 `mount()` 把 `state.item` 换掉导致搜错条目。
-
-入口节点是**克隆原生的 header 图标按钮**（`is="paper-icon-button-light"` + `headerButton headerButtonRight`），只改图标和 aria-label，所以尺寸/圆角/hover 与搜索、个人资料图标一致；播放页沿用 Jellyfin 自己那条 `.headerButton:not(...)` 规则一起隐藏。React 重渲染会冲掉该节点，`mount()` 每次都会检查并补挂。
-
-一屏只允许一个下载图标：
-
-- 详情页已经有「…」旁边那个入口，右上角就**不再重复挂**（同一屏两个一模一样的下载图标很怪）。判据是 URL 里的条目 id（`currentItemId()`），不是「inline 按钮挂好没有」——后者要等异步挂载，中间那一小段仍会出现两个。详情页面板里**不放**「搜别的片名」（手动搜索只从右上角入口进，即非详情页）。
-- 两个入口都用**稳定 class** 认（`jdl-inline-btn` / `jdl-header-btn`）：React 重建操作行时把 `data-*` 属性弄丢也还认得出来，`removeButton()` 按 class 一起清，不留孤儿副本。右上角那个再按「header 里带入口箭头」兜底，始终只保留紧跟搜索图标之前的 1 个。
-- 有 1.5s 的兜底巡检 `enforceSingleEntry()`：观察者只在 DOM 变化时触发，这一层按时间再收一次尾，发现多余节点就删掉并在 Console 打 `[JDL] collapsed N duplicate entry node(s)`。
-- `start()` 会打一行版本横幅 `[JDL] build <版本> · 入口：…`。**脚本只在整页加载时执行一次**，SPA 内部点来点去不会重新注入 —— 看不到这行横幅就说明页面跑的还是旧脚本，需要 Cmd+Shift+R 或关掉标签重开。
-
-（实测：内置浏览器用真实登录会话跑 2026-09-25c，首页 → 右上角 1 个；电影/剧集详情页 → 只有「…」旁 1 个，页面上 download 字形总数 = 1；Jellyfin 自己的 `btnDownload` 是 `get_app` 且只对 Book 显示，本机是隐藏的。）
-
-如果你更想在详情页也保留右上角入口（详情页就会同时看到「…」旁边和右上角两个），把 `mountHeaderButton()` 开头 `if (currentItemId()) { removeHeaderButton(); return; }` 那段去掉即可。
-
-## 选季抓取与同名噪音过滤
-
-多季剧集的详情页点「获取资源」**只拉季列表 + 显示历史**，不自动开搜；选好季再点「重新获取」。面板顶部两个开关（只在选了具体某一季时出现）：
-
-| 开关 | 默认 | 作用 |
+| 配置项 | 默认 | 说明 |
 |---|---|---|
-| 严格按季 | 开 | 搜索只用「第 N 季 / 第 N 季（中文数字）/ SNN / 英文原名 + SNN」，跳过基础片名、年份、平台与内置的 `全集/Complete/全` 档位 —— 否则那些档位会把整部剧的其它季一起带回来 |
-| 含整季包 | 关 | 选季时默认隐藏「没标季号」的候选（可能真是整剧包，也可能属于别的季）；打开即恢复显示 |
+| 端口 | `8123` | 后端监听端口（只绑本机） |
+| Python 解释器 | 留空 | 留空 = 自动探测；也可填绝对路径，或用「安装 / 更换 Python」按钮 |
+| 媒体目录 | 留空 | 留空 = 由插件从 Jellyfin 媒体库配置解析出库根 |
+| 暂存目录 | 留空 | 留空 = 媒体根同盘的 `.staging`（保证归档能同盘原子移动） |
 
-面板还会用 `title_match` 把**同名不同作品**折叠掉（《空王冠》《罪恶王冠》《9-nine-支配者的王冠》不会混进《王冠》），并在搜索栏下方用一行「已隐藏：同名噪音 N 条 · 未标季号 M 条」+ 一键「显示同名候选 / 含整季包」暴露出来 —— 折叠必须看得见，否则用户只会觉得资源少了。判定只在**能确定**时下结论：中文片名只跟含汉字的候选比，条目没有 `OriginalTitle` 时英文名资源不会被误杀（历史快照里 56 条会误伤 12 条，已修）。
+**开始使用**：进入任意电影 / 剧集 / 单集详情页 → 点 **「获取资源」**。
 
-季级结果各存一份（`王冠.s01.probe.json`），第 1 季与第 2 季互不覆盖；候选池 `pool/<片名>.json` 仍然共用累积。
+- 剧集页会先列出季；选定季再点「重新获取」才会抓取（换季读各自的快照，不重复搜索）。
+- 面板里的 **最低分阈值** 默认取插件配置的 `MinScore`（60），可随时调整。
+- **严格按季**（默认开）只搜当前季并过滤无季号 / 同名噪音；**含整季包**（默认关）额外纳入整季合集的候选。
 
-## 回滚
+---
+
+## 卸载
 
 ```bash
-rm -rf "$HOME/Library/Application Support/jellyfin/plugins/JellyfinDownloader_1.0.0.0"
-kill -TERM <jellyfin-pid> && open -n /Applications/Jellyfin.app
+./uninstall.sh              # 清理插件文件，全程不停服、不重启
+./uninstall.sh --verify-only  # 只自检，不改任何东西（重启 Jellyfin 后再跑一次复核）
+./uninstall.sh --dry-run      # 只打印将要做什么
 ```
 
-（若后端仍在运行，先在插件配置页关掉开关，或 `kill $(lsof -ti :8123)`。）
+Jellyfin 后台的「卸载」按钮**只删插件目录**，剩下的收尾（配置文件、后端日志、仍在跑的 Python 后端）得自己处理。`uninstall.sh` 做的就是这件事，而且刻意**不碰 Jellyfin 进程**：
+
+1. 把改前内容留档到 `backups/jellyfin-downloader-uninstall-<时间戳>/`（含插件目录与 `backend/state`、被删的配置、改前的 `system.xml`，附 `MANIFEST.sha256`）；
+2. 删插件目录、插件配置 XML、后端日志；
+3. 回收插件自己拉起的 Python 后端进程（`--keep-backend` 可保留）；
+4. 自检文件层面是否真的清干净，并如实报告运行态残留。
+
+关于「本地插件仓库」条目：运行中的 Jellyfin 配置在内存里，手改 `system.xml` 会被内存副本覆盖回去，所以脚本在 Jellyfin 运行时不改这个文件，而是提示你 **控制台 → 插件 → 仓库 → 删掉 `Jellyfin Downloader (local)`**（无需重启）；若 Jellyfin 已停，可用 `--clean-repo-entry` 让脚本代劳。
+
+常用开关：`--purge-data`（运行数据不留档）、`--purge-legacy`（连旧 skill 侧数据一起删，先留档）、`--no-backup`、`--clean-repo-entry`。
+
+> 由于不重启，卸载后当前运行的实例仍持有已加载的程序集（按钮与 `/JellyfinDownloader/*` 端点还在），**下次重启 Jellyfin 后自动消失**；届时用 `./uninstall.sh --verify-only` 复核即可。
+
+---
+
+## 目录结构
+
+```
+jellyfin-plugin-downloader/
+├── Jellyfin.Plugin.JellyfinDownloader/     # C# 插件（net9.0）
+│   ├── Plugin.cs                           # 插件入口
+│   ├── BackendManager.cs                   # 后端进程的启动/停止/重启（含按端口兜底）
+│   ├── BackendHostedService.cs             # 随 Jellyfin 生命周期起停后端
+│   ├── PythonLocator.cs / PythonInstaller.cs  # 探测与安装 Python
+│   ├── MediaPaths.cs                       # 从媒体库配置解析媒体根 / 暂存区
+│   ├── Controllers/JellyfinDownloaderController.cs  # 全部 HTTP 端点 + 后端代理
+│   ├── Middleware/                         # 往 /web/index.html 注入脚本与样式
+│   ├── Web/inject.js, Web/style.css        # 面板前端（内嵌资源）
+│   └── Configuration/                      # 配置项与配置页
+├── backend/                                # 自带 Python 后端（自包含，零第三方依赖）
+│   ├── console_server.py                   # HTTP 服务 + 面板快照
+│   ├── build_console.py                    # 快照组装
+│   ├── candidate_score.py                  # 打分（四维权重）
+│   ├── search_pool.py / probe_magnets.py   # 候选来源与打分排名
+│   ├── pan_search.py / pan_pool.py / pan_transfer.py  # 云盘分享：找链接/入池/转存取回
+│   ├── speed_probe.py / submit_xunlei.py   # 实测速度 / 提交迅雷
+│   ├── watch_download.py / verify_media.py / handle_media_issues.py / cleanup_download.py
+│   ├── check_exists.py / media_download_lib.py
+│   └── state/                              # 运行时数据（不入库）：pool / watches / snapshots / pan / marks
+├── build.sh                                # 构建 → ./out
+├── install.sh                              # 安装到 Jellyfin 并重启
+├── uninstall.sh                            # 干净卸载（不停服、不重启）
+└── meta.json, icon.png                     # 插件元数据与图标
+```
+
+**运行时文件位置**
+
+| 内容 | 路径 |
+|---|---|
+| 插件本体 | `~/Library/Application Support/jellyfin/plugins/JellyfinDownloader_1.0.0.0/` |
+| 插件配置 | `…/jellyfin/plugins/configurations/Jellyfin.Plugin.JellyfinDownloader.xml` |
+| 后端数据 | `…/JellyfinDownloader_1.0.0.0/backend/state/`（候选池、watcher、快照、云盘、人工标记） |
+| 后端日志 | `…/plugins/configurations/jellyfin-downloader-backend.log` |
+| 下载暂存 | 媒体根同盘的 `.staging/`（迅雷只允许写这里） |
+| 卸载留档 | `backups/jellyfin-downloader-uninstall-<时间戳>/`（已 gitignore） |
+
+---
+
+## 常见问题
+
+**装完在详情页看不到按钮？**
+先硬刷新（`Cmd+Shift+R`）排掉浏览器缓存；确认当前账号是管理员；再看日志里有没有 `Loaded assembly "Jellyfin.Plugin.JellyfinDownloader…"`。
+
+**安装时报 `BadImageFormatException: Bad IL range`？**
+运行中的 Jellyfin 读到了半写的 DLL。用 `./install.sh`（会先停服），或先手动停掉 Jellyfin 再覆盖文件。
+
+**卸载了，按钮和图标还在？**
+Jellyfin 的卸载按钮只删文件，程序集仍在内存里。重启 Jellyfin 后即消失；`./uninstall.sh --verify-only` 可以给出确定结论。
+
+**日志里反复出现 `Failed to download image to path ".../JellyfinDownloader_1.0.0.0/Image"`？**
+本地插件仓库拉图标失败，纯外观问题，不影响任何功能。
+
+**面板提示后端未运行？**
+看配置页的 Python 解释器与端口；日志在 `plugins/configurations/jellyfin-downloader-backend.log`。端口被占用时换个端口，插件会自动重启后端。
+
+**没装 Python？**
+配置页有「安装 / 更换 Python」按钮；也可以自己 `brew install python`，插件会自动探测到。
+
+**想让它出现在 Jellyfin 的插件目录里？**
+控制台 → 插件 → 仓库 → 添加 `http://127.0.0.1:8096/JellyfinDownloader/manifest.json`（插件自带这个本地仓库端点），之后可在 Jellyfin 内安装与更新。不想要就随时删掉这条仓库；卸载插件时也建议一并删除，否则每次启动都会去拉一个已失效的 manifest。
+
+---
+
+## 开发说明
+
+- **前端**：改 `Jellyfin.Plugin.JellyfinDownloader/Web/inject.js` 或 `style.css`（以 `EmbeddedResource` 内嵌进 DLL），必须重新 `./build.sh && ./install.sh` 才生效。
+- **打分**：四维权重在 `backend/candidate_score.py` 的 `DEFAULT_WEIGHTS`；改完只需重装后端（`install.sh` 会带上 `backend/`）。
+- **后端边界**：`backend/` 是随插件走的自包含副本，数据根固定为 `backend/state/`（可用 `JMD_DATA_DIR` 覆盖），与作者本机的下载 skill 完全隔离，互不读写。
+- **后端环境变量**：由插件注入 `JMD_MEDIA_ROOT`（媒体库根）与 `JMD_STAGING_ROOT`（暂存区），脚本读不到时才回落到默认值。
+- **手工验证**：目前没有自动化测试，靠 `./uninstall.sh --verify-only`、Jellyfin 日志、面板快照三者交叉确认。
+
+---
+
+## 说明
+
+个人自用项目，未附开源许可证。插件入口仅管理员可用，后端只监听 `127.0.0.1`。
