@@ -9,8 +9,8 @@ namespace Jellyfin.Plugin.JellyfinDownloader;
 /// <summary>Appends the plugin script tag to the web client entry document.</summary>
 public class ScriptInjectionMiddleware
 {
-    private const string ScriptTag = "<script defer src=\"/JellyfinDownloader/script?v=20260925h\"></script>";
-    private const string StyleTag = "<link rel=\"stylesheet\" href=\"/JellyfinDownloader/style?v=20260925h\">";
+    private const string ScriptTag = "<script defer src=\"/JellyfinDownloader/script?v=20260925i\"></script>";
+    private const string StyleTag = "<link rel=\"stylesheet\" href=\"/JellyfinDownloader/style?v=20260925i\">";
     private readonly RequestDelegate _next;
 
     public ScriptInjectionMiddleware(RequestDelegate next)

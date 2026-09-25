@@ -1,5 +1,6 @@
 using System.Threading;
 using System.Threading.Tasks;
+using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Hosting;
 
 namespace Jellyfin.Plugin.JellyfinDownloader;
@@ -11,10 +12,20 @@ namespace Jellyfin.Plugin.JellyfinDownloader;
 /// </summary>
 public class BackendHostedService : IHostedService
 {
+    private readonly ILibraryManager _library;
+
+    public BackendHostedService(ILibraryManager library)
+    {
+        _library = library;
+    }
+
     public Task StartAsync(CancellationToken cancellationToken)
     {
         try
         {
+            // 主进程已启动、媒体库已加载后，再按当前配置解析一次媒体根，
+            // 避免后端在启动早期拿到占位默认（~/Media）而不是真实库根。
+            MediaPaths.Refresh(_library, Plugin.Instance?.Configuration?.MediaRoot);
             BackendManager.Start();
         }
         catch

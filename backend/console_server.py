@@ -439,6 +439,16 @@ class Handler(BaseHTTPRequestHandler):
         kind = body.get("kind") or "episode"
         if not bc.valid_ih(ih):
             return self._bad("invalid info hash")
+        category = (body.get("category") or "").strip()
+        if category:
+            if category not in bc.CATEGORIES:
+                return self._bad("invalid category")
+            final_dir = bc.derive_final_dir(
+                (body.get("series_name") or "").strip(),
+                kind,
+                str(body.get("year") or ""),
+                category,
+            )
         if not valid_target_dir(final_dir):
             return self._bad("final_dir must be inside staging or Media")
         probe_kind = bc.PROBE_KIND.get(kind, "episode")
@@ -461,6 +471,16 @@ class Handler(BaseHTTPRequestHandler):
         final_dir = body.get("final_dir") or ""
         if not bc.valid_ih(ih):
             return self._bad("invalid info hash")
+        category = (body.get("category") or "").strip()
+        if category:
+            if category not in bc.CATEGORIES:
+                return self._bad("invalid category")
+            final_dir = bc.derive_final_dir(
+                (body.get("series_name") or "").strip(),
+                body.get("kind") or "episode",
+                str(body.get("year") or ""),
+                category,
+            )
         if not valid_target_dir(final_dir):
             return self._bad("final_dir must be inside staging or Media")
         interval = int(body.get("interval") or 900)
