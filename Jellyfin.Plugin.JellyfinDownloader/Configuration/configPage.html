@@ -16,31 +16,39 @@
               <button id="jdl-backend-restart" type="button" is="emby-button" class="raised">重启后端</button>
             </div>
             <div id="jdl-backend-diag" class="fieldDescription" style="margin-top:6px"></div>
-            <div class="fieldDescription">后端随插件启用自动启动，无需手动开启；如启动失败或异常，可在这里查看状态并「重启后端」。</div>
+            <div class="fieldDescription">随插件自动启动，异常时点「重启后端」。</div>
           </div>
 
           <div class="inputContainer">
             <label class="inputLabel inputLabelUnfocused" for="jdl-port">端口</label>
             <input id="jdl-port" type="number" min="1" max="65535" step="1" class="emby-input" />
-            <div class="fieldDescription">后端监听端口，默认 8123。</div>
+          </div>
+
+          <div class="inputContainer">
+            <label class="inputLabel inputLabelUnfocused" for="jdl-python">Python 解释器</label>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <input id="jdl-python" type="text" class="emby-input" style="flex:1;min-width:260px" placeholder="留空 = 自动探测" />
+              <button id="jdl-python-install" type="button" is="emby-button" class="raised">安装 / 更换 Python</button>
+            </div>
+            <div id="jdl-python-line" class="fieldDescription" style="margin-top:6px"></div>
+            <div class="fieldDescription">留空自动探测（需 3.9+），也可手填路径；右侧按钮提供安装途径。</div>
           </div>
 
           <div class="inputContainer">
             <label class="inputLabel inputLabelUnfocused" for="jdl-media">媒体目录</label>
-            <input id="jdl-media" type="text" class="emby-input" placeholder="留空 = 自动从 Jellyfin 媒体库解析（如 /path/to/media）" />
-            <div class="fieldDescription">媒体库根目录，下面按 Movies / TV Shows / Shows / Records 分类。留空时自动取 Jellyfin 各库路径的公共父目录。改完保存后点「重启后端」生效。</div>
+            <input id="jdl-media" type="text" class="emby-input" placeholder="留空 = 从 Jellyfin 解析" />
+            <div class="fieldDescription">片库根目录，留空自动取 Jellyfin 的库路径。</div>
           </div>
 
           <div class="inputContainer">
             <label class="inputLabel inputLabelUnfocused" for="jdl-staging">暂存目录</label>
-            <input id="jdl-staging" type="text" class="emby-input" placeholder="留空 = 媒体目录同盘的 .staging（如 /path/to/staging）" />
-            <div class="fieldDescription">下载先落到这里（半成品不污染媒体库），验证通过后再归档进库。留空时用媒体目录同盘的 <code>.staging</code>，保证归档能用同盘 mv 原子完成。</div>
+            <input id="jdl-staging" type="text" class="emby-input" placeholder="留空 = 媒体目录下的 .staging" />
+            <div class="fieldDescription">下载先落这里，验证后再归档；留空即同盘 <code>.staging</code>。</div>
           </div>
 
           <div class="inputContainer">
-            <label class="inputLabel inputLabelUnfocused">当前生效</label>
+            <label class="inputLabel inputLabelUnfocused">实际使用</label>
             <div id="jdl-media-root" class="fieldDescription" style="margin:6px 0 0">读取中…</div>
-            <div class="fieldDescription">上面两个输入框留空时后端实际使用的路径（只读回显）。</div>
           </div>
 
           <button id="jdl-save" type="button" is="emby-button" class="raised button-submit block">保存</button>
@@ -86,14 +94,13 @@
         if (!line) { return; }
         var found = status && (status.pythonFound || status.pythonOk);
         if (found && status.pythonOk) {
-          line.textContent = '当前使用：' + status.python
+          line.textContent = '当前：' + status.python
             + (status.pythonVersion ? '（' + status.pythonVersion + '，' + status.pythonSource + '）' : '（' + status.pythonSource + '）');
           return;
         }
         if (found && !status.pythonOk) {
           line.textContent = '检测到 ' + status.python
-            + (status.pythonVersion ? '（' + status.pythonVersion + '）' : '')
-            + '，但后端需要 Python 3.9 或更高版本。';
+            + (status.pythonVersion ? '（' + status.pythonVersion + '）' : '') + '，但需要 3.9+。';
         } else {
           line.textContent = '未检测到可用的 python3（后端需要 3.9+）。';
         }
@@ -107,16 +114,13 @@
         if (status.pid) { parts.push('pid ' + status.pid); }
         parts.push(status.managed ? '插件管理' : (status.running ? '外部进程' : '—'));
         text.textContent = parts.join(' · ');
-        diag.textContent = '监听端口 ' + (status.port || '?');
+        diag.textContent = status.scriptExists === false ? '脚本不存在：' + (status.script || '?') : '';
         renderPython(status);
         var media = q('jdl-media-root');
         if (media) {
-          var libs = (status.mediaLibraryPaths || []).join('、');
-          media.textContent = '库根：' + (status.mediaRoot || '?')
-            + '（' + (status.mediaRootSource || '未知来源') + '）'
-            + '；暂存：' + (status.stagingRoot || '?')
-            + (status.stagingConfigured ? '（配置页指定）' : '（同盘默认）')
-            + (libs ? '；读到库路径：' + libs : '');
+          media.textContent = '库根 ' + (status.mediaRoot || '?')
+            + '（' + (status.mediaRootSource || '未知') + '）　暂存 ' + (status.stagingRoot || '?')
+            + (status.stagingConfigured ? '（配置页指定）' : '（同盘默认）');
         }
       }
 
@@ -174,9 +178,6 @@
           if (result && result.command) { lines.push('推荐命令：' + result.command); }
           if (result && result.url) { lines.push('下载页：' + result.url); }
           line.textContent = lines.join('　·　');
-          if (result && result.options && result.options.length) {
-            line.textContent += '　（可选：' + result.options.join('；') + '）';
-          }
           setTimeout(refreshStatus, 2000);
         }).catch(function (error) {
           line.textContent = '安装指引获取失败：' + (error && error.status ? error.status : '网络错误');
