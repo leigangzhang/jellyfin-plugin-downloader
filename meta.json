@@ -11,6 +11,5 @@
   "version": "1.0.0.0",
   "status": "Active",
   "autoUpdate": false,
-  "imagePath": "/Users/ray/Library/Application Support/jellyfin/plugins/JellyfinDownloader_1.0.0.0/icon.png",
   "assemblies": []
 }

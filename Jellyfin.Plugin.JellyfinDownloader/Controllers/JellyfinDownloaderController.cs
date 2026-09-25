@@ -208,7 +208,7 @@ public class JellyfinDownloaderController : ControllerBase
     private void RefreshMediaPaths()
     {
         var library = HttpContext.RequestServices.GetService(typeof(ILibraryManager)) as ILibraryManager;
-        MediaPaths.Refresh(library);
+        MediaPaths.Refresh(library, Plugin.Instance?.Configuration?.MediaRoot);
     }
 
     /// <summary>Proxies whitelisted backend calls (admin only).</summary>

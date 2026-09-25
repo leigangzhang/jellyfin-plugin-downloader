@@ -26,15 +26,21 @@
           </div>
 
           <div class="inputContainer">
-            <label class="inputLabel inputLabelUnfocused" for="jdl-staging">暂存目录</label>
-            <input id="jdl-staging" type="text" class="emby-input" placeholder="留空 = /Volumes/XIAOMI SSD2/.staging" />
-            <div class="fieldDescription">下载先落到这里（半成品不污染媒体库），验证通过后再归档进库。留空使用后端默认值。改完保存后点「重启后端」生效。</div>
+            <label class="inputLabel inputLabelUnfocused" for="jdl-media">媒体目录</label>
+            <input id="jdl-media" type="text" class="emby-input" placeholder="留空 = 自动从 Jellyfin 媒体库解析（如 /path/to/media）" />
+            <div class="fieldDescription">媒体库根目录，下面按 Movies / TV Shows / Shows / Records 分类。留空时自动取 Jellyfin 各库路径的公共父目录。改完保存后点「重启后端」生效。</div>
           </div>
 
           <div class="inputContainer">
-            <label class="inputLabel inputLabelUnfocused">媒体库落点</label>
+            <label class="inputLabel inputLabelUnfocused" for="jdl-staging">暂存目录</label>
+            <input id="jdl-staging" type="text" class="emby-input" placeholder="留空 = 媒体目录同盘的 .staging（如 /path/to/staging）" />
+            <div class="fieldDescription">下载先落到这里（半成品不污染媒体库），验证通过后再归档进库。留空时用媒体目录同盘的 <code>.staging</code>，保证归档能用同盘 mv 原子完成。</div>
+          </div>
+
+          <div class="inputContainer">
+            <label class="inputLabel inputLabelUnfocused">当前生效</label>
             <div id="jdl-media-root" class="fieldDescription" style="margin:6px 0 0">读取中…</div>
-            <div class="fieldDescription">落点由 Jellyfin 的媒体库配置解析：取各库路径的公共父目录作为根，下面按 Movies / TV Shows / Shows / Records 分类。只读，想改就去改 Jellyfin 的库路径。</div>
+            <div class="fieldDescription">上面两个输入框留空时后端实际使用的路径（只读回显）。</div>
           </div>
 
           <button id="jdl-save" type="button" is="emby-button" class="raised button-submit block">保存</button>
@@ -89,7 +95,7 @@
           media.textContent = '库根：' + (status.mediaRoot || '?')
             + '（' + (status.mediaRootSource || '未知来源') + '）'
             + '；暂存：' + (status.stagingRoot || '?')
-            + (status.stagingConfigured ? '（配置页指定）' : '（默认）')
+            + (status.stagingConfigured ? '（配置页指定）' : '（同盘默认）')
             + (libs ? '；读到库路径：' + libs : '');
         }
       }
@@ -104,6 +110,7 @@
         ApiClient.getPluginConfiguration(pluginId).then(function (config) {
           q('jdl-port').value = config.BackendPort || 8123;
           q('jdl-staging').value = config.StagingRoot || '';
+          q('jdl-media').value = config.MediaRoot || '';
           return refreshStatus();
         }).catch(function (error) {
           q('jdl-backend-status').textContent = '配置读取失败：' + (error && error.status ? error.status : '网络错误');
@@ -113,6 +120,7 @@
       function collect(config) {
         config.BackendPort = parseInt(q('jdl-port').value, 10) || 8123;
         config.StagingRoot = (q('jdl-staging').value || '').trim();
+        config.MediaRoot = (q('jdl-media').value || '').trim();
         return config;
       }
 

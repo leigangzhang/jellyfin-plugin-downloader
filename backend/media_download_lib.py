@@ -12,16 +12,25 @@ import subprocess
 ETM_DB = os.path.expanduser(
     "~/Library/Application Support/Thunder/etm3/etm_map.db"
 )
-# 媒体库根 / 暂存区：下面这两个值是**兜底默认**（本机历史布局）。正常由插件在
-# 启动后端时注入环境变量覆盖：
-#   JMD_MEDIA_ROOT   ← 插件从 Jellyfin 媒体库配置里解析出来的库根
-#   JMD_STAGING_ROOT ← 插件配置页「暂存目录」（留空则用默认）
-# 独立运行（skill / 手跑脚本）时不吃这两个变量，行为与以前一致。
+# 媒体库根 / 暂存区。源码里**不含任何机器相关路径**，取值顺序：
+#   1. 环境变量（插件启动后端时注入）
+#        JMD_MEDIA_ROOT   ← 插件配置页「媒体目录」，留空则由插件从 Jellyfin 库解析
+#        JMD_STAGING_ROOT ← 插件配置页「暂存目录」，留空则由插件按同盘惯例推导
+#   2. 占位默认：库根 = ~/Media；暂存 = 库根同盘的 .staging（层级太浅时 ~/Downloads/.staging）
+def _default_staging_root(media_root: str) -> str:
+    """同盘暂存：库根的兄弟目录 .staging，保证归档能用同盘 mv 原子完成。"""
+    parent = os.path.dirname(os.path.abspath(media_root))
+    if len([seg for seg in parent.split(os.sep) if seg]) >= 2:
+        return os.path.join(parent, ".staging")
+    return os.path.join(os.path.expanduser("~"), "Downloads", ".staging")
+
+
 MEDIA_ROOT = os.path.abspath(
-    os.environ.get("JMD_MEDIA_ROOT") or "/Volumes/XIAOMI SSD2/Media"
+    os.environ.get("JMD_MEDIA_ROOT")
+    or os.path.join(os.path.expanduser("~"), "Media")
 )
 STAGING_ROOT = os.path.abspath(
-    os.environ.get("JMD_STAGING_ROOT") or "/Volumes/XIAOMI SSD2/.staging"
+    os.environ.get("JMD_STAGING_ROOT") or _default_staging_root(MEDIA_ROOT)
 )
 # ---------------------------------------------------------------------------
 # 数据根：本插件自带后端**自己维护全部数据**（pool / watches / pan）
