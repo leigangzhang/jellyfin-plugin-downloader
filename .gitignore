@@ -1,0 +1,15 @@
+# 构建产物（dotnet publish / build.sh 生成）
+out/
+bin/
+obj/
+*.user
+
+# Python
+__pycache__/
+*.py[cod]
+
+# 运行时数据：pool / watches / pan / marks / snapshots 由插件自己维护，不入库
+backend/state/
+
+# macOS
+.DS_Store
