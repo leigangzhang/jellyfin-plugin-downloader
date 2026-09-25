@@ -17,8 +17,9 @@
             </div>
             <div id="jdl-backend-diag" class="fieldDescription" style="margin-top:6px"></div>
             <div id="jdl-python-line" class="fieldDescription" style="margin-top:6px"></div>
-            <div id="jdl-python-install-wrap" style="display:none;margin-top:6px">
-              <button id="jdl-python-install" type="button" is="emby-button" class="raised">安装 Python</button>
+            <div id="jdl-python-install-wrap" style="margin-top:6px">
+              <button id="jdl-python-install" type="button" is="emby-button" class="raised">安装 / 更换 Python</button>
+              <span class="fieldDescription" style="margin-left:10px">给出本机可用的安装途径（不静默安装、不代跑 sudo）；已装好时点它会提示“已安装”，可直接忽略。</span>
             </div>
             <div class="fieldDescription">后端随插件启用自动启动，无需手动开启；如启动失败或异常，可在这里查看状态并「重启后端」。</div>
           </div>
@@ -84,16 +85,14 @@
         if (window.Dashboard && Dashboard.alert) { Dashboard.alert(message); }
       }
 
-      // Python：探到就把「路径 + 版本 + 来源」直接展示出来；没探到才露「安装 Python」
+      // Python：探到就展示「路径 + 版本 + 来源」；「安装 / 更换 Python」按钮常驻
       function renderPython(status) {
         var line = q('jdl-python-line');
-        var wrap = q('jdl-python-install-wrap');
         if (!line) { return; }
         var found = status && (status.pythonFound || status.pythonOk);
         if (found && status.pythonOk) {
           line.textContent = 'Python：' + status.python
             + (status.pythonVersion ? '（' + status.pythonVersion + '，' + status.pythonSource + '）' : '（' + status.pythonSource + '）');
-          if (wrap) { wrap.style.display = 'none'; }
           return;
         }
         if (found && !status.pythonOk) {
