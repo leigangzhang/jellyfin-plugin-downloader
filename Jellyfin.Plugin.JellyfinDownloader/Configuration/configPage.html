@@ -3,7 +3,9 @@
 <head>
   <title>Jellyfin Downloader</title>
   <style>
-    /* 统一节奏：每个区块「标题在左、操作在右、输入框整行、说明紧贴下方」 */
+    /* 统一节奏：每个配置项固定两行
+       第一行 = 标题 + 状态/输入框/操作按钮
+       第二行 = 描述（后端服务 / 端口 / Python 解释器）或 输入框（媒体目录 / 暂存目录） */
     #JellyfinDownloaderConfigPage .jdl-row {
       display: flex;
       align-items: center;
@@ -11,7 +13,10 @@
       flex-wrap: wrap;
     }
 
+    #JellyfinDownloaderConfigPage .jdl-row + .jdl-row { margin-top: 6px; }
+
     #JellyfinDownloaderConfigPage .jdl-row .inputLabel { margin: 0; }
+    #JellyfinDownloaderConfigPage .jdl-row .fieldDescription { margin: 0; }
 
     #JellyfinDownloaderConfigPage .jdl-row__actions {
       margin-left: auto;
@@ -20,19 +25,20 @@
       flex-wrap: wrap;
     }
 
-    #JellyfinDownloaderConfigPage .jdl-inline {
-      display: flex;
-      align-items: center;
-      gap: 14px;
-      flex-wrap: wrap;
-      margin-top: 8px;
+    /* 第一行里的输入框：端口固定窄宽，其余随行宽伸缩 */
+    #JellyfinDownloaderConfigPage .emby-input.jdl-input-port {
+      width: 130px;
+      flex: 0 0 130px;
     }
 
-    #JellyfinDownloaderConfigPage .jdl-inline .fieldDescription { margin: 0; }
+    #JellyfinDownloaderConfigPage .emby-input.jdl-input-inline {
+      width: auto;
+      flex: 1 1 240px;
+      min-width: 160px;
+    }
 
-    #JellyfinDownloaderConfigPage .inputContainer > .fieldDescription { margin: 4px 0 0; }
-
-    #JellyfinDownloaderConfigPage .emby-input { width: 100%; }
+    /* 第二行里的整行输入框 */
+    #JellyfinDownloaderConfigPage .emby-input.jdl-input-block { width: 100%; }
   </style>
 </head>
 <body>
@@ -43,50 +49,60 @@
           <div class="inputContainer">
             <div class="jdl-row">
               <label class="inputLabel inputLabelUnfocused">后端服务</label>
+              <span id="jdl-backend-status" class="fieldDescription">正在运行</span>
+              <span id="jdl-backend-diag" class="fieldDescription"></span>
               <span class="jdl-row__actions">
                 <button id="jdl-backend-refresh" type="button" is="emby-button" class="raised">刷新状态</button>
                 <button id="jdl-backend-restart" type="button" is="emby-button" class="raised">重启后端</button>
               </span>
             </div>
-            <div class="jdl-inline">
-              <span id="jdl-backend-status" class="fieldDescription">读取中…</span>
-              <span id="jdl-backend-diag" class="fieldDescription"></span>
+            <div class="jdl-row">
+              <span class="fieldDescription">随插件自动启动，异常时点「重启后端」。</span>
             </div>
-            <div class="fieldDescription">随插件自动启动，异常时点「重启后端」。</div>
           </div>
 
           <div class="inputContainer">
-            <label class="inputLabel inputLabelUnfocused" for="jdl-port">端口</label>
-            <input id="jdl-port" type="number" min="1" max="65535" step="1" class="emby-input" />
+            <div class="jdl-row">
+              <label class="inputLabel inputLabelUnfocused" for="jdl-port">端口</label>
+              <input id="jdl-port" type="number" min="1" max="65535" step="1" class="emby-input jdl-input-port" />
+            </div>
+            <div class="jdl-row">
+              <span class="fieldDescription">后端在本机监听的端口，默认 8123；保存后会自动重启后端。</span>
+            </div>
           </div>
 
           <div class="inputContainer">
             <div class="jdl-row">
               <label class="inputLabel inputLabelUnfocused" for="jdl-python">Python 解释器</label>
+              <input id="jdl-python" type="text" class="emby-input jdl-input-inline" placeholder="留空 = 自动探测" />
+              <span id="jdl-python-line" class="fieldDescription"></span>
               <span class="jdl-row__actions">
                 <button id="jdl-python-install" type="button" is="emby-button" class="raised">安装 / 更换 Python</button>
               </span>
             </div>
-            <input id="jdl-python" type="text" class="emby-input" placeholder="留空 = 自动探测" />
-            <div id="jdl-python-line" class="fieldDescription"></div>
-            <div class="fieldDescription">留空自动探测（需 3.9+），也可手填路径。</div>
+            <div class="jdl-row">
+              <span class="fieldDescription">留空自动探测（需 3.9+），也可手填路径。</span>
+            </div>
           </div>
 
           <div class="inputContainer">
-            <label class="inputLabel inputLabelUnfocused" for="jdl-media">媒体目录</label>
-            <input id="jdl-media" type="text" class="emby-input" placeholder="留空 = 从 Jellyfin 解析" />
-            <div class="fieldDescription">片库根目录，留空自动取 Jellyfin 的库路径。</div>
+            <div class="jdl-row">
+              <label class="inputLabel inputLabelUnfocused" for="jdl-media">媒体目录</label>
+              <span class="fieldDescription">片库根目录，留空自动取 Jellyfin 的库路径。</span>
+            </div>
+            <div class="jdl-row">
+              <input id="jdl-media" type="text" class="emby-input jdl-input-block" placeholder="留空 = 从 Jellyfin 解析" />
+            </div>
           </div>
 
           <div class="inputContainer">
-            <label class="inputLabel inputLabelUnfocused" for="jdl-staging">暂存目录</label>
-            <input id="jdl-staging" type="text" class="emby-input" placeholder="留空 = 媒体目录下的 .staging" />
-            <div class="fieldDescription">下载先落这里，验证后再归档；留空即同盘 <code>.staging</code>。</div>
-          </div>
-
-          <div class="inputContainer">
-            <label class="inputLabel inputLabelUnfocused">实际使用</label>
-            <div id="jdl-media-root" class="fieldDescription" style="margin:6px 0 0">读取中…</div>
+            <div class="jdl-row">
+              <label class="inputLabel inputLabelUnfocused" for="jdl-staging">暂存目录</label>
+              <span class="fieldDescription">下载先落这里，验证后再归档；留空即同盘 <code>.staging</code>。</span>
+            </div>
+            <div class="jdl-row">
+              <input id="jdl-staging" type="text" class="emby-input jdl-input-block" placeholder="留空 = 媒体目录下的 .staging" />
+            </div>
           </div>
 
           <button id="jdl-save" type="button" is="emby-button" class="raised button-submit block">保存</button>
@@ -96,8 +112,6 @@
   </div>
   <script type="text/javascript">
     (function () {
-      var pluginId = 'b7f3e2a1-6c4d-4e9b-9a21-7d5c8e1f0a33';
-
       function q(id) { return document.querySelector('#' + id); }
 
       if (!window.ApiClient || !ApiClient.ajax || !ApiClient.getUrl) {
@@ -148,18 +162,12 @@
         var text = q('jdl-backend-status');
         var diag = q('jdl-backend-diag');
         if (!status) { text.textContent = '状态未知'; return; }
-        var parts = [status.running ? '运行中' : '已停止'];
+        var parts = [status.running ? '正在运行' : '已停止'];
         if (status.pid) { parts.push('pid ' + status.pid); }
         parts.push(status.managed ? '插件管理' : (status.running ? '外部进程' : '—'));
         text.textContent = parts.join(' · ');
         diag.textContent = status.scriptExists === false ? '脚本不存在：' + (status.script || '?') : '';
         renderPython(status);
-        var media = q('jdl-media-root');
-        if (media) {
-          media.textContent = '库根 ' + (status.mediaRoot || '?')
-            + '（' + (status.mediaRootSource || '未知') + '）　暂存 ' + (status.stagingRoot || '?')
-            + (status.stagingConfigured ? '（配置页指定）' : '（同盘默认）');
-        }
       }
 
       function refreshStatus() {
@@ -190,7 +198,7 @@
       }
 
       q('jdl-save').addEventListener('click', function () {
-        q('jdl-backend-status').textContent = '保存中…';
+        q('jdl-backend-status').textContent = '正在保存…';
         save().then(function () {
           if (window.Dashboard && Dashboard.processPluginConfigurationUpdateResult) {
             Dashboard.processPluginConfigurationUpdateResult();
@@ -203,7 +211,7 @@
       });
 
       q('jdl-backend-refresh').addEventListener('click', function () {
-        q('jdl-backend-status').textContent = '刷新中…';
+        q('jdl-backend-status').textContent = '正在刷新…';
         refreshStatus();
       });
 
@@ -223,7 +231,7 @@
       });
 
       q('jdl-backend-restart').addEventListener('click', function () {
-        q('jdl-backend-status').textContent = '重启中…';
+        q('jdl-backend-status').textContent = '正在重启…';
         ajax('POST', 'backend/restart', {}).then(function (result) {
           if (result && result.detail) { note(result.detail); }
           renderStatus(result && result.status);
