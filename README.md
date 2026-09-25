@@ -97,6 +97,18 @@ cd jellyfin-plugin-downloader
 
 > 之所以先停服再覆盖：运行中的进程可能在复制途中读到半个 DLL，触发 `BadImageFormatException: Bad IL range`。
 
+### 也可以直接在 Jellyfin 里安装（走本仓库的插件仓库）
+
+仓库根目录的 `manifest.json` 就是一份标准的 Jellyfin 插件仓库清单，把它加进 Jellyfin 即可在插件目录里安装/更新：
+
+```
+https://raw.githubusercontent.com/leigangzhang/jellyfin-plugin-downloader/main/manifest.json
+```
+
+控制台 → 插件 → **仓库** → 添加上面这个地址 → 在插件目录里找到 **Jellyfin Downloader** → 安装 → 按提示重启 Jellyfin。这条路径不需要本机装 .NET SDK，安装包由 [Release v1.0.0.0](https://github.com/leigangzhang/jellyfin-plugin-downloader/releases/tag/v1.0.0.0) 提供（`sourceUrl` + `checksum` 已填好）。
+
+> 两条路径等价：源码构建适合改完代码自测，插件仓库适合装在别的机器上或图省事。
+
 **首次配置**：控制台 → 插件 → **Jellyfin Downloader**
 
 | 配置项 | 默认 | 说明 |
@@ -161,6 +173,7 @@ jellyfin-plugin-downloader/
 │   ├── watch_download.py / verify_media.py / handle_media_issues.py / cleanup_download.py
 │   ├── check_exists.py / media_download_lib.py
 │   └── state/                              # 运行时数据（不入库）：pool / watches / snapshots / pan / marks
+├── manifest.json                           # Jellyfin 插件仓库清单（仓库根目录即插件仓库）
 ├── build.sh                                # 构建 → ./out
 ├── install.sh                              # 安装到 Jellyfin 并重启
 ├── uninstall.sh                            # 干净卸载（不停服、不重启）
@@ -201,7 +214,11 @@ Jellyfin 的卸载按钮只删文件，程序集仍在内存里。重启 Jellyfi
 配置页有「安装 / 更换 Python」按钮；也可以自己 `brew install python`，插件会自动探测到。
 
 **想让它出现在 Jellyfin 的插件目录里？**
-控制台 → 插件 → 仓库 → 添加 `http://127.0.0.1:8096/JellyfinDownloader/manifest.json`（插件自带这个本地仓库端点），之后可在 Jellyfin 内安装与更新。不想要就随时删掉这条仓库；卸载插件时也建议一并删除，否则每次启动都会去拉一个已失效的 manifest。
+两个地址都能用：
+- **公开插件仓库**（推荐，插件还没装时也能用）：`https://raw.githubusercontent.com/leigangzhang/jellyfin-plugin-downloader/main/manifest.json`
+- **插件自带的本地端点**（插件装好之后才有）：`http://127.0.0.1:8096/JellyfinDownloader/manifest.json`
+
+控制台 → 插件 → 仓库 → 添加其一即可，之后可在 Jellyfin 内安装与更新。不想要就随时删掉这条仓库；卸载插件时也建议一并删除，否则每次启动都会去拉一个已失效的 manifest（`./uninstall.sh` 会提示你）。
 
 ---
 
@@ -212,6 +229,14 @@ Jellyfin 的卸载按钮只删文件，程序集仍在内存里。重启 Jellyfi
 - **后端边界**：`backend/` 是随插件走的自包含副本，数据根固定为 `backend/state/`（可用 `JMD_DATA_DIR` 覆盖），与作者本机的下载 skill 完全隔离，互不读写。
 - **后端环境变量**：由插件注入 `JMD_MEDIA_ROOT`（媒体库根）与 `JMD_STAGING_ROOT`（暂存区），脚本读不到时才回落到默认值。
 - **手工验证**：目前没有自动化测试，靠 `./uninstall.sh --verify-only`、Jellyfin 日志、面板快照三者交叉确认。
+
+### 发一个新版本
+
+1. 改 `meta.json` 的 `version`（与 `csproj` 里的 `<Version>` 保持一致）；
+2. `./build.sh`；
+3. 打包：`JellyfinDownloader_<版本>.zip`，**zip 根目录**放 `Jellyfin.Plugin.JellyfinDownloader.dll`、`meta.json`、`icon.png` 和 `backend/*.py`（不要带 `backend/state`、`__pycache__`、`*.log`）；
+4. `gh release create v<版本> JellyfinDownloader_<版本>.zip`；
+5. 更新根目录 `manifest.json`：在 `versions` 数组最前面加一条新的 `{version, changelog, targetAbi, sourceUrl, checksum(md5), timestamp}`（`checksum` 用 `md5 -q <zip>`）。
 
 ---
 
