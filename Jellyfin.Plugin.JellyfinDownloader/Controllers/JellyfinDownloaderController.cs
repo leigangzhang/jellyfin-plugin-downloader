@@ -59,6 +59,47 @@ public class JellyfinDownloaderController : ControllerBase
         return new JsonResult(new
         {
             minScore = config?.MinScore ?? 60,
+            BackendPort = config?.BackendPort ?? 8123,
+            StagingRoot = config?.StagingRoot ?? string.Empty,
+            MediaRoot = config?.MediaRoot ?? string.Empty,
+        });
+    }
+
+    /// <summary>Persists the editable config fields (port / staging directory).</summary>
+    [HttpPost("config")]
+    [Authorize(Policy = "RequiresElevation")]
+    public IActionResult UpdateConfig([FromBody] ConfigUpdate body)
+    {
+        NoCache();
+        var plugin = Plugin.Instance;
+        var config = plugin?.Configuration;
+        if (plugin is null || config is null)
+        {
+            return BadRequest(new { error = "插件未初始化" });
+        }
+
+        if (body.BackendPort is > 0)
+        {
+            config.BackendPort = body.BackendPort.Value;
+        }
+
+        if (body.StagingRoot is not null)
+        {
+            config.StagingRoot = body.StagingRoot.Trim();
+        }
+
+        if (body.MediaRoot is not null)
+        {
+            config.MediaRoot = body.MediaRoot.Trim();
+        }
+
+        plugin.SaveConfiguration();
+        return new JsonResult(new
+        {
+            ok = true,
+            BackendPort = config.BackendPort,
+            StagingRoot = config.StagingRoot,
+            MediaRoot = config.MediaRoot,
         });
     }
 
@@ -204,6 +245,36 @@ public class JellyfinDownloaderController : ControllerBase
         return new JsonResult(new { ok = result.Ok, detail = result.Detail, status = BackendManager.Status() });
     }
 
+    /// <summary>Detects the system python3 (and its version) for the config page.</summary>
+    [HttpGet("python/status")]
+    [Authorize(Policy = "RequiresElevation")]
+    public IActionResult PythonStatus()
+    {
+        NoCache();
+        PythonLocator.Invalidate();
+        return new JsonResult(BackendManager.Status());
+    }
+
+    /// <summary>Guides the user through installing a usable python3 (never runs sudo).</summary>
+    [HttpPost("python/install")]
+    [Authorize(Policy = "RequiresElevation")]
+    public IActionResult PythonInstall()
+    {
+        NoCache();
+        var guide = PythonInstaller.Guide();
+        // 安装动作可能刚把解释器装好，清缓存让「刷新状态」看到最新结果
+        PythonLocator.Invalidate();
+        return new JsonResult(new
+        {
+            ok = guide.Ok,
+            detail = guide.Detail,
+            command = guide.Command,
+            url = guide.Url,
+            options = guide.Options,
+            status = BackendManager.Status(),
+        });
+    }
+
     /// <summary>Re-reads the Jellyfin library paths so the backend gets a fresh MEDIA_ROOT.</summary>
     private void RefreshMediaPaths()
     {
@@ -345,4 +416,17 @@ public class JellyfinDownloaderController : ControllerBase
         using var reader = new StreamReader(stream, Encoding.UTF8);
         return reader.ReadToEnd();
     }
+}
+
+/// <summary>Payload for POST /JellyfinDownloader/config.</summary>
+public class ConfigUpdate
+{
+    /// <summary>Gets or sets the backend port (optional).</summary>
+    public int? BackendPort { get; set; }
+
+    /// <summary>Gets or sets the staging directory (optional).</summary>
+    public string? StagingRoot { get; set; }
+
+    /// <summary>Gets or sets the media library root (optional).</summary>
+    public string? MediaRoot { get; set; }
 }
