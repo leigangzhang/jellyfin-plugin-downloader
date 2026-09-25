@@ -16,11 +16,6 @@
               <button id="jdl-backend-restart" type="button" is="emby-button" class="raised">重启后端</button>
             </div>
             <div id="jdl-backend-diag" class="fieldDescription" style="margin-top:6px"></div>
-            <div id="jdl-python-line" class="fieldDescription" style="margin-top:6px"></div>
-            <div id="jdl-python-install-wrap" style="margin-top:6px">
-              <button id="jdl-python-install" type="button" is="emby-button" class="raised">安装 / 更换 Python</button>
-              <span class="fieldDescription" style="margin-left:10px">给出本机可用的安装途径（不静默安装、不代跑 sudo）；已装好时点它会提示“已安装”，可直接忽略。</span>
-            </div>
             <div class="fieldDescription">后端随插件启用自动启动，无需手动开启；如启动失败或异常，可在这里查看状态并「重启后端」。</div>
           </div>
 
@@ -85,13 +80,13 @@
         if (window.Dashboard && Dashboard.alert) { Dashboard.alert(message); }
       }
 
-      // Python：探到就展示「路径 + 版本 + 来源」；「安装 / 更换 Python」按钮常驻
+      // Python：输入框留空即自动探测；这里回显「当前实际会用的解释器」
       function renderPython(status) {
         var line = q('jdl-python-line');
         if (!line) { return; }
         var found = status && (status.pythonFound || status.pythonOk);
         if (found && status.pythonOk) {
-          line.textContent = 'Python：' + status.python
+          line.textContent = '当前使用：' + status.python
             + (status.pythonVersion ? '（' + status.pythonVersion + '，' + status.pythonSource + '）' : '（' + status.pythonSource + '）');
           return;
         }
@@ -102,7 +97,6 @@
         } else {
           line.textContent = '未检测到可用的 python3（后端需要 3.9+）。';
         }
-        if (wrap) { wrap.style.display = ''; }
       }
 
       function renderStatus(status) {
@@ -136,7 +130,8 @@
         ajax('GET', 'config').then(function (config) {
           q('jdl-port').value = config.BackendPort || 8123;
           q('jdl-staging').value = config.StagingRoot || '';
-          q('jdl-media').value = config.MediaRoot || '';
+          q('jdl-media').value = config.MediaRoot || config.resolvedMediaRoot || '';
+          q('jdl-python').value = config.BackendPython || '';
           return refreshStatus();
         }).catch(function (error) {
           q('jdl-backend-status').textContent = '配置读取失败：' + (error && error.status ? error.status : '网络错误');
@@ -147,7 +142,8 @@
         return ajax('POST', 'config', {
           BackendPort: parseInt(q('jdl-port').value, 10) || 8123,
           StagingRoot: (q('jdl-staging').value || '').trim(),
-          MediaRoot: (q('jdl-media').value || '').trim()
+          MediaRoot: (q('jdl-media').value || '').trim(),
+          BackendPython: (q('jdl-python').value || '').trim()
         });
       }
 
