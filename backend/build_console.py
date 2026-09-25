@@ -61,6 +61,7 @@ KIND_TO_CATEGORY = {
     "variety": "Shows",
     "record": "Records",
 }
+CATEGORIES = ("Movies", "TV Shows", "Shows", "Records")
 # probe_magnets 只认 movie/episode，综艺按剧集、纪录片按电影兜底。
 PROBE_KIND = {
     "movie": "movie",
@@ -119,8 +120,8 @@ def snapshot_key(slug: str, season) -> str:
         return slug
 
 
-def derive_final_dir(title: str, kind: str, year: str = "") -> str:
-    category = KIND_TO_CATEGORY.get(kind, "TV Shows")
+def derive_final_dir(title: str, kind: str, year: str = "", category: str = "") -> str:
+    category = (category or "").strip() or KIND_TO_CATEGORY.get(kind, "TV Shows")
     name = f"{title} ({year})" if year else title
     return os.path.join(MEDIA_ROOT, category, name)
 

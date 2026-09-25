@@ -8,6 +8,17 @@ DEST="${JF}/plugins/JellyfinDownloader_1.0.0.0"
 
 "${ROOT}/build.sh"
 
+# 先停掉 Jellyfin，再覆盖 DLL/后端：否则运行中的进程会在 copy 的瞬间
+# 读到半写好的 DLL，触发 `System.BadImageFormatException: Bad IL range`。
+if pgrep -f "/Applications/Jellyfin.app/Contents/MacOS" >/dev/null 2>&1; then
+  pkill -f "/Applications/Jellyfin.app/Contents/MacOS" 2>/dev/null || true
+  sleep 5
+  if pgrep -f "/Applications/Jellyfin.app/Contents/MacOS" >/dev/null 2>&1; then
+    pgrep -f "/Applications/Jellyfin.app/Contents/MacOS" | xargs -n 20 kill -9 2>/dev/null || true
+    sleep 2
+  fi
+fi
+
 mkdir -p "${DEST}"
 cp "${ROOT}/out/Jellyfin.Plugin.JellyfinDownloader.dll" "${DEST}/"
 cp "${ROOT}/meta.json" "${DEST}/meta.json"
@@ -29,18 +40,6 @@ mkdir -p "${DEST}/backend/state/snapshots" "${DEST}/backend/state/marks"
 
 echo "installed -> ${DEST}"
 
-# 重启 Jellyfin：必须停掉「所有」实例。
-#   1) 只杀端口持有者（lsof -ti :8096）会漏掉绑定失败后空转的实例，多次重启会累积；
-#   2) app 包装进程名是大写 `Jellyfin Server`，真服务端是小写 `jellyfin --webdir …`，
-#      只按其中一个名字杀也会漏。
-# 这里按可执行文件路径统一匹配，两个都覆盖。
-if pgrep -f "/Applications/Jellyfin.app/Contents/MacOS" >/dev/null 2>&1; then
-  pkill -f "/Applications/Jellyfin.app/Contents/MacOS" 2>/dev/null || true
-  sleep 5
-  if pgrep -f "/Applications/Jellyfin.app/Contents/MacOS" >/dev/null 2>&1; then
-    pgrep -f "/Applications/Jellyfin.app/Contents/MacOS" | xargs -n 20 kill -9 2>/dev/null || true
-    sleep 2
-  fi
-fi
+# 重启 Jellyfin（停止逻辑已移到最前面，这里只拉起一个干净实例）。
 open -n /Applications/Jellyfin.app
 echo "jellyfin restarted"

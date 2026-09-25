@@ -14,8 +14,8 @@ namespace Jellyfin.Plugin.JellyfinDownloader;
 ///    （例如库是 `&lt;根&gt;/Movies`、`&lt;根&gt;/TV Shows`，则根就是那个公共父目录）；
 /// 3. 都没拿到时用用户主目录下的占位默认（`~/Media`、`~/Downloads/.staging`）。
 ///
-/// 暂存区的占位默认遵循「同盘暂存」惯例：库根的兄弟目录 `.staging`，
-/// 这样归档能用同盘 `mv` 原子完成。
+/// 暂存区的占位默认遵循「同盘暂存」惯例：媒体根下的 `.staging`
+/// （点开头目录，Jellyfin 不扫描），归档能用同盘 `mv` 原子完成。
 /// </summary>
 public static class MediaPaths
 {
@@ -42,18 +42,18 @@ public static class MediaPaths
     }
 
     /// <summary>
-    /// 暂存区占位默认：库根的兄弟目录 `.staging`（同盘，归档可原子 mv）；
-    /// 库根层级太浅（父目录本身就是卷根，如 /srv/media）时退回 `~/Downloads/.staging`。
+    /// 暂存区占位默认：媒体根**下的** `.staging`（点开头目录，Jellyfin 不扫描，
+    /// 且与库根同盘，归档可原子 mv）。媒体根无效或过浅时退回 `~/Downloads/.staging`。
     /// </summary>
     public static string PlaceholderStagingRoot(string mediaRoot)
     {
-        var parent = Path.GetDirectoryName(Path.GetFullPath(mediaRoot));
-        if (!string.IsNullOrEmpty(parent) && Segments(parent) >= 2)
+        var root = Path.GetFullPath(mediaRoot).TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(root) || Segments(root) < 2)
         {
-            return Path.Combine(parent, ".staging");
+            return Path.Combine(UserHome(), "Downloads", ".staging");
         }
 
-        return Path.Combine(UserHome(), "Downloads", ".staging");
+        return Path.Combine(root, ".staging");
     }
 
     /// <summary>按配置与 Jellyfin 媒体库刷新缓存（配置页读写、启动后端前调用）。</summary>

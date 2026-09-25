@@ -4,7 +4,7 @@
   if (window.__jdlLoaded) { return; }
   window.__jdlLoaded = true;
 
-  var JDL_BUILD = '2026-09-25h';
+  var JDL_BUILD = '2026-09-25i';
   window.__JDL_BUILD = JDL_BUILD;
   // 入口图标：单个向下的箭头。Material 的 `download` 字形带一条底横线，
   // 小尺寸下看着像「两个箭头」，这里统一用 `arrow_downward`（纯单箭头）。
@@ -832,6 +832,27 @@
     });
     threshold.addEventListener('change', renderCandidates);
     controls.appendChild(threshold);
+
+    // 保存到哪个库（分类目录）：默认按条目类型，提交迅雷 / 后台监控时生效，
+    // 落点 = 媒体库根/<分类>/片名 (年份)。
+    var categorySelect = el('select', 'jdl-select');
+    [
+      ['Movies', '\u7535\u5f71'],
+      ['TV Shows', '\u5267\u96c6'],
+      ['Shows', '\u7efc\u827a'],
+      ['Records', '\u7eaa\u5f55\u7247']
+    ].forEach(function (pair) {
+      var option = el('option', null, pair[1]);
+      option.value = pair[0];
+      categorySelect.appendChild(option);
+    });
+    var defaultCategory = (item.Manual && manualSpec().kind === 'movie') || item.Type === 'Movie'
+      ? 'Movies'
+      : 'TV Shows';
+    categorySelect.value = defaultCategory;
+    categorySelect.title = '\u4fdd\u5b58\u5230\u54ea\u4e2a\u5e93\uff08\u63d0\u4ea4\u8fc5\u96f7 / \u540e\u53f0\u76d1\u63a7\u65f6\u751f\u6548\uff09';
+    controls.appendChild(categorySelect);
+
     var onlyEpisode = el('label', 'jdl-toggle');
     var onlyCheckbox = el('input');
     onlyCheckbox.type = 'checkbox';
@@ -898,6 +919,7 @@
       backend: backend, refetch: refetch, kindFilter: 'magnet',
       segAll: segAll, segMagnet: segMagnet, segPan: segPan,
       seasonSelect: seasonSelect,
+      categorySelect: categorySelect,
       strictSeason: true, strictBox: strictBox, strictLabel: strictLabel,
       includePacks: false, packBox: packBox, packLabel: packLabel,
       showAll: false, hidePacks: false,
@@ -1784,7 +1806,8 @@
       final_dir: snapshot.final_dir,
       kind: snapshot.kind,
       series_name: snapshot.query,
-      year: snapshot.year
+      year: snapshot.year,
+      category: state.panel && state.panel.categorySelect ? state.panel.categorySelect.value : ''
     };
     api(endpoint, { type: 'POST', data: payload }).then(function (result) {
       if (!result || result.error) { toast(result && result.error ? result.error : '\u8bf7\u6c42\u5931\u8d25'); return; }
