@@ -61,8 +61,9 @@ backend/state/
 
 ## 媒体库落点与暂存目录
 
-- **媒体库根**由插件从 Jellyfin 的库配置解析：取各库路径的公共父目录作为 `MEDIA_ROOT`，下面按 Movies / TV Shows / Shows / Records 分类；解析不到或布局不符才退回内置默认 `/Volumes/XIAOMI SSD2/Media`（只读，想改就去改 Jellyfin 的库路径）。
-- **暂存目录**可在配置页指定（`StagingRoot`），留空用默认 `/Volumes/XIAOMI SSD2/.staging`。
+- **媒体目录**（配置页「媒体目录」，`MediaRoot`）：留空时由插件从 Jellyfin 的库配置解析——取各库路径的公共父目录作为 `MEDIA_ROOT`，下面按 Movies / TV Shows / Shows / Records 分类；也解析不到时退回占位默认 `~/Media`。
+- **暂存目录**（配置页「暂存目录」，`StagingRoot`）：留空时按「同盘暂存」推导为媒体目录的兄弟目录 `.staging`（例如媒体目录是 `/path/to/media`，暂存就是 `/path/to/.staging`），保证归档能用同盘 `mv` 原子完成；媒体目录层级太浅时退回 `~/Downloads/.staging`。
+- 源码里不含任何机器相关路径：Python 解释器默认用 PATH 上的 `python3`，两个目录默认都从上表推导，可在配置页覆盖（也可以直接改 `Jellyfin.Plugin.JellyfinDownloader.xml`）。
 - 插件启动后端时把这两个值作为 `JMD_MEDIA_ROOT` / `JMD_STAGING_ROOT` 环境变量传给后端，`media_download_lib` 读到就采用，读不到才用自己内置的硬编码兜底。
 
 ## 进程管理（防无限增长 / 失控）

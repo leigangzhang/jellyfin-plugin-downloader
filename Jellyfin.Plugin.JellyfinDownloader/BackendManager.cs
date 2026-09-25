@@ -9,7 +9,8 @@ namespace Jellyfin.Plugin.JellyfinDownloader;
 /// <summary>Starts/stops the local search backend owned by the plugin.</summary>
 public static class BackendManager
 {
-    private const string DefaultPython = "/Users/ray/.pyenv/versions/3.14.6/bin/python3";
+    /// <summary>未配置解释器时用 PATH 上的 python3（源码里不放机器相关路径）。</summary>
+    private const string DefaultPython = "python3";
     private const int DefaultPort = 8123;
     private static readonly object Gate = new();
     private static Process? _process;
@@ -53,7 +54,7 @@ public static class BackendManager
         var python = string.IsNullOrWhiteSpace(config?.BackendPython) ? DefaultPython : config!.BackendPython;
         var script = string.IsNullOrWhiteSpace(config?.BackendScript) ? BundledScriptPath() : config!.BackendScript;
         var port = config?.BackendPort is > 0 ? config!.BackendPort : DefaultPort;
-        var staging = MediaPaths.ResolveStagingRoot(config?.StagingRoot);
+        var staging = MediaPaths.ResolveStagingRoot(config?.StagingRoot, MediaPaths.MediaRoot);
         var running = false;
         int? pid = null;
         var managed = false;
@@ -89,6 +90,7 @@ public static class BackendManager
             mediaLibraryPaths = MediaPaths.Locations,
             stagingRoot = staging,
             stagingConfigured = !string.IsNullOrWhiteSpace(config?.StagingRoot),
+            mediaRootConfigured = !string.IsNullOrWhiteSpace(config?.MediaRoot),
         };
     }
 
@@ -131,7 +133,7 @@ public static class BackendManager
 
             var log = LogPath();
             var command = $"exec '{python}' '{script}' --port {port} >> '{log}' 2>&1";
-            var staging = MediaPaths.ResolveStagingRoot(config.StagingRoot);
+            var staging = MediaPaths.ResolveStagingRoot(config.StagingRoot, MediaPaths.MediaRoot);
             var info = new ProcessStartInfo
             {
                 FileName = "/bin/sh",

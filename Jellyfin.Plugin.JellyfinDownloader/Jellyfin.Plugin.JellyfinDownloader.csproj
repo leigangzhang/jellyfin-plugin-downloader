@@ -13,6 +13,9 @@
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <NoWarn>$(NoWarn);CS1591;NU1603</NoWarn>
+    <!-- 编译产物里不残留构建机的绝对路径（DLL 的 CodeView 段会记录 PDB 路径） -->
+    <Deterministic>true</Deterministic>
+    <PathMap>$(MSBuildProjectDirectory)=/src/jellyfin-plugin-downloader</PathMap>
   </PropertyGroup>
 
   <ItemGroup>
