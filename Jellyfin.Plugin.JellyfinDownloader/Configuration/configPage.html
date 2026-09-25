@@ -2,6 +2,38 @@
 <html lang="zh-CN">
 <head>
   <title>Jellyfin Downloader</title>
+  <style>
+    /* 统一节奏：每个区块「标题在左、操作在右、输入框整行、说明紧贴下方」 */
+    #JellyfinDownloaderConfigPage .jdl-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    #JellyfinDownloaderConfigPage .jdl-row .inputLabel { margin: 0; }
+
+    #JellyfinDownloaderConfigPage .jdl-row__actions {
+      margin-left: auto;
+      display: inline-flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    #JellyfinDownloaderConfigPage .jdl-inline {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+
+    #JellyfinDownloaderConfigPage .jdl-inline .fieldDescription { margin: 0; }
+
+    #JellyfinDownloaderConfigPage .inputContainer > .fieldDescription { margin: 4px 0 0; }
+
+    #JellyfinDownloaderConfigPage .emby-input { width: 100%; }
+  </style>
 </head>
 <body>
   <div id="JellyfinDownloaderConfigPage" data-role="page" class="page type-interior pluginConfigurationPage">
@@ -9,13 +41,17 @@
       <div class="content-primary">
         <form id="jdl-config-form">
           <div class="inputContainer">
-            <label class="inputLabel inputLabelUnfocused">后端服务</label>
-            <div style="display:flex;align-items:center;gap:14px;margin-top:6px;flex-wrap:wrap">
-              <span id="jdl-backend-status" class="fieldDescription" style="margin:0">读取中…</span>
-              <button id="jdl-backend-refresh" type="button" is="emby-button" class="raised">刷新状态</button>
-              <button id="jdl-backend-restart" type="button" is="emby-button" class="raised">重启后端</button>
+            <div class="jdl-row">
+              <label class="inputLabel inputLabelUnfocused">后端服务</label>
+              <span class="jdl-row__actions">
+                <button id="jdl-backend-refresh" type="button" is="emby-button" class="raised">刷新状态</button>
+                <button id="jdl-backend-restart" type="button" is="emby-button" class="raised">重启后端</button>
+              </span>
             </div>
-            <div id="jdl-backend-diag" class="fieldDescription" style="margin-top:6px"></div>
+            <div class="jdl-inline">
+              <span id="jdl-backend-status" class="fieldDescription">读取中…</span>
+              <span id="jdl-backend-diag" class="fieldDescription"></span>
+            </div>
             <div class="fieldDescription">随插件自动启动，异常时点「重启后端」。</div>
           </div>
 
@@ -25,13 +61,15 @@
           </div>
 
           <div class="inputContainer">
-            <label class="inputLabel inputLabelUnfocused" for="jdl-python">Python 解释器</label>
-            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-              <input id="jdl-python" type="text" class="emby-input" style="flex:1;min-width:260px" placeholder="留空 = 自动探测" />
-              <button id="jdl-python-install" type="button" is="emby-button" class="raised">安装 / 更换 Python</button>
+            <div class="jdl-row">
+              <label class="inputLabel inputLabelUnfocused" for="jdl-python">Python 解释器</label>
+              <span class="jdl-row__actions">
+                <button id="jdl-python-install" type="button" is="emby-button" class="raised">安装 / 更换 Python</button>
+              </span>
             </div>
-            <div id="jdl-python-line" class="fieldDescription" style="margin-top:6px"></div>
-            <div class="fieldDescription">留空自动探测（需 3.9+），也可手填路径；右侧按钮提供安装途径。</div>
+            <input id="jdl-python" type="text" class="emby-input" placeholder="留空 = 自动探测" />
+            <div id="jdl-python-line" class="fieldDescription"></div>
+            <div class="fieldDescription">留空自动探测（需 3.9+），也可手填路径。</div>
           </div>
 
           <div class="inputContainer">
