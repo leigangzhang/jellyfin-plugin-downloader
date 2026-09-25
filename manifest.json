@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/leigangzhang/jellyfin-plugin-downloader/main/icon.png",
     "versions": [
       {
+        "version": "1.0.0.1",
+        "changelog": "修复配置页在真实后台不生效（样式/脚本移入 data-role=page 容器）、配置页两行布局与宽度对齐、面板进度行不再默认显示「正在连接后端…」。",
+        "targetAbi": "10.11.11.0",
+        "sourceUrl": "https://github.com/leigangzhang/jellyfin-plugin-downloader/releases/download/v1.0.0.1/JellyfinDownloader_1.0.0.1.zip",
+        "checksum": "31db22b322e6372d3614a43c28df8c88",
+        "timestamp": "2026-09-25T07:55:46.0000000Z"
+      },
+      {
         "version": "1.0.0.0",
         "changelog": "初始版本：详情页「获取资源」入口，搜索+打分后列出 ≥60 分候选。",
         "targetAbi": "10.11.11.0",
