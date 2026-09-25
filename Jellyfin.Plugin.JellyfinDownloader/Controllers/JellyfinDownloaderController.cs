@@ -55,6 +55,7 @@ public class JellyfinDownloaderController : ControllerBase
     public IActionResult GetConfig()
     {
         NoCache();
+        RefreshMediaPaths();
         var config = Plugin.Instance?.Configuration;
         return new JsonResult(new
         {
@@ -62,6 +63,8 @@ public class JellyfinDownloaderController : ControllerBase
             BackendPort = config?.BackendPort ?? 8123,
             StagingRoot = config?.StagingRoot ?? string.Empty,
             MediaRoot = config?.MediaRoot ?? string.Empty,
+            BackendPython = config?.BackendPython ?? string.Empty,
+            resolvedMediaRoot = MediaPaths.MediaRoot,
         });
     }
 
@@ -93,6 +96,12 @@ public class JellyfinDownloaderController : ControllerBase
             config.MediaRoot = body.MediaRoot.Trim();
         }
 
+        if (body.BackendPython is not null)
+        {
+            config.BackendPython = body.BackendPython.Trim();
+            PythonLocator.Invalidate();
+        }
+
         plugin.SaveConfiguration();
         return new JsonResult(new
         {
@@ -100,6 +109,7 @@ public class JellyfinDownloaderController : ControllerBase
             BackendPort = config.BackendPort,
             StagingRoot = config.StagingRoot,
             MediaRoot = config.MediaRoot,
+            BackendPython = config.BackendPython,
         });
     }
 
@@ -429,4 +439,7 @@ public class ConfigUpdate
 
     /// <summary>Gets or sets the media library root (optional).</summary>
     public string? MediaRoot { get; set; }
+
+    /// <summary>Gets or sets the Python interpreter (optional; empty = auto-detect).</summary>
+    public string? BackendPython { get; set; }
 }
