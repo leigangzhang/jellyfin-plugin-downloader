@@ -897,7 +897,10 @@
 
     var progress = el('div', 'jdl-progress');
     progress.appendChild(el('div', 'jdl-progress__bar'));
-    progress.appendChild(el('div', 'jdl-progress__stage', '\u6b63\u5728\u8fde\u63a5\u540e\u7aef\u2026'));
+    // 阶段行默认不显示：没有真实进展时不占一行（有内容时由 setStage 显示）
+    var stageNode = el('div', 'jdl-progress__stage');
+    stageNode.style.display = 'none';
+    progress.appendChild(stageNode);
     // 注意：局部变量不要叫 log/start/… —— 会遮蔽同名顶层函数（var 提升后调用即 TypeError）
     var logEl = el('pre', 'jdl-log');
     progress.appendChild(logEl);
@@ -1161,11 +1164,20 @@
     }).catch(function () { done(); });
   }
 
+  // 进度阶段行：有内容才显示，空字符串直接把这一行收起来
+  function setStage(progressEl, text) {
+    if (!progressEl) { return; }
+    var node = progressEl.querySelector('.jdl-progress__stage');
+    if (!node) { return; }
+    node.textContent = text || '';
+    node.style.display = text ? '' : 'none';
+  }
+
   function finishProgress(text) {
     var panel = state.panel;
     if (!panel) { return; }
     panel.progress.classList.add('jdl-progress--done');
-    panel.progress.querySelector('.jdl-progress__stage').textContent = text || '';
+    setStage(panel.progress, text);
   }
 
   function checkBackendThenSearch(item) {
@@ -1236,7 +1248,7 @@
       if (current.subEl && current.cacheOnly) { current.subEl.textContent = manualSubtitle(); }
       current.summary.textContent = '\u6b63\u5728\u83b7\u53d6\u2026';
       current.progress.classList.remove('jdl-progress--done');
-      current.progress.querySelector('.jdl-progress__stage').textContent = '\u6b63\u5728\u8fde\u63a5\u540e\u7aef\u2026';
+      setStage(current.progress, '\u6b63\u5728\u8fde\u63a5\u540e\u7aef\u2026');
     }
     api('search', { type: 'POST', data: searchParams(item) }).then(function (result) {
       if (!result || result.error) {
@@ -1281,7 +1293,7 @@
           seen = lines.length;
         }
         var stage = (lines[lines.length - 1] || '').trim();
-        if (stage) { panel.progress.querySelector('.jdl-progress__stage').textContent = stage; }
+        if (stage) { setStage(panel.progress, stage); }
         if (result.done) {
           clearInterval(state.timer);
           state.timer = null;
@@ -1312,7 +1324,7 @@
     if (!panel) { return; }
     if (state.timer) { clearInterval(state.timer); state.timer = null; }
     panel.progress.classList.add('jdl-progress--done');
-    panel.progress.querySelector('.jdl-progress__stage').textContent = message;
+    setStage(panel.progress, message);
     panel.summary.textContent = message;
     panel.list.innerHTML = '';
     var empty = el('div', 'jdl-empty');
@@ -1322,7 +1334,7 @@
       var startBtn = el('button', 'jdl-btn jdl-btn--primary', '\u542f\u52a8\u540e\u7aef');
       startBtn.type = 'button';
       startBtn.addEventListener('click', function () {
-        panel.progress.querySelector('.jdl-progress__stage').textContent = '\u6b63\u5728\u542f\u52a8\u540e\u7aef\u2026';
+        setStage(panel.progress, '\u6b63\u5728\u542f\u52a8\u540e\u7aef\u2026');
         startBackend(startBtn, null);
       });
       empty.appendChild(startBtn);
@@ -1330,7 +1342,7 @@
     var retry = el('button', 'jdl-btn jdl-btn--ghost', '\u91cd\u8bd5');
     retry.type = 'button';
     retry.addEventListener('click', function () {
-      panel.progress.querySelector('.jdl-progress__stage').textContent = '\u6b63\u5728\u8fde\u63a5\u540e\u7aef\u2026';
+      setStage(panel.progress, '\u6b63\u5728\u8fde\u63a5\u540e\u7aef\u2026');
       panel.progress.classList.remove('jdl-progress--done');
       panel.list.innerHTML = '';
       checkBackendThenSearch(panelTarget());
