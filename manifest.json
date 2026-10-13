@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/leigangzhang/jellyfin-plugin-downloader/main/icon.png",
     "versions": [
       {
+        "version": "1.0.0.7",
+        "changelog": "单源默认开启：搜索只走「片名 + DDHDTV」档位并只保留该发布者候选；该源没有资源的片名会明确打印 PUBLISHER_ONLY_EMPTY 并提示如何退回全源搜索（控制台仍可用 publisher_only:false 单次关闭）。",
+        "targetAbi": "10.11.11.0",
+        "sourceUrl": "https://github.com/leigangzhang/jellyfin-plugin-downloader/releases/download/v1.0.0.7/JellyfinDownloader_1.0.0.7.zip",
+        "checksum": "a6040487f6ff98bcffb23f5a1497b691",
+        "timestamp": "2026-10-13T12:30:00.0000000Z"
+      },
+      {
         "version": "1.0.0.6",
         "changelog": "下载任务建立后由插件主动把种子文件写进任务目录（不再依赖迅雷自己落盘），避免恢复下载时报「获取种子文件失败」；新增单源模式 --publisher-only / 控制台 publisher_only，只搜索并只保留「高清剧集网发布 www.DDHDTV.com」的候选（默认关）。",
         "targetAbi": "10.11.11.0",

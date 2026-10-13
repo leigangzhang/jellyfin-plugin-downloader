@@ -384,8 +384,10 @@ class Handler(BaseHTTPRequestHandler):
         # 严格按季：只跑季关键词，不带基础片名（默认开；关掉则整剧+季词都跑）
         strict_season = bool(body.get("strict_season", True))
         # 单源：只搜被偏好的发布者（高清剧集网 / DDHDTV），并只保留该源候选。
-        # 默认关——这是「只要这一家源」的强约束，不该悄悄替用户收窄候选面。
-        publisher_only = bool(body.get("publisher_only", False))
+        # **默认开**（2026-10-13 使用者要求「开启单源」）：候选面收窄成一家源。
+        # 仍可用 body 里的 "publisher_only": false 单次关掉——该源没有资源的片名
+        # 会搜不到候选，所以保留这个退路，且空结果会被打印成 PUBLISHER_ONLY_EMPTY。
+        publisher_only = bool(body.get("publisher_only", True))
         final_dir = body.get("final_dir") or bc.derive_final_dir(title, kind, year)
         if not valid_target_dir(final_dir):
             return self._bad("final_dir must be inside staging or Media")

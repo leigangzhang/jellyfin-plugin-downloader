@@ -1215,6 +1215,23 @@ def main():
                     ensure_ascii=False,
                 )
             )
+            if not kept:
+                # 单源模式下「一条都没有」必须说清是哪来的空：该源没有这个片名，
+                # 而不是搜索坏了或索引挂了。否则使用者只会看到一个空结果。
+                print(
+                    "PUBLISHER_ONLY_EMPTY "
+                    + json.dumps(
+                        {
+                            "publisher": PUBLISHER_QUERY_TOKEN,
+                            "dropped": dropped,
+                            "reason": (
+                                "被偏好的发布者没有这个片名的资源；"
+                                "用 --publisher-only 关掉可回到全源搜索"
+                            ),
+                        },
+                        ensure_ascii=False,
+                    )
+                )
             candidates = kept
 
         usable = [
