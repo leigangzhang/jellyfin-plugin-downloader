@@ -109,7 +109,7 @@
       ],
       "evidence": [
         "python3 tools/check-invariants.py",
-        "<your Markdown link/lint check>"
+        "read the changed page as its reader and follow every link; pair-docs already resolves links inside paired documents, but the unpaired pages (README.md, AGENTS.md, evidence records) have no link checker in this repository yet"
       ],
       "why": "Prose states current state; links and budgets are checked mechanically. Generated evidence records are written by tools/run-evidence.py, so they are excluded here: they are not hand-authored prose, and pairing already excludes them.",
       "exclude": [

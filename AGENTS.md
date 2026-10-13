@@ -29,9 +29,10 @@
 
 ## Read first
 
+- **套件文档总入口：[docs/kit.md](docs/kit.md)**——套件是什么、三个采用分档、以及「去哪找什么」的路由表都在那一页；
+  各家的归属索引在 [docs/README.md](docs/README.md)。
 - 本仓库用的是 agent-workflow-kit 的**最小档**：十一站的进出口、每站的闸门与反模式在 [dev/README.md](dev/README.md)；
   装了哪几站在 [tools/tiers.json](tools/tiers.json)（发布、演化、退役、否决记录、事故复盘都声明为 `none`，别为它们造文件）。
-- 套件是什么、有哪些家、各自归谁管：[docs/README.md](docs/README.md)（索引入口；套件总览与三个采用分档在 [docs/kit.md](docs/kit.md)）。
 - 写或改测试前读 [docs/testing.md](docs/testing.md)；写或改文档前读 [docs/documentation.md](docs/documentation.md)；
   给概念、检查或文档 kind 命名前读 [docs/glossary.md](docs/glossary.md)；把术语讲给没读过套件的人之前读
   [docs/plain-language.md](docs/plain-language.md)；改一份成对文档前读 [docs/i18n.md](docs/i18n.md)；

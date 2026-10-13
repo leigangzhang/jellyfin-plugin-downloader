@@ -6,6 +6,8 @@ obj/
 
 # Python
 __pycache__/
+tools/__pycache__/
+tests/__pycache__/
 *.py[cod]
 
 # 运行时数据：pool / watches / pan / marks / snapshots 由插件自己维护，不入库
