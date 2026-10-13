@@ -461,10 +461,10 @@ public class JellyfinDownloaderController : ControllerBase
             return;
         }
 
-        var config = Plugin.Instance?.Configuration;
-        var baseUrl = string.IsNullOrWhiteSpace(config?.BackendBaseUrl)
-            ? "http://127.0.0.1:8123"
-            : config!.BackendBaseUrl.TrimEnd('/');
+        // 必须用 BackendManager.BaseUrl，不能读 config.BackendBaseUrl：端口被占用时会
+        // 自增（8123 → 8124），而配置里那个字段全仓没有写入点、永远停在 8123。照它转发
+        // 会让面板的 search/submit/watch/verify/mark/cleanup/pan 在自增端口下全部 502。
+        var baseUrl = BackendManager.BaseUrl;
         var target = $"{baseUrl}/api/{path}{Request.QueryString.Value}";
 
         using var request = new HttpRequestMessage(new HttpMethod(Request.Method), target);

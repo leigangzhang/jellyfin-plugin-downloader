@@ -128,6 +128,15 @@ def backend_modules():
     return sorted(path for path in BACKEND.glob("*.py"))
 
 
+def pick_free_port() -> int:
+    """借一个当前没人监听的端口（绑 0 让内核给，立刻释放）。"""
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
 class RetiredPathsTests(unittest.TestCase):
     """删掉的通道必须真的消失，且不许以「读侧还在读」的形式留下。"""
 
@@ -617,6 +626,62 @@ class SiteUrlClassificationTests(unittest.TestCase):
         self.assertIn("row._kind", page, "站点行必须记住后端给的 kind")
         self.assertIn("Kind: item.kind", page, "save 必须把 kind 原样发回")
         self.assertIn("siteHintFor(item.address, row._kind)", page, "自定义站要按声明类型显示")
+
+    def test_the_http_proxy_follows_the_effective_port(self):
+        """面板的数据面调用必须走「实际监听端口」，不能走配置里的固定 URL。
+
+        `PluginConfiguration.BackendBaseUrl` 全仓没有写入点（永远停在 8123），而端口
+        被占用时后端会自增到 8124——代理照那个字段转发的话，面板的 snapshot/search/
+        submit/watch/verify/mark/cleanup/pan 全部 502，「端口占用自增」端到端失效。
+        这里同时钉住两侧：C# 代理不得再直接读那个字段，且代理拼出的目标地址在
+        自增端口上真的能打到后端。
+        """
+        controller = (ROOT / "Jellyfin.Plugin.JellyfinDownloader" / "Controllers"
+                      / "JellyfinDownloaderController.cs").read_text(encoding="utf-8")
+        proxy = controller[controller.index("public async Task Proxy(string path)"):]
+        proxy = proxy[:proxy.index("private static bool IsAllowed")]
+        # 只看可执行代码，注释里点名这个字段是允许的（那是写给下一个读者的）
+        code = "\n".join(line for line in proxy.splitlines()
+                         if not line.strip().startswith("//"))
+        self.assertNotIn("BackendBaseUrl", code, "代理必须走 BackendManager.BaseUrl")
+        self.assertIn("var baseUrl = BackendManager.BaseUrl;", code)
+
+        # 行为侧：起一个真实后端，把「自增端口」当 EffectivePort，按代理的拼法打一发
+        import subprocess
+        import tempfile
+        import urllib.request
+
+        with tempfile.TemporaryDirectory() as tmp:
+            port = pick_free_port()
+            env = dict(os.environ, JMD_DATA_DIR=tmp)
+            server = subprocess.Popen(
+                [sys.executable, "-u", str(BACKEND / "console_server.py"),
+                 "--port", str(port)],
+                env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            try:
+                # 事件驱动等启动：后端就绪时会打出含端口的启动行，读出它即可，
+                # 不轮询、不 sleep（`tools/check-invariants.py` 有 no-time-based-test-sync）。
+                ready = ""
+                for line in server.stdout:
+                    if f":{port}/" in line or "JMD 控制台" in line:
+                        ready = line.strip()
+                        break
+                self.assertTrue(ready, "后端没有打出启动行")
+
+                # 代理拼法（Controller.Proxy）：baseUrl + "/api/" + path + query
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/api/snapshot?slug=jdlping")
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+
+                self.assertEqual(payload.get("service"), "jellyfin-downloader-backend")
+                self.assertIn("candidates", payload, "打到的不像快照响应")
+            finally:
+                server.terminate()
+                try:
+                    server.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    server.kill()
 
     def test_the_backend_announces_itself_with_the_same_marker_the_plugin_looks_for(self):
         """自身标识是 C# 与 Python 之间的字面量契约。
