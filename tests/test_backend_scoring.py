@@ -480,3 +480,62 @@ class GoldenFixture(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PublisherSourcePreference(unittest.TestCase):
+    """发布者偏好：有界的源可用性倾斜，加在总分上。
+
+    依据（2026-10-13 本机实测，全部可复现）：同一机器同一时段内，
+    `【高清剧集网发布 www.DDHDTV.com】…` 那条经 watch 记录与磁盘增量双向印证跑到
+    9.3–9.7MB/s；而同期两个非该源的星期三候选在 30 秒窗口里逻辑字节增长为 0。
+    使用者另有 10+ 次同源可用记录。
+    """
+
+    DD = ("【高清剧集网发布 www.DDHDTV.com】挑情丑闻[全8集][简繁英字幕]"
+          ".The.Scandal.S01.2160p.NF.WEB-DL")
+    PLAIN = "挑情丑闻[全8集][简繁英字幕].The.Scandal.S01.2160p.NF.WEB-DL"
+
+    def test_preference_adds_a_bounded_bonus_to_the_total(self):
+        hit = scored(name=self.DD)
+        miss = scored(name=self.PLAIN)
+        self.assertEqual(hit["breakdown"]["source_preference"], SCORING.DDHDTV_SOURCE_BONUS)
+        self.assertEqual(miss["breakdown"]["source_preference"], 0.0)
+        self.assertAlmostEqual(
+            hit["score"] - miss["score"], SCORING.DDHDTV_SOURCE_BONUS, places=1)
+
+    def test_preference_does_not_touch_any_dimension(self):
+        """加分不能伪装成画质/体验/速度——四个维度必须逐位相同。"""
+        self.assertEqual(scored(name=self.DD)["dimensions"], scored(name=self.PLAIN)["dimensions"])
+
+    def test_preference_is_bounded_and_ranked_by_bitrate_not_by_label(self):
+        """有界性用「码率达标」的口径测，而不是用分辨率标签。
+
+        踩过的坑：这一条最初写成「720p 命中 vs 2160p 未命中」和「1080p 未命中 vs
+        2160p 命中」，两次都失败——因为画质分比的是**码率充分性**：夹具给的是固定
+        8.5Mbps，它对 2160p 的 20Mbps 目标只有 0.16，对 1080p 的 5Mbps 目标却是达标。
+        所以那些比较实际在测码率，不是测标签；断言照标签写会得出反直觉结论。
+        """
+        same_plain = scored(name=self.PLAIN)
+        same_preferred = scored(name=self.DD)
+        self.assertGreater(same_preferred["score"], same_plain["score"])
+
+        # 码率同等充分时，偏好不足以越过分辨率差距（1080p vs 480p，差 6.2 分）。
+        two_step_plain = scored(
+            name=self.PLAIN.replace("2160p", "1080p"), estimated_bitrate_mbps=8.5)
+        two_step_preferred = scored(
+            name=self.DD.replace("2160p", "480p"), estimated_bitrate_mbps=8.5)
+        self.assertGreater(two_step_plain["score"], two_step_preferred["score"])
+
+        # 反过来，当高分辨率那侧码率严重不达标时，命中源的 1080p 应当胜出——
+        # 这是刻意结果：偏好是倾斜，而码率不足本身就是画质缺陷。
+        starved_2160 = scored(
+            name=self.DD.replace("2160p", "2160p"), estimated_bitrate_mbps=8.5)
+        healthy_1080 = scored(
+            name=self.PLAIN.replace("2160p", "1080p"), estimated_bitrate_mbps=8.5)
+        self.assertLess(starved_2160["score"], healthy_1080["score"])
+
+    def test_preference_matches_the_chinese_publisher_token_too(self):
+        self.assertEqual(
+            scored(name="高清剧集网发布 某剧 1080p")["breakdown"]["source_preference"],
+            SCORING.DDHDTV_SOURCE_BONUS,
+        )

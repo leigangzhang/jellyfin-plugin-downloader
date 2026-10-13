@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/leigangzhang/jellyfin-plugin-downloader/main/icon.png",
     "versions": [
       {
+        "version": "1.0.0.4",
+        "changelog": "选种新增发布者偏好：命中「高清剧集网发布 www.DDHDTV.com」的候选在总分上加固定 4 分（不并入任何维度，可在 breakdown 看到）；搜索阶梯新增「片名 + DDHDTV」档位，能搜到按剧名够不着的该源资源。",
+        "targetAbi": "10.11.11.0",
+        "sourceUrl": "https://github.com/leigangzhang/jellyfin-plugin-downloader/releases/download/v1.0.0.4/JellyfinDownloader_1.0.0.4.zip",
+        "checksum": "880e0d529a5559abaf8131d71c2e7cfc",
+        "timestamp": "2026-10-13T10:00:00.0000000Z"
+      },
+      {
         "version": "1.0.0.3",
         "changelog": "文档与入口整理（CLAUDE.md 改为套件入口指针、AGENTS.md 的 Read first/Commands 两段移出并把命令并入 README、9 处指向旧锚点的链接改指 README）。取源链功能与 1.0.0.2 相同。",
         "targetAbi": "10.11.11.0",

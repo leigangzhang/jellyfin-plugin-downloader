@@ -90,6 +90,12 @@ DEFAULT_PAGE_TIMEOUT = 20
 # 下游 probe 的软预算，与控制台 PROBE_BUDGET_SECS 同值；只用于结尾提示文案。
 PROBE_BUDGET_SECS_HINT = 720
 DEFAULT_EXTRA_SOURCES = ("torrents-csv",)
+# 发布者定向档位：`<片名> DDHDTV` 在这个索引上几乎只返回该发布者的条目
+# （2026-10-13 实测：`Wednesday DDHDTV` 20/20 命中、`挑情丑闻 DDHDTV` 1/1）。
+# 它比按剧名搜索可靠得多——该源把《星期三》命名为《周三俱乐部》，
+# 所以 `Wednesday S01` 一条都搜不到它，而 `Wednesday DDHDTV` 能。
+# token 只用 ASCII，且该档位按「中英不混搭」规则只在片名含 ASCII 时生效。
+PUBLISHER_QUERY_TOKEN = "DDHDTV"
 # 第二阶段源在同一个 wall-clock 预算里预留的切片（秒）；剩不到 3s 就整段跳过。
 EXTRA_SOURCE_MIN_SECS = 3.0
 DEFAULT_EXTRA_SOURCE_RESERVE_SECS = 8.0
@@ -185,6 +191,11 @@ def build_query_plan(
         add(name, "alias")
     if year:
         add(f"{title} {year}", "year")
+    # 发布者档位：在裸片名之前试一次「片名 + 发布者」——它比裸片名精确得多
+    # （该源会用完全不同的中文名发布同一部剧），而且只在片名含 ASCII 时才有意义。
+    for name in names:
+        if re.search(r"[A-Za-z]", name):
+            add(f"{name} {PUBLISHER_QUERY_TOKEN}", "publisher")
     for name in names:
         add(name, "title")
     for hint in collection_hints:

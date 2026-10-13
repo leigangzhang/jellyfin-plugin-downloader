@@ -311,10 +311,36 @@ class QueryLadderTests(unittest.TestCase):
             "狂飙", ["The Knockout"], year="2023", collection_hints=["全集"])
         self.assertEqual(plan[0], {"query": "The Knockout 2023", "tier": "alias-year"})
         tiers = [step["tier"] for step in plan]
-        self.assertEqual(tiers[:4], ["alias-year", "alias", "year", "title"])
-        self.assertLess(tiers.index("alias-year"), tiers.index("title"))
-        self.assertLess(tiers.index("alias"), tiers.index("title"))
+        self.assertEqual(tiers[:3], ["alias-year", "alias", "year"])
+        # 发布者档位排在裸片名之前（它比裸片名精确），但仍让位于别名/年份。
+        self.assertIn("publisher", tiers)
+        self.assertLess(tiers.index("alias"), tiers.index("publisher"))
+        self.assertLess(tiers.index("publisher"), tiers.index("title"))
         self.assertEqual(plan[2]["query"], "狂飙 2023")
+
+    def test_publisher_tier_targets_the_source_by_name(self):
+        """发布者档位是搜到 DDHDTV 源的唯一可靠方式。
+
+        实测（2026-10-13）：该源把《星期三》命名为《周三俱乐部》，所以
+        `Wednesday S01` 一条都搜不到它，而 `Wednesday DDHDTV` 能 17/17 命中。
+        """
+        plan = search_pool.build_query_plan("Wednesday", year="2022")
+        queries = [step["query"] for step in plan]
+        self.assertIn("Wednesday DDHDTV", queries)
+        self.assertLess(queries.index("Wednesday DDHDTV"), queries.index("Wednesday"))
+        tiers = [step["tier"] for step in plan]
+        self.assertLess(tiers.index("publisher"), tiers.index("title"))
+
+    def test_publisher_tier_is_skipped_for_pure_cjk_titles(self):
+        """档位 token 是 ASCII，按「中英不混搭」规则不该用在纯中文片名上。"""
+        plan = search_pool.build_query_plan("狂飙", year="2023")
+        self.assertNotIn("狂飙 DDHDTV", [step["query"] for step in plan])
+
+    def test_publisher_tier_is_skipped_in_strict_mode(self):
+        """严格按季只跑 `<name> <hint>` 组合，发布者档位不得混进季内搜索。"""
+        plan = search_pool.build_query_plan(
+            "Wednesday", collection_hints=["S01"], strict_match=True)
+        self.assertNotIn("publisher", [step["tier"] for step in plan])
 
     def test_without_alias_the_ladder_still_reaches_the_title(self):
         plan = search_pool.build_query_plan("流浪地球2", year="2023")

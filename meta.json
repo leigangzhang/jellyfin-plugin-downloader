@@ -1,14 +1,14 @@
 {
   "category": "General",
-  "changelog": "1.0.0.3：文档与入口整理（CLAUDE.md 改为套件入口指针、AGENTS.md 的 Read first/Commands 两段移出并把命令并入 README、9 处指向旧锚点的链接改指 README）。取源链功能与 1.0.0.2 相同。",
+  "changelog": "1.0.0.4：选种新增发布者偏好——命中「高清剧集网发布 www.DDHDTV.com」的候选在总分上加固定 4 分（不并入任何维度，可在面板 breakdown 里看到）；搜索阶梯新增「片名 + DDHDTV」档位，能搜到按剧名够不着的该源资源。",
   "description": "在电影/剧集/单集详情页提供「获取资源」入口（仅管理员）。",
   "guid": "b7f3e2a1-6c4d-4e9b-9a21-7d5c8e1f0a33",
   "name": "Jellyfin Downloader",
   "overview": "详情页「获取资源」：搜索源、打分，列出 ≥60 分候选。",
   "owner": "ray",
   "targetAbi": "10.11.11.0",
-  "timestamp": "2026-10-13T09:00:00.0000000Z",
-  "version": "1.0.0.3",
+  "timestamp": "2026-10-13T10:00:00.0000000Z",
+  "version": "1.0.0.4",
   "status": "Active",
   "autoUpdate": false,
   "assemblies": []

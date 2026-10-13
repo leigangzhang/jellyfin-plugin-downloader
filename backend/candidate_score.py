@@ -430,9 +430,24 @@ def _quality_score(candidate, attrs, target_mbps):
 # 相邻两次 10s 探针的吞吐可差 26.3×（87.473 vs 3.327 MB/s），跨 hash 排序
 # ρ=-0.214。所以实测只能作为加分项，任何一次「0 字节 / 低吞吐」都不允许把候选
 # 压到它按 seeders 先验应得的分以下（t1-audit.md R1）。
+# 发布者偏好：`高清剧集网发布 www.DDHDTV.com` 是网盘/迅雷系的转载发布，实测同机同
+# 时段内它 9.3–9.7MB/s（watch 记录 + 磁盘增量双向印证），而同期两个非该源的候选在
+# 30 秒窗口里逻辑字节增长为 0；使用者的历史记录里该源也多次可用。
+#
+# 它加在**总分**上，不加在任何一个维度里——理由是一次实测踩到的：DDHDTV 候选的体验
+# 维度常年已经接近 1.0，把它加在体验上会被维度上限夹掉（实测只值 1.3 分而非 4.4 分）。
+# 加在总分上则是一个固定、可审计、可撤销的倾斜量。
+#
+# 语义边界：它表达的是「这个源在迅雷侧更可能可用」，不是「画质更好」也不是「种子更多」。
+# 所以它不参与 QUALITY/EXPERIENCE 权重，也不改其它四个子分——只是在加权和之后加一个
+# 有界的常数，量级保证「同片同档位下偏好源优先」，又不足以压过显著的画质/体积差异。
+DDHDTV_SOURCE_TOKENS = ("ddhdtv", "高清剧集网")
+DDHDTV_SOURCE_BONUS = 4.0
+
 SPEED_MEASURED_MIN_MBPS = 0.001
 SPEED_UNMEASURED_NEUTRAL = 0.40
 SPEED_DEAD_SWARM = 0.05
+
 
 
 # 外部索引快照（第二磁力源 torrents-csv）的种子数折扣（t9 报告 F4 的接口契约）：
@@ -756,6 +771,15 @@ def score_candidate(candidate, policy=None):
     }
     weights = policy["weights"]
     total = 100.0 * sum(dimensions[name] * weights[name] for name in dimensions)
+    # 发布者偏好：有界的源可用性倾斜（见文件头部 DDHDTV_SOURCE_* 注释）。
+    # 命中时把它记进 breakdown，好让「为什么这条排在前面」在面板与审计里有据可查。
+    name_lower = (candidate.get("name") or "").lower()
+    source_preference = (
+        DDHDTV_SOURCE_BONUS
+        if any(token in name_lower for token in DDHDTV_SOURCE_TOKENS)
+        else 0.0
+    )
+    total += source_preference
     if candidate.get("metadata_missing"):
         total *= 0.85
     total *= SOURCE_PENALTIES.get(attrs["source"], 1.0)
@@ -781,6 +805,7 @@ def score_candidate(candidate, policy=None):
             },
             "fit": fit_parts,
             "target_bitrate_mbps": round(target_mbps, 2),
+            "source_preference": source_preference,
         },
         "attrs": attrs,
     }
