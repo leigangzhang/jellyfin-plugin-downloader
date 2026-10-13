@@ -49,6 +49,11 @@ MIME = {
     ".svg": "image/svg+xml",
 }
 
+# 自身标识：插件侧的 BackendManager.Reachable() 靠它区分「我们的后端」与「恰好占着
+# 这个端口的外来 HTTP 服务」。两边的字面量是同一个契约——改一处必须改另一处，
+# tests/test_backend_retired_paths.py 有一条守卫盯着。
+SERVICE_ID = "jellyfin-downloader-backend"
+
 # 单轮时限口径（各阶段单位耗时来自 2026-10-13 实测，单轮总时长是按这些单位耗时推算的；
 # 原始数据见 /tmp/jmd-audit/t3-speed.md、t4-pipeline.md）：
 #   * probe 不再跑速度实测：10s 探针的重复散布 1.16–8.50×，不足以排序，
@@ -259,6 +264,10 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _ok(self, obj):
+        # 每个 JSON 响应都带上自身标识（只加一个 key，不改已有字段）：
+        # 插件侧据此确认「这个端口上坐着的是我们的后端」。
+        if isinstance(obj, dict) and "service" not in obj:
+            obj = {**obj, "service": SERVICE_ID}
         self._send(200, obj)
 
     def _bad(self, msg):

@@ -16,6 +16,12 @@ public static class BackendManager
 {
     private const int DefaultPort = 8123;
 
+    /// <summary>
+    /// 后端每个 JSON 响应里带的自身标识，取值与 <c>backend/console_server.py</c> 的
+    /// <c>SERVICE_ID</c> 必须逐字相同（两边各有守卫盯着）。
+    /// </summary>
+    private const string ServiceMarker = "jellyfin-downloader-backend";
+
     /// <summary>端口自增时最多往后试这么多个（8123→8124→…）。</summary>
     private const int PortScanSpan = 20;
     private static readonly object Gate = new();
@@ -46,14 +52,29 @@ public static class BackendManager
         }
     }
 
-    /// <summary>Probes whether the backend answers.</summary>
+    /// <summary>
+    /// Probes whether <b>our</b> backend answers. 端口上恰好坐着别人的 HTTP 服务时也会
+    /// 返回 4xx/2xx，所以不能只看状态码：后端每个 JSON 响应都带 `service` 字段
+    /// （`backend/console_server.py` 的 `SERVICE_ID`），只认带这个字段的响应。
+    /// 必须读完整响应再解析——那个字段在 JSON 末尾（实测 7.5KB 响应里在偏移 7228），
+    /// 只读前若干字节会认不出自己的后端。
+    /// </summary>
     public static bool Reachable()
     {
         try
         {
-            using var client = new HttpClient { Timeout = TimeSpan.FromMilliseconds(1500) };
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
             using var response = client.GetAsync(BaseUrl + "/api/snapshot?slug=jdlping").GetAwaiter().GetResult();
-            return (int)response.StatusCode < 500;
+            if (!response.IsSuccessStatusCode)
+            {
+                return false;
+            }
+
+            var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+            using var document = JsonDocument.Parse(body);
+            return document.RootElement.TryGetProperty("service", out var service)
+                && service.ValueKind == JsonValueKind.String
+                && string.Equals(service.GetString(), ServiceMarker, StringComparison.Ordinal);
         }
         catch
         {
@@ -273,6 +294,11 @@ public static class BackendManager
     /// 收掉后端自己记在 pidfile 里的进程（插件重启/崩溃后留下的孤儿）。
     /// pidfile 由后端在启动时写入、退出时删除，所以里面的 pid 只可能是这个后端；
     /// 读不到就直接返回，绝不去猜「谁占着端口」。
+    ///
+    /// 已知的窄边界：后端被 SIGKILL 后 pid 恰好被系统复用给别的进程时，这里可能向
+    /// 那个无关进程发 TERM（pidfile 无随机 token，凭 pid 无法百分之百确认身份）。
+    /// 不为此加机制：插件的启停基本发生在有用户交互时，pid 复用的前提是插件崩溃
+    /// 后有新进程恰好拿到同一个 pid——概率低到不值得再加一层状态。
     /// </summary>
     private static void StopRecordedBackend()
     {

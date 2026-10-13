@@ -353,14 +353,17 @@
 
       // ---- 资源站点 ----
 
-      function siteHintFor(address) {
+      function siteHintFor(address, kind) {
         var value = (address || '').trim();
+        var declared = (kind || '').trim();
         if (!value) { return ''; }
         if (value.indexOf('{q}') >= 0) { return value + ' · 云盘搜索页'; }
         var host = '';
         try { host = new URL(value).hostname.toLowerCase(); } catch (error) { host = ''; }
         if (host === 'm.diao.im' || host === 'diao.im') { return 'diao.im · 搜索 API'; }
         if (host === 'torrents-csv.com' || host === 'www.torrents-csv.com') { return 'torrents-csv · 聚合索引'; }
+        // 自建站（老 XML 里声明过类型的那种）：地址认不出来，但配置里带着类型，照实显示。
+        if (declared && host) { return host + ' · ' + declared + '（自定义）'; }
         return host ? host + ' · 未能识别' : '';
       }
 
@@ -370,21 +373,33 @@
         list.setAttribute('data-placeholder', 'https://站点地址/api/search');
         var items = (sites || []).map(function (site) {
           var address = (site.baseUrl || site.base_url || '').trim();
-          return address || (site.webSearchUrl || '').trim();
+          return {
+            address: address || (site.webSearchUrl || '').trim(),
+            // 原样留着后端给的 kind：手改 XML 的自建站（未知主机 + 显式 kind）在页面
+            // 上没有可编辑的类型字段，保存时必须原样带回，否则一次保存就会被校验拒掉。
+            kind: (site.kind || '').trim()
+          };
         });
-        (items.length ? items : ['']).forEach(function (address) {
-          var row = appendRow(list, { value: address, placeholder: 'https://站点地址/api/search' });
-          row._field.caption.textContent = siteHintFor(address);
+        (items.length ? items : [{ address: '', kind: '' }]).forEach(function (item) {
+          var row = appendRow(list, { value: item.address, placeholder: 'https://站点地址/api/search' });
+          row._kind = item.kind;
+          row._field.caption.textContent = siteHintFor(item.address, row._kind);
           row._field.input.addEventListener('input', function () {
-            row._field.caption.textContent = siteHintFor(row._field.input.value);
+            row._field.caption.textContent = siteHintFor(row._field.input.value, row._kind);
           });
         });
       }
 
       function readSites() {
-        return listValues(q('jdl-sites')).map(function (address) {
-          return { Name: '', Kind: '', BaseUrl: address, WebSearchUrl: '' };
-        });
+        var rows = Array.prototype.slice.call(q('jdl-sites').querySelectorAll('.jdl-list__row'));
+        return rows
+          .map(function (row) {
+            return { address: (row._field.input.value || '').trim(), kind: row._kind || '' };
+          })
+          .filter(function (item) { return item.address.length > 0; })
+          .map(function (item) {
+            return { Name: '', Kind: item.kind, BaseUrl: item.address, WebSearchUrl: '' };
+          });
       }
 
       // ---- 关键词组合 ----

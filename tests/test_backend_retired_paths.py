@@ -558,6 +558,35 @@ class SiteUrlClassificationTests(unittest.TestCase):
                       "ValidateBtSites 必须用 KindForUrl 的空串结果拦下未知地址")
         self.assertIn("识别不出这个地址该走哪个入口", controller)
 
+    def test_the_page_round_trips_the_station_kind(self):
+        """手改 XML 的自建站（未知主机 + 显式 kind）不能被配置页一次保存搞丢。
+
+        页面只给一个地址输入框，类型没有可编辑的入口；所以后端回显的 kind 必须被
+        原样存回来，并由 save 原样发出去——否则 ValidateBtSites 会把整单拒掉，
+        连同一个页面里的其它修改也一起存不下去。
+        """
+        page = (ROOT / "Jellyfin.Plugin.JellyfinDownloader" / "Configuration" / "configPage.html").read_text(encoding="utf-8")
+        self.assertIn("row._kind", page, "站点行必须记住后端给的 kind")
+        self.assertIn("Kind: item.kind", page, "save 必须把 kind 原样发回")
+        self.assertIn("siteHintFor(item.address, row._kind)", page, "自定义站要按声明类型显示")
+
+    def test_the_backend_announces_itself_with_the_same_marker_the_plugin_looks_for(self):
+        """自身标识是 C# 与 Python 之间的字面量契约。
+
+        插件侧靠它区分「我们的后端」和「恰好占着这个端口的外来 HTTP 服务」：
+        两边字面量一旦不一致，插件就会认不出自己的后端（或反过来认错），
+        而这两种失败在单侧测试里都看不见。
+        """
+        marker = "jellyfin-downloader-backend"
+        backend = (BACKEND / "console_server.py").read_text(encoding="utf-8")
+        manager = (ROOT / "Jellyfin.Plugin.JellyfinDownloader" / "BackendManager.cs").read_text(encoding="utf-8")
+        self.assertIn('SERVICE_ID = "%s"' % marker, backend)
+        self.assertIn('ServiceMarker = "%s"' % marker, manager)
+        # 后端要真的把它写进 JSON 响应；插件要真的解析响应体里的字段
+        # （不能只读前若干字节：那个字段在 JSON 末尾）
+        self.assertIn('{**obj, "service": SERVICE_ID}', backend)
+        self.assertIn('TryGetProperty("service", out var service)', manager)
+
     def test_describe_site_states_the_kind_the_page_shows(self):
         described = source_config.describe_site({
             "name": "", "kind": "", "base_url": "https://torrents-csv.com",
