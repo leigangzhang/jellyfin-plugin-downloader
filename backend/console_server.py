@@ -597,6 +597,10 @@ def _run_search_job(jid, p):
         sources = p.get("sources", "magnet")
         want_magnet = sources in ("magnet", "both")
         want_pan = sources in ("pan", "both")
+        # 本轮 L1 搜索是否真的写出了候选文件：候选文件路径是固定的
+        # /tmp/<slug>.magnets，但内容分轮次——只配云盘专用站（或站点配置坏掉）时
+        # search_pool 会早退、不写这个文件，磁盘上留着的还是上一轮的内容。
+        cand_written = False
 
         if want_magnet:
             sites, _ = source_config.load_sites()
@@ -642,7 +646,13 @@ def _run_search_job(jid, p):
                 ]
             if p.get("publisher_only"):
                 search_cmd += ["--publisher-only"]
+            search_started_at = time.time()
             run_cli_stream(search_cmd, log, SEARCH_POOL_TIMEOUT)
+            # 用 mtime 判「本轮写过没有」：只看 os.path.isfile 会把上一轮的候选当成
+            # 本轮结果喂给 probe（probe 那边不再报 CANDIDATE_FILE_ERROR）。
+            cand_written = _file_written_since(p["cand_file"], search_started_at)
+            if not cand_written:
+                log("本轮没有写出候选磁力文件（没有磁力入口或配置不可用）→ 不拿上一轮的文件喂 probe")
 
         pan_cand = ""
         if want_pan:
@@ -676,7 +686,7 @@ def _run_search_job(jid, p):
             "--json-out", p["probe_out"],
             "--budget-secs", str(PROBE_BUDGET_SECS),
         ]
-        if want_magnet:
+        if want_magnet and cand_written:
             probe_cmd += ["--candidate-file", p["cand_file"]]
         if want_pan and pan_cand and os.path.isfile(pan_cand):
             probe_cmd += ["--extra-candidates", pan_cand]

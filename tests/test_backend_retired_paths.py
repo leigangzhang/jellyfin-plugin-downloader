@@ -523,6 +523,41 @@ class SiteUrlClassificationTests(unittest.TestCase):
         self.assertIsNone(site)
         self.assertIn("未知的资源站类型", error)
 
+    def test_an_unknown_host_without_a_declared_kind_is_rejected(self):
+        """认不出来的地址 + 没声明类型 = 配置错误。
+
+        静默兜成 diao 会让 `https://google.com` 变成「一个打不通的 diao 站」，
+        用户只看到「搜了但没结果」。这条守卫就钉住「不许静默兜底」。
+        """
+        site, error = source_config.normalise_site({"kind": "", "base_url": "https://google.com"})
+        self.assertIsNone(site)
+        self.assertIn("识别不出", error)
+        # 没有 kind 键也一样（配置页发的就是这个形状）
+        site, error = source_config.normalise_site({"base_url": "https://unknown.example/x"})
+        self.assertIsNone(site)
+        self.assertIn("识别不出", error)
+
+    def test_an_explicit_kind_still_carries_a_self_hosted_station(self):
+        """老 XML / 脚本显式声明了类型时，认不出的主机按声明走，不被这次收紧打掉。"""
+        site, error = source_config.normalise_site(
+            {"name": "自建", "kind": "diao", "base_url": "https://self.example/api"})
+        self.assertEqual(error, "")
+        self.assertEqual(site["kind"], "diao")
+        self.assertEqual(site["base_url"], "https://self.example/api")
+
+    def test_the_page_cannot_save_an_address_the_backend_cannot_classify(self):
+        """配置页侧的同一条守卫：页面恒发 Kind=""，所以未知主机必须被 C# 校验拒掉。
+
+        用源码断言而不是起 Jellyfin：改造后 C# 的「认不出来」必须走 KindForUrl 返回
+        空串的分支，不能自己兜一个 diao 出来。
+        """
+        controller = (ROOT / "Jellyfin.Plugin.JellyfinDownloader" / "Controllers"
+                      / "JellyfinDownloaderController.cs").read_text(encoding="utf-8")
+        self.assertIn("private static string KindForUrl(string url)", controller)
+        self.assertIn("KindForUrl(address).Length == 0", controller,
+                      "ValidateBtSites 必须用 KindForUrl 的空串结果拦下未知地址")
+        self.assertIn("识别不出这个地址该走哪个入口", controller)
+
     def test_describe_site_states_the_kind_the_page_shows(self):
         described = source_config.describe_site({
             "name": "", "kind": "", "base_url": "https://torrents-csv.com",

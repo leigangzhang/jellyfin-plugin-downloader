@@ -126,8 +126,8 @@ def _normalise_url(value):
 def _host_and_path(url):
     """取主机名与路径；URL 已经过 `_normalise_url`，这里只做形状上的读取。
 
-    先按字符串剥掉 scheme 再 split，不用 `urlsplit`：后者的 `.path` 会把 `{q}`
-    这类占位符百分号编码，判定「这是不是一个云盘搜索页模板」时就认不出来了。
+    按字符串剥掉 scheme 再切，不用 `urlsplit`：只需要主机名与路径两段，字符串切分
+    的语义更直白，也不必处理 `SplitResult` 的各字段默认值。
     """
     restored = _SCHEME_RE.sub("", url or "", count=1)
     host, _, rest = restored.partition("/")
@@ -201,7 +201,8 @@ def normalise_site(raw):
 
     配置页只发一个地址（``base_url``）。``kind`` 缺省时按 ``classify_site_url`` 判定；
     显式给了 ``kind`` 但地址判定不出入口时**保留调用方的声明**（旧 XML 与脚本仍可用）；
-    两者都没有就沿用改动前的默认 ``diao``。
+    两者都没有就是一条配不出来的配置，直接报错——静默当成 diao 会让一个打不通的地址
+    看起来像「这个站没有资源」。
     """
     if not isinstance(raw, dict):
         return None, f"每个资源站必须是对象，收到 {type(raw).__name__}"
@@ -230,11 +231,14 @@ def normalise_site(raw):
             if inferred_kind:
                 kind = inferred_kind
             elif declared_kind:
+                # 显式声明优先（老 XML / 脚本）：地址认不出来时按声明走，别把已有配置变成
+                # 启动就报错。配置页保存前会先拒掉认不出来的地址，走不到这个分支。
                 kind = declared_kind
             else:
-                # 主机名与路径都认不出来、也没声明类型：沿用改动前「不填类型就是 diao」的
-                # 默认，别把老安装的 XML 变成启动就报错的配置。配置页会先把这种地址挡下。
-                kind = DIAO_KIND
+                return None, (
+                    f"识别不出这个资源站该走哪个入口：{base_url!r}"
+                    f"（支持 {'/'.join(SITE_KINDS)} 的接口地址，或带 {{q}} 占位符的网页搜索地址）"
+                )
     else:
         # 没有接口地址：旧形态的云盘专用站。没有响应可解析，kind 归零。
         kind = ""
