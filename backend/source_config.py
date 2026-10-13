@@ -11,10 +11,14 @@
 --------
 * `JMD_BT_SITES`：JSON 数组，每项
   ``{"name": 显示名, "kind": 适配器, "base_url": 接口地址, "web_search_url": 网页搜索地址}``。
-  ``kind`` 决定用哪段代码解析该站的响应，目前支持 ``diao``（结构化搜索 API）与
-  ``torrents-csv``（带 seeder 快照的聚合索引）——**加一个站不用改代码，加一种协议
-  才需要新适配器**。``web_search_url`` 可留空；非空时**必须含 `{q}` 占位符**，它
-  同时是云盘通道的入口（把 `{q}` 换成片名后当资源页抓取）。
+  一个站至少要有一个入口：
+
+  - ``base_url`` + ``kind``：磁力入口。``kind`` 决定用哪段代码解析该站的响应，目前支持
+    ``diao``（结构化搜索 API）与 ``torrents-csv``（带 seeder 快照的聚合索引）——**加一个
+    站不用改代码，加一种协议才需要新适配器**。
+  - ``web_search_url``：云盘入口，**必须含 `{q}` 占位符**（把 `{q}` 换成片名后当资源页
+    抓取，从中解析 pan.xunlei.com 分享链接）。它可以和磁力入口并存，**也可以单独存在**
+    ——只发云盘资源、没有搜索 API 的站就靠它，此时 ``kind`` 无意义，会被归一化成空串。
 * `JMD_L1_KEYWORDS`：JSON 数组（也接受换行/逗号分隔的纯文本），每项是一条
   **查询后缀**，会与片名拼成一条查询，按顺序排在关键词阶梯的最前面。显式给一个
   空数组 = 不要这一档；不设或空串 = 用内置默认。
@@ -100,23 +104,31 @@ def _normalise_url(value):
 
 
 def normalise_site(raw):
-    """一条站点配置 → (site, error)。字段缺失按规则补，非法就整条拒绝。"""
+    """一条站点配置 → (site, error)。字段缺失按规则补，非法就整条拒绝。
+
+    一个站至少要有一个入口（接口地址或网页搜索地址）。**只有网页搜索地址的站是合法的**
+    ——那是「只发云盘资源、没有搜索 API」的站，也是云盘通道真正常见的入口；它的 `kind`
+    没有可解析的响应，归一化成空串，取源侧不会把它当成磁力站。
+    """
     if not isinstance(raw, dict):
         return None, f"每个资源站必须是对象，收到 {type(raw).__name__}"
-    kind = _clean_text(raw.get("kind"), MAX_NAME_LEN).lower()
-    if kind not in SITE_KINDS:
-        return None, f"未知的资源站类型 {kind!r}（支持 {'/'.join(SITE_KINDS)}）"
     base_url, error = _normalise_url(raw.get("base_url"))
     if error:
         return None, error
-    if not base_url:
-        return None, f"{kind} 站点缺少接口地址"
     web_search_url, error = _normalise_url(raw.get("web_search_url"))
     if error:
         return None, error
     if web_search_url and "{q}" not in web_search_url:
         return None, f"网页搜索地址必须包含 {{q}} 占位符：{web_search_url!r}"
-    name = _clean_text(raw.get("name"), MAX_NAME_LEN) or kind
+    if not base_url and not web_search_url:
+        return None, "站点至少要填「接口地址」或「网页搜索地址」中的一个"
+    kind = _clean_text(raw.get("kind"), MAX_NAME_LEN).lower()
+    if base_url:
+        if kind not in SITE_KINDS:
+            return None, f"未知的资源站类型 {kind!r}（支持 {'/'.join(SITE_KINDS)}）"
+    else:
+        kind = ""
+    name = _clean_text(raw.get("name"), MAX_NAME_LEN) or kind or "网页搜索站"
     return (
         {
             "name": name,
@@ -223,6 +235,22 @@ def load_keywords(text=None):
     if not keywords:
         errors.append("没有一条可用的关键字组合")
     return keywords, errors
+
+
+def magnet_sites(sites):
+    """(api_sites, extra_sites)：有接口地址、且 kind 已知的那些站。
+
+    只填网页搜索地址的云盘专用站两个都不是——它不参与磁力取源，也不该占一份预算切片。
+    """
+    api_sites = [
+        site for site in sites or []
+        if site.get("base_url") and site.get("kind") == DIAO_KIND
+    ]
+    extra_sites = [
+        site for site in sites or []
+        if site.get("base_url") and site.get("kind") == TORRENTS_CSV_KIND
+    ]
+    return api_sites, extra_sites
 
 
 def web_search_urls(title, sites):

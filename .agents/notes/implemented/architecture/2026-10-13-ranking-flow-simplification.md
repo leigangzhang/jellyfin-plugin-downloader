@@ -33,12 +33,15 @@ publisher keywords first, and the retired paths were deleted rather than disable
 
 1. **`backend/source_config.py` owns both lists.** `JMD_BT_SITES` (a JSON array of
    `{name, kind, base_url, web_search_url}`) and `JMD_L1_KEYWORDS` (an array of query
-   suffixes). `kind` selects the adapter — `diao` for the structured search API,
-   `torrents-csv` for the aggregate index — so adding a station is configuration and
-   adding a protocol is code. Empty means the built-in defaults: the two stations already
-   in use, and the two publisher signatures that were measured to work. A malformed list
-   is reported (`SOURCE_CONFIG_ERROR`) and search exits 2; it is never silently replaced
-   by the defaults.
+   suffixes). A station needs at least one entrance: `base_url` + `kind` for magnets
+   (`kind` selects the adapter — `diao` for the structured search API, `torrents-csv` for
+   the aggregate index), and/or `web_search_url` for the cloud channel. `web_search_url`
+   may stand alone — the kind of site that publishes cloud shares and has no search API is
+   exactly the cloud channel's usual entrance, and it is normalised to `kind: ""` so the
+   magnet side never treats it as a station. Empty means the built-in defaults: the two
+   stations already in use, and the two publisher signatures that were measured to work. A
+   malformed list is reported (`SOURCE_CONFIG_ERROR`) and search exits 2; it is never
+   silently replaced by the defaults.
 2. **Every configured station is asked, and the budget is divided.** The per-keyword wall
    clock is split evenly across the API-kind stations, with the same treatment for the
    non-API ones inside their reserved slice. The worst case therefore stays
@@ -63,7 +66,9 @@ publisher keywords first, and the retired paths were deleted rather than disable
 4. **The cloud channel is each station's `web_search_url`.** A station that declares one
    (`.../search?q={q}`, required to contain `{q}`) is fetched through the existing
    `pan_search.py --page` path, and the console says so per station. No station declaring
-   one prints `云盘通道没有入口` instead of returning a silent empty.
+   one prints `云盘通道没有入口` instead of returning a silent empty. A magnet search whose
+   station list has no `base_url` at all says `NO_MAGNET_STATION` and exits 4 rather than
+   reporting an empty pool.
 5. **Deleted, not disabled:** `backend/speed_probe.py`, `probe_magnets.measure_speeds`
    and the `--speed-probe*` flags, `console_server`'s `/api/verify` and its import,
    `probe_magnets --allow-pansou` / `--allow-pansou-fallback`, `pan_search --pansou`,
@@ -105,7 +110,8 @@ marker and there is no downstream season filter — recorded here so the next ch
 it deliberate rather than accidental. A station list longer than one divides the same
 budget into smaller slices, so each station's own recall drops. A `1.0.0.7` configuration
 XML has none of these keys and keeps working: an absent list means "use the backend's
-built-in defaults". Pan candidates parsed from a web page carry the bare title as their
+built-in defaults". A station with only a `web_search_url` contributes nothing to the
+magnet channels and costs no budget slice — it is an entry for the cloud channel alone. Pan candidates parsed from a web page carry the bare title as their
 name (`extract_share_entries` records the link, not the release name), so their quality
 score is coarser than the removed Pansou path's, which read the search result's `note`;
 that is a known gap, not a contract.
@@ -132,6 +138,12 @@ that is a known gap, not a contract.
   configuration surface changed on both sides of the plugin/C# boundary.
 - [B6] `docs` — README's feature table, configuration table and developer notes were
   updated in the same change, and both predecessor records link here.
+- [B9] `tests` — the cloud-only station contract: `source_config` accepts a station with
+  a `web_search_url` and no `base_url` (and rejects one with neither entrance), and
+  `magnet_sites()` keeps it out of both magnet channels. `tests/test_backend_sources` pins
+  the two consequences: such a station is never queried by the non-API channel, and a
+  station list with no `base_url` at all prints `NO_MAGNET_STATION`, makes no request and
+  exits 4.
 - [B8] `source` — one live round on 2026-10-13 (real index, real swarm, no fakes):
   `search_pool.py 漫长的季节 --publisher-only` ran the two configured keywords as its only
   queries (`[anchor] 漫长的季节 高清剧集网` → 61 hits in 5.4 s over 7 pages, stopped by
@@ -147,5 +159,9 @@ that is a known gap, not a contract.
   deserializes to empty lists — which is what makes "an absent list means the backend's
   built-in defaults" true for an existing `1.0.0.7` install. Reproduce with a throwaway
   console project referencing this csproj plus `Jellyfin.Controller`/`Jellyfin.Model`
-  10.11.11 and serializing a `PluginConfiguration` with both lists populated. Not a
-  permanent guard: this repository has no C# test project.
+  10.11.11 and serializing a `PluginConfiguration` with both lists populated. The same
+  harness invoked the controller's shape check directly (reflection): three stations
+  including a cloud-only one round-trip intact, and the check accepts a station carrying
+  only a `web_search_url` while rejecting one with neither entrance, an unknown `kind` next
+  to a `base_url`, and a `web_search_url` without `{q}`. Not a permanent guard: this
+  repository has no C# test project.

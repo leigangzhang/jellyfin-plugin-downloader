@@ -807,8 +807,9 @@ def collect(args, sites=None, keywords=None):
         sites = source_config.load_sites()[0]
     if keywords is None:
         keywords = source_config.load_keywords()[0]
-    api_sites = [site for site in sites if site.get("kind") == source_config.DIAO_KIND]
-    extra_sites = [site for site in sites if site.get("kind") != source_config.DIAO_KIND]
+    # 只有带接口地址的站才取磁力；只填网页搜索地址的云盘专用站两个都不是
+    # （见 source_config.magnet_sites）。
+    api_sites, extra_sites = source_config.magnet_sites(sites)
 
     # 没传 --collection-hint 才用内置默认词；传了就用传的（严格按季依赖这一点，
     # 否则 argparse 的 append 会往默认词后面追加，把「全集」也一起跑了）
@@ -1257,6 +1258,23 @@ def main():
             )
         )
         return 2
+    if not any(site.get("base_url") for site in sites):
+        # 合法配置，只是没有磁力入口：只配了云盘专用站。说清楚，别让使用者以为搜索坏了。
+        print(
+            "NO_MAGNET_STATION "
+            + json.dumps(
+                {
+                    "sites": [site["name"] for site in sites],
+                    "reason": (
+                        "配置的资源站都只有「网页搜索地址」、没有「接口地址」，"
+                        "所以本轮没有磁力来源；云盘通道照常可用"
+                        "（控制台选「仅云盘」或「磁力+云盘」）"
+                    ),
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 4
 
     print(
         "搜索来源: "

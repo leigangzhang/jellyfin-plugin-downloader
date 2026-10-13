@@ -148,7 +148,7 @@ class SourceConfigTests(unittest.TestCase):
             "不是数组": json.dumps({"kind": "diao"}),
             "未知类型": json.dumps([{"kind": "nope", "base_url": "https://x/y"}]),
             "非 http 地址": json.dumps([{"kind": "diao", "base_url": "ftp://x"}]),
-            "缺少地址": json.dumps([{"kind": "diao"}]),
+            "两个入口都空": json.dumps([{"kind": "diao"}]),
             "网页搜索地址缺 {q}": json.dumps([
                 {"kind": "diao", "base_url": "https://x/y",
                  "web_search_url": "https://x/s"}]),
@@ -158,6 +158,32 @@ class SourceConfigTests(unittest.TestCase):
                 sites, errors = source_config.load_sites(text)
                 self.assertEqual(sites, [])
                 self.assertTrue(errors, f"{label} 应当留下错误明细")
+
+    def test_a_cloud_only_station_is_allowed(self):
+        """只有网页搜索地址、没有接口地址的站是合法的云盘专用站。
+
+        只发云盘资源、没有搜索 API 的站（高清剧集网那一类）正是云盘通道的常见入口；
+        要求它必须填接口地址等于让 ② 那条通道配不出来。
+        """
+        text = json.dumps([{"name": "搜索页", "kind": "diao", "base_url": "",
+                            "web_search_url": "https://s.example/search?q={q}"}])
+        sites, errors = source_config.load_sites(text)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(sites), 1)
+        # 没有 API 要解析，类型归一化成空串——不能被取源侧当成磁力站。
+        self.assertEqual(sites[0]["kind"], "")
+        self.assertEqual(source_config.magnet_sites(sites), ([], []))
+        # 云盘入口照常有
+        self.assertEqual(len(source_config.web_search_urls("漫长的季节", sites)), 1)
+
+    def test_magnet_sites_keeps_only_the_api_stations(self):
+        api, extra = source_config.magnet_sites([
+            {"name": "a", "kind": "diao", "base_url": "https://a/api", "web_search_url": ""},
+            {"name": "b", "kind": "torrents-csv", "base_url": "https://b/api", "web_search_url": ""},
+            {"name": "c", "kind": "", "base_url": "", "web_search_url": "https://c/s?q={q}"},
+        ])
+        self.assertEqual([site["name"] for site in api], ["a"])
+        self.assertEqual([site["name"] for site in extra], ["b"])
 
     def test_one_bad_station_does_not_discard_the_good_ones(self):
         text = json.dumps([

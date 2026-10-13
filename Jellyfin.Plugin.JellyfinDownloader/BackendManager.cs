@@ -236,7 +236,9 @@ public static class BackendManager
         foreach (var site in sites ?? Enumerable.Empty<BtSiteConfig>())
         {
             var baseUrl = (site.BaseUrl ?? string.Empty).Trim();
-            if (baseUrl.Length == 0)
+            var webSearchUrl = (site.WebSearchUrl ?? string.Empty).Trim();
+            // 只填「网页搜索地址」的站是合法的云盘专用站，不能在这里被丢掉。
+            if (baseUrl.Length == 0 && webSearchUrl.Length == 0)
             {
                 continue;
             }
@@ -244,9 +246,12 @@ public static class BackendManager
             payload.Add(new
             {
                 name = (site.Name ?? string.Empty).Trim(),
-                kind = (site.Kind ?? string.Empty).Trim().ToLowerInvariant(),
+                // 没有接口地址时类型无意义，后端会把它归一化成空串（云盘专用站）。
+                kind = baseUrl.Length == 0
+                    ? string.Empty
+                    : (site.Kind ?? string.Empty).Trim().ToLowerInvariant(),
                 base_url = baseUrl,
-                web_search_url = (site.WebSearchUrl ?? string.Empty).Trim(),
+                web_search_url = webSearchUrl,
             });
         }
 

@@ -794,6 +794,46 @@ class EndToEndOfflineTests(unittest.TestCase):
             self.assertNotIn("  [anchor", printed)
             self.assertIn('"idx"', printed)
 
+    def test_a_cloud_only_station_is_never_asked_for_magnets(self):
+        """云盘专用站（只有网页搜索地址）不参与磁力取源，也不占预算切片。"""
+        import tempfile
+
+        api = FakeHttp(canned_pages("漫长的季节"))
+        calls = []
+        sites = [
+            dict(DIAO_SITE),
+            {"name": "搜索页", "kind": "", "base_url": "",
+             "web_search_url": "https://s.example/search?q={q}"},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            code, printed = self.run_main(
+                ["search_pool.py", "漫长的季节", "--no-pool",
+                 "--json-out", str(Path(tmp) / "out.json"),
+                 "--candidates-out", str(Path(tmp) / "out.magnets")],
+                api, lambda *a, **k: calls.append(a) or {"status": 200, "entries": []},
+                env={source_config.ENV_SITES: sites_env(sites)})
+            self.assertEqual(code, 0)
+            self.assertEqual(calls, [], "云盘专用站不该被磁力通道问到")
+            self.assertNotIn("EXTRA_SOURCE", printed)
+
+    def test_only_cloud_stations_means_no_magnet_source(self):
+        """一个磁力入口都没有时说清楚，并把候选为空报成 rc=4，而不是假装搜过。"""
+        import tempfile
+
+        api = FakeHttp(canned_pages("漫长的季节"))
+        sites = [{"name": "搜索页", "kind": "", "base_url": "",
+                  "web_search_url": "https://s.example/search?q={q}"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            code, printed = self.run_main(
+                ["search_pool.py", "漫长的季节", "--no-pool",
+                 "--json-out", str(Path(tmp) / "out.json"),
+                 "--candidates-out", str(Path(tmp) / "out.magnets")],
+                api, lambda *a, **k: {"status": 200, "entries": []},
+                env={source_config.ENV_SITES: sites_env(sites)})
+            self.assertEqual(code, 4)
+            self.assertIn("NO_MAGNET_STATION", printed)
+            self.assertEqual(api.requests, [], "没有磁力入口时不该发任何请求")
+
     def test_bad_station_config_is_reported_not_silently_defaulted(self):
         """坏配置必须走可见的失败路径，不许悄悄回落到默认站。"""
         import tempfile

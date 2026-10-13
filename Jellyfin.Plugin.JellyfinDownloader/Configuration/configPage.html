@@ -130,7 +130,7 @@
           <div class="inputContainer">
             <div class="jdl-row">
               <label class="inputLabel inputLabelUnfocused">资源站</label>
-              <span class="fieldDescription">后端从这些站收磁力候选。类型决定用哪段适配器；「网页搜索地址」填了才会走云盘通道（网址里要有 <code>{q}</code> 占位符）。整行留空 = 用内置默认的两个站。</span>
+              <span class="fieldDescription">后端从这些站收磁力候选。类型决定用哪段适配器；「网页搜索地址」填了才会走云盘通道（网址里要有 <code>{q}</code> 占位符）。<b>接口地址可以留空</b>——只发云盘资源、没有搜索 API 的站就只填网页搜索地址。整行留空 = 用内置默认的两个站。</span>
             </div>
             <div id="jdl-sites"></div>
             <button id="jdl-site-add" type="button" is="emby-button" class="raised">添加资源站</button>

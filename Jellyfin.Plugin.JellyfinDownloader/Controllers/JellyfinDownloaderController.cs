@@ -114,13 +114,21 @@ public class JellyfinDownloaderController : ControllerBase
             }
 
             config.BtSites = body.BtSites
-                .Where(site => !string.IsNullOrWhiteSpace(site.BaseUrl))
-                .Select(site => new BtSiteConfig
+                .Where(site => !string.IsNullOrWhiteSpace(site.BaseUrl)
+                    || !string.IsNullOrWhiteSpace(site.WebSearchUrl))
+                .Select(site =>
                 {
-                    Name = (site.Name ?? string.Empty).Trim(),
-                    Kind = (site.Kind ?? string.Empty).Trim().ToLowerInvariant(),
-                    BaseUrl = site.BaseUrl.Trim(),
-                    WebSearchUrl = (site.WebSearchUrl ?? string.Empty).Trim(),
+                    var baseUrl = (site.BaseUrl ?? string.Empty).Trim();
+                    return new BtSiteConfig
+                    {
+                        Name = (site.Name ?? string.Empty).Trim(),
+                        // 云盘专用站（没有接口地址）没有可解析的响应，类型归一化成空。
+                        Kind = baseUrl.Length == 0
+                            ? string.Empty
+                            : (site.Kind ?? string.Empty).Trim().ToLowerInvariant(),
+                        BaseUrl = baseUrl,
+                        WebSearchUrl = (site.WebSearchUrl ?? string.Empty).Trim(),
+                    };
                 })
                 .ToList();
         }
@@ -483,18 +491,29 @@ public class JellyfinDownloaderController : ControllerBase
         {
             var site = sites[index];
             var label = "第 " + (index + 1) + " 个资源站";
-            var kind = (site.Kind ?? string.Empty).Trim().ToLowerInvariant();
-            if (!kinds.Contains(kind))
-            {
-                return label + "：类型必须是 diao 或 torrents-csv";
-            }
-
-            if (!IsHttpUrl(site.BaseUrl))
-            {
-                return label + "：接口地址必须是 http(s) URL";
-            }
-
+            var baseUrl = (site.BaseUrl ?? string.Empty).Trim();
             var web = (site.WebSearchUrl ?? string.Empty).Trim();
+
+            // 一个站至少要有一个入口；只有网页搜索地址的站是合法的云盘专用站。
+            if (baseUrl.Length == 0 && web.Length == 0)
+            {
+                return label + "：至少要填「接口地址」或「网页搜索地址」中的一个";
+            }
+
+            if (baseUrl.Length > 0)
+            {
+                if (!IsHttpUrl(baseUrl))
+                {
+                    return label + "：接口地址必须是 http(s) URL";
+                }
+
+                var kind = (site.Kind ?? string.Empty).Trim().ToLowerInvariant();
+                if (!kinds.Contains(kind))
+                {
+                    return label + "：类型必须是 diao 或 torrents-csv";
+                }
+            }
+
             if (web.Length > 0 && (!IsHttpUrl(web) || !web.Contains("{q}", StringComparison.Ordinal)))
             {
                 return label + "：网页搜索地址要么留空，要么是含 {q} 占位符的 http(s) URL";
