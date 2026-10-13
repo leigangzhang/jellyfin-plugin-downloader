@@ -1,0 +1,135 @@
+{
+  "comment": "The only tier switch. `ladder` says which tier introduces each stage, as increments: a project runs a stage when its resolved tier for that stage is at least the tier the ladder introduces it at. A stage's resolved tier is its entry in a lifecycle's `stages`, else that lifecycle's `default`, else the top-level `default`; `none` means the stage is not installed, and the gates then expect every path it owns to be absent. `home` is the set of globs a stage owns: one glob, or a list when the stage owns paths in more than one place. and disable the checks that own nothing but that home.",
+  "default": "minimum",
+  "tiers": [
+    "minimum",
+    "delivery",
+    "long-lived"
+  ],
+  "ladder": {
+    "minimum": [
+      "intent",
+      "proposal",
+      "decision",
+      "contract",
+      "capabilities",
+      "verification",
+      "review",
+      "documentation",
+      "tests"
+    ],
+    "delivery": [
+      "release",
+      "evolution"
+    ],
+    "long-lived": [
+      "implementation",
+      "integration",
+      "retirement",
+      "rejection",
+      "incident"
+    ]
+  },
+  "stages": {
+    "intent": {
+      "number": 1,
+      "label": "Intent",
+      "home": null
+    },
+    "proposal": {
+      "number": 2,
+      "label": "Proposal",
+      "home": ".agents/notes/proposed/*.md"
+    },
+    "decision": {
+      "number": 3,
+      "label": "Decision",
+      "home": ".agents/notes/implemented/*.md"
+    },
+    "contract": {
+      "number": 4,
+      "label": "Contract",
+      "home": "dev/contracts/*"
+    },
+    "capabilities": {
+      "number": null,
+      "label": "capabilities",
+      "home": "dev/capabilities/*"
+    },
+    "implementation": {
+      "number": 5,
+      "label": "Implementation",
+      "home": null
+    },
+    "verification": {
+      "number": 6,
+      "label": "Verification",
+      "home": "dev/evidence/*.md"
+    },
+    "review": {
+      "number": 7,
+      "label": "Review",
+      "home": "dev/review/*.md"
+    },
+    "integration": {
+      "number": 8,
+      "label": "Integration",
+      "home": null
+    },
+    "release": {
+      "number": 9,
+      "label": "Release",
+      "home": "dev/release/*.md"
+    },
+    "evolution": {
+      "number": 10,
+      "label": "Evolution",
+      "home": "dev/upgrade-guide/*.md"
+    },
+    "retirement": {
+      "number": 11,
+      "label": "Retirement",
+      "home": ".agents/notes/archived/*"
+    },
+    "rejection": {
+      "number": null,
+      "label": "rejected records",
+      "home": ".agents/notes/rejected/*.md"
+    },
+    "incident": {
+      "number": null,
+      "label": "incidents",
+      "home": "dev/postmortem/*.md"
+    },
+    "documentation": {
+      "number": null,
+      "label": "documentation",
+      "home": "docs/*.md"
+    },
+    "tests": {
+      "number": null,
+      "label": "tests",
+      "home": [
+        "tests/*",
+        "*.spec.*",
+        "*.test.*",
+        "test_*.py",
+        "*_test.py"
+      ]
+    }
+  },
+  "lifecycles": {
+    "jellyfin-downloader": {
+      "default": "minimum",
+      "stages": {
+        "implementation": "none",
+        "integration": "none",
+        "release": "none",
+        "evolution": "none",
+        "retirement": "none",
+        "rejection": "none",
+        "incident": "none"
+      }
+    }
+  }
+}

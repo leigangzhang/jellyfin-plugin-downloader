@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for TEMPLATE.md (docs/i18n.md): per heading section, a hash
+# of its English and Chinese blocks outside fenced code blocks.
+# After editing either side, bring the other along and re-record with:
+#   python3 tools/pair-docs.py --write dev/capabilities/TEMPLATE.md
+/capability-key:
+  en: 21e417f48acf280e
+  zh: 616a3018003f01bb
+/capability-key/the-entry:
+  en: f6ff1d01f938800b
+  zh: bd21b6d5cbbbb3e0
+/capability-key/fields:
+  en: 53eb5ec6cf643c67
+  zh: a5fb60dd186eb590
+/capability-key/the-three-roles:
+  en: d63c154c0d1781d7
+  zh: f4abe904459a1ced
+/capability-key/splitting-rules:
+  en: e8c564b17fb4acc2
+  zh: b0472668e6379d17
+/capability-key/keeping-the-registry-honest:
+  en: 5080e06426d88dc1
+  zh: 4ab90356ef64da0d

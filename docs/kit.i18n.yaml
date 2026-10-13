@@ -1,0 +1,16 @@
+# Bilingual-pair consistency record for kit.md (docs/i18n.md): per heading section, a hash
+# of its English and Chinese blocks outside fenced code blocks.
+# After editing either side, bring the other along and re-record with:
+#   python3 tools/pair-docs.py --write docs/kit.md
+/minimal-agent-workflow-kit:
+  en: cb8305b3ca2b2a5c
+  zh: 788e10ff0df8f2f3
+/minimal-agent-workflow-kit/30-second-start:
+  en: fef7f88f2a67798f
+  zh: 834a2b19917bda1f
+/minimal-agent-workflow-kit/where-to-go:
+  en: d5bba3cea62e21e0
+  zh: 8ec91985b1328e23
+/minimal-agent-workflow-kit/deliberately-not-done:
+  en: 888b13290ec196a1
+  zh: 1f483f7ca5a02b8a

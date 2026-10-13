@@ -1,0 +1,43 @@
+# Bilingual-pair consistency record for README.md (docs/i18n.md): per heading section, a hash
+# of its English and Chinese blocks outside fenced code blocks.
+# After editing either side, bring the other along and re-record with:
+#   python3 tools/pair-docs.py --write .agents/notes/README.md
+/decision-records:
+  en: 521ab63c68f5ce2c
+  zh: f72d09ce1c8e353a
+/decision-records/layout-and-naming:
+  en: 6c715793d3d0f906
+  zh: 24230dd8de529b38
+/decision-records/classification:
+  en: 192388e8a7d731df
+  zh: ae57083c4003012c
+/decision-records/modules:
+  en: 8e23b3b0e6a67f53
+  zh: dfbfc2c5e97370bb
+/decision-records/archiving-and-deletion:
+  en: 31e69604bdfac536
+  zh: 51cde85b3dbca42f
+/decision-records/when-to-write-one:
+  en: 3aee7846cede18e3
+  zh: cc8907cf4c1dada0
+/decision-records/the-file-format:
+  en: d15f9aa262636fac
+  zh: 9465a41281cc111a
+/decision-records/the-file-format/the-header-block:
+  en: 3409f7ffc1b05832
+  zh: d71731ef6db4a207
+/decision-records/the-file-format/the-body-skeleton:
+  en: 39c9cc692d2e60de
+  zh: ac96bf332a95131f
+/decision-records/the-file-format/alternatives-considered-mandatory:
+  en: 1639408e113842ee
+  zh: 5f4e3a180a6a2f79
+/decision-records/the-file-format/moving-between-lifecycles:
+  en: 8eae1fea7b58ef0e
+  zh: bfaf07cdcd2aa443
+/decision-records/the-file-format/chinese-counterparts:
+  en: a7887416a1cd0044
+  zh: 987b874a48134919
+/decision-records/where-to-look:
+  en: 74281bb145367646
+  zh: f69da2c99dd0adbd

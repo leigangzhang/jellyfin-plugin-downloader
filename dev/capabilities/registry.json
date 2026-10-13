@@ -1,0 +1,18 @@
+{
+  "comment": "Hand-written classification of this repository's capabilities. `python3 tools/check-invariants.py` requires every key here to match a `capability: <key>` marker in source, and every marker to appear here; a `seam` must name a definition, at least one provider, and at least one consumer. Add an entry in the same change as the marker. The entry shape and the splitting rules are in dev/capabilities/TEMPLATE.md.",
+  "capabilities": [
+    {
+      "key": "check-engine",
+      "kind": "seam",
+      "definition": "dev/contracts/kinds.md",
+      "providers": [
+        "tools/kitcheck/registry.py"
+      ],
+      "consumers": [
+        "tools/change-scope.py",
+        "tools/workflow.json"
+      ],
+      "note": "The declared check kinds are the interface; the runner is the only provider and the workflow config plus the evidence mapper program against it. One provider today, so the roles stay in the script instead of splitting into packages — the split happens when a second engine appears."
+    }
+  ]
+}

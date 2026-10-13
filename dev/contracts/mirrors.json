@@ -1,0 +1,19 @@
+{
+  "comment": "One entry per pasted block: `doc` + exact `fence` info string + `source` + the `begin`/`end` marker lines in that source. `python3 tools/check-invariants.py` enforces one-to-one: a block with no entry, an entry with no block, a duplicate (doc, fence), and a doc outside the owning check's `patterns` all fail. Comparison ignores trailing whitespace and blank edges, nothing else.",
+  "mirrors": [
+    {
+      "doc": "dev/contracts/kinds.md",
+      "fence": "text mirror",
+      "source": "tools/kitcheck/core.py",
+      "begin": "# region: supported-kinds",
+      "end": "# endregion: supported-kinds"
+    },
+    {
+      "doc": "dev/contracts/kinds.zh.md",
+      "fence": "text mirror",
+      "source": "tools/kitcheck/core.py",
+      "begin": "# region: supported-kinds",
+      "end": "# endregion: supported-kinds"
+    }
+  ]
+}

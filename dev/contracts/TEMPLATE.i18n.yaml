@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for TEMPLATE.md (docs/i18n.md): per heading section, a hash
+# of its English and Chinese blocks outside fenced code blocks.
+# After editing either side, bring the other along and re-record with:
+#   python3 tools/pair-docs.py --write dev/contracts/TEMPLATE.md
+/contract-name:
+  en: 5a07815d5971f1d6
+  zh: 0782183605038d16
+/contract-name/interface:
+  en: 06ae18b113b4beb6
+  zh: af191a65bad47c68
+/contract-name/source-of-truth:
+  en: 42764592d86c2184
+  zh: e8ef98e5ff4f031f
+/contract-name/projection:
+  en: 85da2cbf115ea4b8
+  zh: 45c33add9c916cee
+/contract-name/check:
+  en: 465417d25d243e18
+  zh: c0a99752e2886618
+/contract-name/drift-policy:
+  en: 5bfa7249214360ed
+  zh: e1370c9e403c541b

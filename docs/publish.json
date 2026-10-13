@@ -1,0 +1,89 @@
+{
+  "comment": "The only publication switch. Every file matching the publish-manifest check's patterns must match exactly one entry here, or the gate is red: a markdown file nobody classifies is a silent omission, not an unpublished one. `public` entries name one file each, never a glob -- publication is a per-file promise, and a directory glob would ship whatever someone drops into it next. Every `public` entry must match a real file. `internal` entries may name a home and must state why the file stays in the repository; one that matches nothing is an empty shelf, not a broken promise. Patterns use fnmatch, in which '*' also matches '/'. A paired document classifies both sides: i18n.md requires the three siblings to merge whole, so shipping one language and hiding the other would break the promise the pair makes. This repository's own `README.md` is the Jellyfin Downloader user guide rather than a kit page: `tools/workflow.json` excludes it from `pairing`, so it is classified here on its own.",
+  "public": [
+    "README.md",
+    "dev/README.md",
+    "dev/README.zh.md",
+    "docs/README.md",
+    "docs/README.zh.md",
+    "docs/adopting.md",
+    "docs/adopting.zh.md",
+    "docs/check-catalog.md",
+    "docs/documentation.md",
+    "docs/documentation.zh.md",
+    "docs/evolution.md",
+    "docs/evolution.zh.md",
+    "docs/extending.md",
+    "docs/extending.zh.md",
+    "docs/glossary.md",
+    "docs/glossary.zh.md",
+    "docs/i18n.md",
+    "docs/i18n.zh.md",
+    "docs/kit.md",
+    "docs/kit.zh.md",
+    "docs/plain-language.md",
+    "docs/plain-language.zh.md",
+    "docs/testing.md",
+    "docs/testing.zh.md",
+    "tests/README.md",
+    "tests/README.zh.md"
+  ],
+  "internal": [
+    {
+      "pattern": "AGENTS.md",
+      "reason": "standing orders for an agent editing this repository; the reader-facing rules live in README.md, LIFECYCLE.md and documentation.md"
+    },
+    {
+      "pattern": ".agents/notes/*",
+      "reason": "decision records and their templates; internal history, not a guide"
+    },
+    {
+      "pattern": ".agents/skills/*",
+      "reason": "agent-loaded workflows; the host injects the catalog, nobody browses them as a page"
+    },
+    {
+      "pattern": "dev/contracts/*",
+      "reason": "contract records bind a pasted block to its source region; machinery, not a guide"
+    },
+    {
+      "pattern": "dev/capabilities/*",
+      "reason": "classification of this repository's own capability seams"
+    },
+    {
+      "pattern": "dev/review/*",
+      "reason": "per-change review records; scoped to one change, not to a reader"
+    },
+    {
+      "pattern": "dev/release/*",
+      "reason": "per-release verification records; scoped to one artifact"
+    },
+    {
+      "pattern": "dev/upgrade-guide/*",
+      "reason": "migration guides for breaks in this repository's own surfaces"
+    },
+    {
+      "pattern": ".agents/notes/archived/*",
+      "reason": "frozen retired records sealed by .agents/notes/archived/manifest.json; the file that was retired, not a page"
+    },
+    {
+      "pattern": "dev/postmortem/*",
+      "reason": "incident records; internal, and current prose must not restate them"
+    },
+    {
+      "pattern": "dev/evidence/*",
+      "reason": "generated evidence records written by tools/run-evidence.py; output, not an edited document"
+    },
+    {
+      "pattern": "tools/*",
+      "reason": "the five maintenance scripts and their subtree rules; machinery, not a page"
+    },
+    {
+      "pattern": "CLAUDE.md",
+      "reason": "a symlink to AGENTS.md so a Claude Code session loads the same standing orders; not a document"
+    },
+    {
+      "pattern": "tests/AGENTS.md",
+      "reason": "standing orders for an agent editing the suite; the reader-facing policy lives in docs/testing.md and the layout in the file itself"
+    }
+  ]
+}

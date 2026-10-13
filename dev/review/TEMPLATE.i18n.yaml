@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for TEMPLATE.md (docs/i18n.md): per heading section, a hash
+# of its English and Chinese blocks outside fenced code blocks.
+# After editing either side, bring the other along and re-record with:
+#   python3 tools/pair-docs.py --write dev/review/TEMPLATE.md
+/review-what-was-reviewed-date:
+  en: c0fd19f4356cee75
+  zh: 7fac6f4623f5a6ac
+/review-what-was-reviewed-date/claim:
+  en: 5bce7d1183e372bb
+  zh: 314b8258021d76d4
+/review-what-was-reviewed-date/evidence:
+  en: 65b7c81a1389788e
+  zh: e6a6ab0eec2e8d91
+/review-what-was-reviewed-date/findings:
+  en: 177b79a346c53346
+  zh: 3c534ea84b5b30bd
+/review-what-was-reviewed-date/follow-up:
+  en: 20659159c649f5cc
+  zh: 563de9b6791714e6
+/review-what-was-reviewed-date/deliberate-risks:
+  en: e49cbc8c4b306f83
+  zh: ec8aec84c0332f26

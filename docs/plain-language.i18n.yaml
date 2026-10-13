@@ -1,0 +1,55 @@
+# Bilingual-pair consistency record for plain-language.md (docs/i18n.md): per heading section, a hash
+# of its English and Chinese blocks outside fenced code blocks.
+# After editing either side, bring the other along and re-record with:
+#   python3 tools/pair-docs.py --write docs/plain-language.md
+/plain-language:
+  en: d0bdd7a6a0fab0ef
+  zh: 6be5b695847307c7
+/plain-language/how-to-use-this-table:
+  en: bea0c3b321741b6a
+  zh: 34e18ebcb40bc7e5
+/plain-language/when-to-expand:
+  en: 1a19ec9d9e952c2a
+  zh: 0f019f29dd572ea2
+/plain-language/terms-and-their-plain-meaning:
+  en: f2e82711d07e1c91
+  zh: 321e79648c26dcad
+/plain-language/terms-and-their-plain-meaning/seam:
+  en: 28ec35d0d99ec51d
+  zh: ce49b78745c589a0
+/plain-language/terms-and-their-plain-meaning/surface:
+  en: f4cd94a99831b51e
+  zh: 17ef4e80fb4de12c
+/plain-language/terms-and-their-plain-meaning/evidence:
+  en: d462531348655abb
+  zh: 3485b1c6a747991a
+/plain-language/terms-and-their-plain-meaning/gate:
+  en: bac123af74ac2f3a
+  zh: 6f3f4a586edc1543
+/plain-language/terms-and-their-plain-meaning/projection:
+  en: 023e40302e4ba3bd
+  zh: 9d9396fce691e96f
+/plain-language/terms-and-their-plain-meaning/mirror:
+  en: 2209e9a30e39076f
+  zh: 54fc39e373a478aa
+/plain-language/terms-and-their-plain-meaning/empty-corpus:
+  en: c65c72ffa016d138
+  zh: 534b245746b267bb
+/plain-language/terms-and-their-plain-meaning/station:
+  en: 4eee844fcf5400b8
+  zh: 7e8c05a88718575d
+/plain-language/terms-and-their-plain-meaning/criterion:
+  en: 5465f17f477086fd
+  zh: 4968060ff98d1b57
+/plain-language/terms-and-their-plain-meaning/seal-frozen:
+  en: 004a0f14701f33f9
+  zh: 63da4c539bcd2313
+/plain-language/terms-and-their-plain-meaning/pair-counterpart:
+  en: bf8c3eb89dd009c9
+  zh: 26c3c09b83b4d69b
+/plain-language/terms-and-their-plain-meaning/canonical:
+  en: 092a7c89c1894d81
+  zh: cfd686fa0ebc817e
+/plain-language/terms-and-their-plain-meaning/budget:
+  en: bcbb4362287b04bb
+  zh: 03184ed4ac7c5f67

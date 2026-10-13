@@ -1,0 +1,25 @@
+# Bilingual-pair consistency record for evolution.md (docs/i18n.md): per heading section, a hash
+# of its English and Chinese blocks outside fenced code blocks.
+# After editing either side, bring the other along and re-record with:
+#   python3 tools/pair-docs.py --write docs/evolution.md
+/evolution-md:
+  en: 591afea740ca365c
+  zh: 65a65ec762007159
+/evolution-md/which-record-for-which-change:
+  en: 02b0aaa33173e900
+  zh: 5ae3c976dc8cd1de
+/evolution-md/write-it-in-the-change-that-breaks-it:
+  en: cbfd134139ff502c
+  zh: edce84d9381d2c8d
+/evolution-md/version-state:
+  en: d68e75e1c5a5bb1b
+  zh: 1dc0b97e24393c2f
+/evolution-md/consumed-artifacts-are-append-only:
+  en: cbc53c9b0c48cbd3
+  zh: 8908b1e81cde15a2
+/evolution-md/retire-or-archive:
+  en: f1274162e5fe82f5
+  zh: 433c536ab8d87a45
+/evolution-md/what-this-file-does-not-own:
+  en: 757aa2f00641f755
+  zh: 836b2313c79001e6

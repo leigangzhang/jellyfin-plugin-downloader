@@ -1,0 +1,58 @@
+# Bilingual-pair consistency record for README.md (docs/i18n.md): per heading section, a hash
+# of its English and Chinese blocks outside fenced code blocks.
+# After editing either side, bring the other along and re-record with:
+#   python3 tools/pair-docs.py --write dev/README.md
+/the-eleven-station-lifecycle:
+  en: f621225afe6db732
+  zh: b8eab2175332ed1d
+/the-eleven-station-lifecycle/the-stations-at-a-glance:
+  en: b8640d7698e3433a
+  zh: 4c14c841f460d7a3
+/the-eleven-station-lifecycle/adoption-tiers:
+  en: 5b1a4defdeaca848
+  zh: 8684e8a41eef9f02
+/the-eleven-station-lifecycle/01-intent:
+  en: 3cbdd60f61101d55
+  zh: 71ab3718d1759687
+/the-eleven-station-lifecycle/02-proposal:
+  en: e3727ceabf0217df
+  zh: 8d721cad3bfdd1f3
+/the-eleven-station-lifecycle/03-decision:
+  en: 0df3e7d677657c60
+  zh: 7e2a60c34bd413fa
+/the-eleven-station-lifecycle/03-decision/03-1-a-special-form-of-decision-does-a-capability-take-shape-seam:
+  en: 05dc7c1a81c6c92a
+  zh: 4ddcaae5b2585d30
+/the-eleven-station-lifecycle/04-contract:
+  en: 2eb322d00066dc14
+  zh: b688e3a1ea0058db
+/the-eleven-station-lifecycle/05-implementation-the-definition-of-done:
+  en: 349b74f61733ae72
+  zh: 5d31a26f428d9636
+/the-eleven-station-lifecycle/06-verification:
+  en: 658f84fbad7f803c
+  zh: 1608d3436da76e79
+/the-eleven-station-lifecycle/07-review:
+  en: 0e44c733455e2024
+  zh: d71a720d31f892e3
+/the-eleven-station-lifecycle/08-integration:
+  en: acc65533820b44e4
+  zh: 58e1c73ac79c0bc1
+/the-eleven-station-lifecycle/09-release:
+  en: 288c1f818c97aca7
+  zh: 39076c28bf1827cf
+/the-eleven-station-lifecycle/10-evolution:
+  en: d1fd7b54dee1581f
+  zh: c7e5d72fc41f6338
+/the-eleven-station-lifecycle/11-retirement:
+  en: 7c23fd014a098dd8
+  zh: e0f7b5e0d2453b75
+/the-eleven-station-lifecycle/incident-cross-cutting:
+  en: 54e9905361b149e8
+  zh: b6de0161c5de9a15
+/the-eleven-station-lifecycle/documentation-cross-cutting:
+  en: 94c76b9aabede2bd
+  zh: 03bed104097201f6
+/the-eleven-station-lifecycle/the-one-question-every-station-must-answer:
+  en: 410d115a8906b929
+  zh: 9688bc514b2a2fff

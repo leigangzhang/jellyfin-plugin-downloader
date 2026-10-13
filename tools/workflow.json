@@ -1,0 +1,1232 @@
+{
+  "version": 1,
+  "pairing": {
+    "patterns": [
+      "*.md"
+    ],
+    "exclude": [
+      "AGENTS.md",
+      "*/AGENTS.md",
+      "CLAUDE.md",
+      "README.md",
+      ".agents/skills/*/SKILL.md",
+      "docs/check-catalog.md",
+      "dev/evidence/*"
+    ],
+    "hostCanonical": [
+      "docs/README.md",
+      ".agents/notes/README.md",
+      "tools/README.md",
+      "dev/README.md",
+      "tests/README.md"
+    ],
+    "why": "Which documents are bilingual pairs, and which records must stay byte-identical to the renderer of the repository that hosts this kit. The rule lives in docs/i18n.md; the recorder and freshness gate are tools/pair-docs.py. The exclusions are agent instruction files, loader-read skills, generated output including run records, and the frozen pre-translation archive. The project's own README.md (the Jellyfin Downloader user guide) is excluded too: it is the adopter's page, not a kit pair, so it stays single-language and is classified on its own in docs/publish.json."
+  },
+  "surfaces": [
+    {
+      "name": "context-rules",
+      "patterns": [
+        "AGENTS.md",
+        "*/AGENTS.md",
+        "CLAUDE.md"
+      ],
+      "evidence": [
+        "python3 tools/check-invariants.py"
+      ],
+      "why": "Always-loaded rules are a budget; they must stay short and well-formed."
+    },
+    {
+      "name": "decisions",
+      "patterns": [
+        ".agents/notes/*.md"
+      ],
+      "evidence": [
+        "python3 tools/check-invariants.py",
+        "read the Alternatives considered section yourself; a gate cannot judge it"
+      ],
+      "why": "A decision without what it beat invites re-litigation."
+    },
+    {
+      "name": "contracts",
+      "patterns": [
+        "dev/contracts/*"
+      ],
+      "evidence": [
+        "python3 tools/check-invariants.py",
+        "confirm every mirror's source region still exists and the paste moved in the same change as the source"
+      ],
+      "why": "A pasted interface is a second fact until a check binds it to its source; an unregistered paste is the drift you cannot see."
+    },
+    {
+      "name": "docs",
+      "patterns": [
+        "docs/*"
+      ],
+      "evidence": [
+        "python3 tools/check-invariants.py",
+        "read the changed page as its reader: does it still say what a reader can do, and does its kind still match its content"
+      ],
+      "why": "Documentation has one home per fact and a declared kind; a page whose kind or owner changed is a behaviour change for every reader and every agent that loads it. A claim you did not re-run is not a fact."
+    },
+    {
+      "name": "generated-docs",
+      "patterns": [
+        "docs/check-catalog.md",
+        "tools/gen-docs.py"
+      ],
+      "evidence": [
+        "python3 tools/gen-docs.py --check",
+        "confirm the page was produced by the generator, never patched by hand"
+      ],
+      "why": "A generated page is a projection of its source. Hand-patching it creates a second fact that the next regeneration deletes, and a generator edit without a regeneration leaves the committed page stale."
+    },
+    {
+      "name": "evidence",
+      "patterns": [
+        "dev/evidence/*"
+      ],
+      "evidence": [
+        "python3 tools/check-invariants.py",
+        "read the record: the command it ran, that command's three-state result, and every entry run-evidence could not execute"
+      ],
+      "why": "An evidence record is written by tools/run-evidence.py rather than by hand, and it is the artifact station 6 leaves behind. It needs an owner like any other path: without this surface, the record the tool has just written is an unowned path and change-scope --strict refuses the very change that produced it. The runner skips this home while it builds its plan, so the record a delivery writes never becomes a change the same delivery has to verify — that is what keeps a delivery's name stable across runs."
+    },
+    {
+      "name": "capabilities",
+      "patterns": [
+        "dev/capabilities/*"
+      ],
+      "evidence": [
+        "python3 tools/check-invariants.py",
+        "confirm each capability's definition, providers, and consumers are still real, and that a new capability arrived with its marker, registry entry, and consumer"
+      ],
+      "why": "A capability nobody classifies is invisible, and a classification whose subject is gone is stale; both are drift."
+    },
+    {
+      "name": "prose",
+      "patterns": [
+        "*.md"
+      ],
+      "evidence": [
+        "python3 tools/check-invariants.py",
+        "<your Markdown link/lint check>"
+      ],
+      "why": "Prose states current state; links and budgets are checked mechanically. Generated evidence records are written by tools/run-evidence.py, so they are excluded here: they are not hand-authored prose, and pairing already excludes them.",
+      "exclude": [
+        "dev/evidence/*"
+      ]
+    },
+    {
+      "name": "i18n",
+      "patterns": [
+        "*.md",
+        "*.i18n.yaml",
+        "tools/pair-docs.py"
+      ],
+      "evidence": [
+        "python3 tools/pair-docs.py --check",
+        "read one changed pair end to end: the counterpart must say what the authored side says, not merely something similar"
+      ],
+      "why": "A translated pair is two facts that must not drift. The answer key binds each section to a confirmed hash, the switcher keeps both sides reachable, and identical fenced blocks keep the code comparable. A gate proves the pair is complete and in step; only review proves it is faithful. Generated evidence records are excluded: pairing excludes them, so a change there must not ask for a pairing run.",
+      "exclude": [
+        "dev/evidence/*",
+        "README.md"
+      ]
+    },
+    {
+      "name": "agent-inputs",
+      "patterns": [
+        "AGENTS.md",
+        "CLAUDE.md",
+        "README.md",
+        "docs/*.md",
+        ".agents/skills/*/SKILL.md",
+        ".agents/notes/*/TEMPLATE.md",
+        "dev/review/TEMPLATE.md",
+        "dev/contracts/TEMPLATE.md",
+        "dev/capabilities/TEMPLATE.md",
+        "tools/AGENTS.md",
+        ".agents/notes/AGENTS.md",
+        ".agents/notes/README.md",
+        "dev/README.md",
+        "tools/tiers.json",
+        "tests/AGENTS.md",
+        "tests/README.md"
+      ],
+      "evidence": [
+        "python3 tools/check-invariants.py",
+        "re-read what the agent actually sees: the description, the section order, the examples. A renamed section or a reworded trigger is a changed input, not an edit."
+      ],
+      "why": "Anything an agent reads is an input to a model request, so it has to be enumerable and its edits reviewed as behaviour. A skill whose description stops naming when it loads has been silently deleted from the agent's reach."
+    },
+    {
+      "name": "workflow",
+      "patterns": [
+        "tools/*",
+        ".agents/skills/*",
+        ".github/*",
+        "Makefile",
+        "justfile",
+        ".gitignore",
+        "tools/tiers.json"
+      ],
+      "evidence": [
+        "python3 tools/check-invariants.py --self-test",
+        "read each skill's description: it must name when the skill loads, not what it contains"
+      ],
+      "why": "A guard is only real if a violation makes it red; a skill is only real if its description names when it fires. `.gitignore` is here because it is repository configuration like the rest of this list, and without a pattern that matches it a change to it is an unowned path — the one file every project has and no surface claimed."
+    },
+    {
+      "name": "tests",
+      "patterns": [
+        "tests/*",
+        "test/*",
+        "*.test.*",
+        "*.spec.*",
+        "test_*.py",
+        "*_test.py",
+        "*_test.go",
+        "*_test.rs"
+      ],
+      "evidence": [
+        "python3 -m unittest discover -s tests -v  # this kit's own suite; replace with your project's test command",
+        "run the owning test for each changed test file, and watch it fail for the regression it pins",
+        "read docs/testing.md: judge whether the tier, the determinism rules, and the negative control still hold"
+      ],
+      "why": "A test is evidence only when its command and its failure mode are named. A test nobody runs, or one that cannot fail, proves nothing."
+    },
+    {
+      "name": "source",
+      "patterns": [
+        "backend/*",
+        "Jellyfin.Plugin.JellyfinDownloader/*",
+        "src/*",
+        "lib/*",
+        "app/*",
+        "packages/*",
+        "python/*",
+        "*.py",
+        "*.ts",
+        "*.js",
+        "*.cs",
+        "*.css",
+        "*.html",
+        "*.go",
+        "*.rs",
+        "*.sh"
+      ],
+      "evidence": [
+        "python3 -m py_compile backend/*.py",
+        "./build.sh",
+        "run the plugin against a real Jellyfin (./install.sh stops the server first, then open a detail page and confirm the console entry still works); backend/ has no automated tests yet, so this manual smoke path is the only behaviour evidence"
+      ],
+      "why": "Behaviour changes need the smallest check that would fail for the regression. This repository has two runtimes: the Python backend under backend/ (syntax gate here) and the C# plugin that embeds Web/inject.js and Web/style.css (built by ./build.sh). There is no automated test suite yet, so a change to either runtime also owes the manual smoke path in AGENTS.md."
+    },
+    {
+      "name": "packaging",
+      "patterns": [
+        "package.json",
+        "*/package.json",
+        "pyproject.toml",
+        "*/pyproject.toml",
+        "Cargo.toml",
+        "go.mod",
+        "Dockerfile",
+        "*/Dockerfile",
+        "*.lock",
+        "*.csproj",
+        "meta.json",
+        "manifest.json",
+        "icon.png"
+      ],
+      "evidence": [
+        "./build.sh",
+        "build with ./build.sh, then install the built plugin with ./install.sh (it stops Jellyfin first) and confirm the plugin loads and the version in meta.json matches the <Version> in the csproj"
+      ],
+      "why": "Manifests and lockfiles change the shipped artifact, not just the source. meta.json, manifest.json, the csproj <Version> and icon.png are the release surface of this plugin: a change here changes what Jellyfin and the plugin repository hand to users."
+    },
+    {
+      "name": "incidents",
+      "patterns": [
+        "dev/postmortem/*.md"
+      ],
+      "evidence": [
+        "python3 tools/check-invariants.py",
+        "read the What was green section yourself; a gate cannot judge it"
+      ],
+      "why": "An incident record is the only real input to the distrust list; it has to survive."
+    },
+    {
+      "name": "reviews",
+      "patterns": [
+        "dev/review/*.md"
+      ],
+      "evidence": [
+        "python3 tools/check-invariants.py",
+        "the reviewer must not be the author; confirm that Evidence is an external observation"
+      ],
+      "why": "A review that only restates the author's summary confirms nothing."
+    },
+    {
+      "name": "releases",
+      "patterns": [
+        "dev/release/*.md"
+      ],
+      "evidence": [
+        "python3 tools/check-invariants.py",
+        "confirm the outside install ran from a clean directory with a scrubbed environment, not from this repository, and that the published bytes are the rehearsed bytes — not a rebuild"
+      ],
+      "why": "In-repo success is masked by caches, node_modules, and leftover build output; a rebuild at publish time can also ship bytes nobody rehearsed, and an unscrubbed environment lets the host's own variables and config stand in for the artifact's requirements."
+    },
+    {
+      "name": "upgrades",
+      "patterns": [
+        "dev/upgrade-guide/*.md"
+      ],
+      "evidence": [
+        "python3 tools/check-invariants.py",
+        "read the Migration steps yourself; only a reader can say whether they are runnable"
+      ],
+      "why": "A break without migration steps leaves the reader to discover it in production."
+    },
+    {
+      "name": "evolution",
+      "patterns": [
+        "docs/evolution.md",
+        "dev/upgrade-guide/*.md",
+        ".agents/notes/archived/*"
+      ],
+      "evidence": [
+        "python3 tools/check-invariants.py",
+        "confirm every retired record entered .agents/notes/archived/ and its seal moved in the same change, and that nobody rewrote a consumed generation instead of adding a successor",
+        "read the policy as its reader: does each break still have exactly one guide, and does each guide still say how to confirm the migration"
+      ],
+      "why": "Evolving and retiring are the two stages where an old fact comes back as a current one: a guide nobody wrote leaves the reader to discover the break, and an archive that can still be edited is not an archive."
+    }
+  ],
+  "checks": [
+    {
+      "id": "context-budget",
+      "kind": "budget",
+      "patterns": [
+        "AGENTS.md",
+        "*/AGENTS.md",
+        "CLAUDE.md"
+      ],
+      "maxLines": 120,
+      "why": "Always-loaded context is a budget, not a dumping ground. Relocate, then condense, then raise this number. Relocate directory-bound rules first: a rule that only bites while working under one directory belongs in that directory's own AGENTS.md, which the agent loads there rather than on every task. The ceiling is the last move, never the first."
+    },
+    {
+      "id": "decision-proposed",
+      "kind": "required-sections",
+      "patterns": [
+        ".agents/notes/proposed/*.md"
+      ],
+      "sections": [
+        [
+          "## Problem",
+          "## 问题"
+        ],
+        [
+          "## Proposal",
+          "## 提案"
+        ],
+        [
+          "## Alternatives considered",
+          "## 曾考虑的替代方案"
+        ],
+        [
+          "## Acceptance criteria",
+          "## 验收标准"
+        ]
+      ],
+      "minBodyLines": 1,
+      "why": "A proposal without what it beat, and without what done looks like, cannot be shipped or rejected."
+    },
+    {
+      "id": "decision-implemented",
+      "kind": "required-sections",
+      "patterns": [
+        ".agents/notes/implemented/*.md"
+      ],
+      "sections": [
+        [
+          "## Problem",
+          "## 问题"
+        ],
+        [
+          "## Decision",
+          "## 决策"
+        ],
+        [
+          "## Alternatives considered",
+          "## 曾考虑的替代方案"
+        ],
+        [
+          "## Consequences",
+          "## 后果"
+        ],
+        [
+          "## Testing",
+          "## 验证"
+        ]
+      ],
+      "minBodyLines": 1,
+      "why": "Moving a record out of proposed/ rewrites its skeleton; a leftover ## Proposal or ## Acceptance criteria fails here, while ## Testing keeps each criterion's proof alive in the present tense."
+    },
+    {
+      "id": "criteria-traced",
+      "kind": "criteria-traced",
+      "patterns": [
+        ".agents/notes/proposed/*.md",
+        ".agents/notes/implemented/*.md"
+      ],
+      "sections": [
+        [
+          "## Acceptance criteria",
+          "## 验收标准"
+        ],
+        [
+          "## Testing",
+          "## 验证"
+        ]
+      ],
+      "declaredIn": "tools/workflow.json",
+      "why": "A criterion nobody owns is a wish. Each bullet carries an id and cites a declared check or surface, so the thing that will go red when the criterion breaks is written next to it."
+    },
+    {
+      "id": "testing-policy",
+      "kind": "required-sections",
+      "patterns": [
+        "docs/testing.md",
+        "docs/testing.zh.md"
+      ],
+      "sections": [
+        [
+          "## Tiers",
+          "## 层级"
+        ],
+        [
+          "## Evidence per change",
+          "## 每个改动的证据"
+        ],
+        [
+          "## Test doubles",
+          "## 测试替身"
+        ],
+        [
+          "## Determinism",
+          "## 确定性"
+        ],
+        [
+          "## Blocking and observational lanes",
+          "## 阻塞车道与观测车道"
+        ],
+        [
+          "## Prove a new guard",
+          "## 证明新守卫"
+        ],
+        [
+          "## Flake policy",
+          "## flake 政策"
+        ]
+      ],
+      "minBodyLines": 1,
+      "why": "The testing strategy needs one home, and that home needs a shape. A policy with no tiers, no evidence map, no determinism rules, no lane severities, no negative control, or no flake disposition is a paragraph nobody can be held to. The test-double policy joined when a dangling citation was found: the standing rule named this file as its policy home, and the file did not carry it."
+    },
+    {
+      "id": "contract-record",
+      "kind": "required-sections",
+      "patterns": [
+        "dev/contracts/*.md"
+      ],
+      "sections": [
+        [
+          "## Interface",
+          "## 接口"
+        ],
+        [
+          "## Source of truth",
+          "## 事实源"
+        ],
+        [
+          "## Projection",
+          "## 投影"
+        ],
+        [
+          "## Check",
+          "## 检查"
+        ],
+        [
+          "## Drift policy",
+          "## 漂移政策"
+        ]
+      ],
+      "minBodyLines": 1,
+      "why": "A contract with no named source, no projection, no runnable check, or no drift policy is a description that will silently diverge."
+    },
+    {
+      "id": "contract-mirror",
+      "kind": "source-mirror",
+      "patterns": [
+        "dev/contracts/*.md"
+      ],
+      "manifest": "dev/contracts/mirrors.json",
+      "why": "Every pasted block is registered one-to-one with a source region; the gate fails on drift, on an orphan registration, and on a mirror that fell outside the scanned patterns."
+    },
+    {
+      "id": "docs-policy",
+      "kind": "required-sections",
+      "patterns": [
+        "docs/documentation.md",
+        "docs/documentation.zh.md"
+      ],
+      "sections": [
+        [
+          "## Document kinds",
+          "## 文档的 kind"
+        ],
+        [
+          "## One home per fact",
+          "## 一个事实一个家"
+        ],
+        [
+          "## Tutorial or reference",
+          "## 教程还是参考"
+        ],
+        [
+          "## Generated, mirrored, or linked",
+          "## 生成、镜像还是链接"
+        ],
+        [
+          "## Budgets",
+          "## 预算"
+        ],
+        [
+          "## Publication",
+          "## 发布"
+        ],
+        [
+          "## The slop checklist",
+          "## 防劣质清单"
+        ]
+      ],
+      "minBodyLines": 1,
+      "why": "The documentation standard needs one home, and that home needs a shape. Without the kinds, the placement rule, the tutorial/reference split, the generated-versus-mirror rule, the budget protocol, the publication switch, or the slop checklist, a page has no rule to be held to."
+    },
+    {
+      "id": "docs-budget",
+      "kind": "budget",
+      "patterns": [
+        "docs/documentation.md"
+      ],
+      "maxWords": 1850,
+      "why": "The standard is standing context, so it is a budget. The English side is measured in words; the Chinese counterpart carries its own line ceiling because a whitespace word count undercounts it (docs/i18n.md). The ceiling moved from 100 lines to 1400 words when the Chinese page gained its English canonical: the translation is faithful and added only the pairing row, so the space is the language change, not new content. Relocate, then condense, then raise this number and say why. The ceiling moved 1400 → 1520 when the five gate-level limits moved here from README's `## Known limits` (one home per fact); the section was condensed first and only the genuinely new limits remain. Raised again 1520 → 1580 when the skill-kind rules moved here from README's deleted catalog: a kind whose reader is a model needed its format stated in the page that owns kinds. The ceiling settled at 1600 after that paragraph was condensed by a third. Raised 1600 → 1660 when the `reference` kind and the two placement rows landed: the kind table's own rule requires a new kind to arrive with its skeleton, home, and check, and that text has no other home. Raised 1660 → 1700 when the naming convention was written down: the rule was real and consistent but unstated, and the tooling-lookup names plus the lowercase-kebab rule take a paragraph to state. The paragraph was condensed first; the raise covers the statement itself. Raised 1700 → 1750 for the two placement rows that decide where a source-derived interface and a capability's roles live: the rows were written minimally first, and the table is where a writer looks before choosing a directory, so the fact has no other home. Raised 1750 → 1850 when the placement table gained the tier switch row: a tier is now a declared fact with a home, and the table is where a writer looks before choosing a directory. The row was written minimally first; the extra headroom is deliberate, because every new placement fact lands in this table and a ceiling that reds on each one is measuring the table, not the prose."
+    },
+    {
+      "id": "docs-budget-zh",
+      "kind": "budget",
+      "patterns": [
+        "docs/documentation.zh.md"
+      ],
+      "maxLines": 116,
+      "why": "The Chinese side of the documentation standard. Lines, not words: Chinese prose has no whitespace between words, so the word unit collapses the measure (docs/i18n.md#typography). The ceiling moved 100 → 110 lines for the same relocation."
+    },
+    {
+      "id": "i18n-policy",
+      "kind": "required-sections",
+      "patterns": [
+        "docs/i18n.md",
+        "docs/i18n.zh.md"
+      ],
+      "sections": [
+        [
+          "## Scope and exclusions",
+          "## 范围与排除"
+        ],
+        [
+          "## Pairs and the consistency record",
+          "## 成对与一致性记录"
+        ],
+        [
+          "## Identifiers stay English",
+          "## 保持英文的标识"
+        ],
+        [
+          "## Prose is translated",
+          "## 正文会被翻译"
+        ],
+        [
+          "## Terminology",
+          "## 术语"
+        ],
+        [
+          "## Typography",
+          "## 排版"
+        ],
+        [
+          "## Links and the language switcher",
+          "## 链接与语言切换器"
+        ],
+        [
+          "## Updating a pair",
+          "## 更新一对"
+        ],
+        [
+          "## What the gate proves",
+          "## 闸门证明了什么"
+        ]
+      ],
+      "minBodyLines": 1,
+      "why": "The language rule needs one home, and that home needs a shape. Without the scope, the pair layout, the identifier list, the translation rule, the terminology table, the Chinese typography rules, the switcher and link rule, the update obligation, or the statement of what the gate proves, a pair has no rule to be held to."
+    },
+    {
+      "id": "i18n-budget",
+      "kind": "budget",
+      "patterns": [
+        "docs/i18n.md"
+      ],
+      "maxWords": 1210,
+      "why": "The language rule is standing context for every document change, so it is a budget. The English side is measured in words; the Chinese counterpart carries its own line ceiling (docs/i18n.md#typography). It first condensed the new heading, table-header, and fragment rules before raising this ceiling from 1100, because those three rules had no home yet. Relocate, then condense, then raise this number and say why. Raised 1150 → 1210 when the terminology split landed: this file now points at the glossary for meaning and carries the identifier-heading rule, after the two sentences were condensed."
+    },
+    {
+      "id": "i18n-budget-zh",
+      "kind": "budget",
+      "patterns": [
+        "docs/i18n.zh.md"
+      ],
+      "maxLines": 110,
+      "why": "The Chinese side of the language rule. Lines, not words, for the same reason as every Chinese page (docs/i18n.md#typography)."
+    },
+    {
+      "id": "contract-kinds-budget",
+      "kind": "budget",
+      "patterns": [
+        "dev/contracts/kinds.md"
+      ],
+      "maxWords": 280,
+      "why": "The kinds contract is standing reference every adopter reads when adding a check kind, so it stays short enough to read whole. This is the word unit, applied where the prose is whitespace-separated."
+    },
+    {
+      "id": "publish-manifest",
+      "kind": "publish-manifest",
+      "patterns": [
+        "*.md"
+      ],
+      "manifest": "docs/publish.json",
+      "why": "Every document is deliberately public or internal: a file that is neither is a silent omission, and a public entry with no file behind it is a broken promise. DeepSeek Harness still has this gap on its own side -- a page missing from the site manifest simply never appears, and no gate fails."
+    },
+    {
+      "id": "decision-rejected",
+      "kind": "required-sections",
+      "patterns": [
+        ".agents/notes/rejected/*.md"
+      ],
+      "sections": [
+        [
+          "## Problem",
+          "## 问题"
+        ],
+        [
+          "## Proposal",
+          "## 提案"
+        ],
+        [
+          "## Alternatives considered",
+          "## 曾考虑的替代方案"
+        ],
+        [
+          "## Why rejected",
+          "## 为什么否决"
+        ]
+      ],
+      "minBodyLines": 1,
+      "why": "A rejected record is kept only while its verdict stops someone from re-proposing the same thing; without the why, it is just an abandoned draft."
+    },
+    {
+      "id": "capability-record",
+      "kind": "required-sections",
+      "patterns": [
+        "dev/capabilities/*.md"
+      ],
+      "sections": [
+        [
+          "## The entry",
+          "## 条目"
+        ],
+        [
+          "## Fields",
+          "## 字段"
+        ],
+        [
+          "## The three roles",
+          "## 三个角色"
+        ],
+        [
+          "## Splitting rules",
+          "## 拆分规则"
+        ],
+        [
+          "## Keeping the registry honest",
+          "## 让登记表保持诚实"
+        ]
+      ],
+      "minBodyLines": 1,
+      "why": "The capability template is the shape every registry entry follows; a missing section means one of the roles, the split rule, or the honesty rule stopped being stated."
+    },
+    {
+      "id": "capability-registry",
+      "kind": "capability-registry",
+      "patterns": [
+        "dev/capabilities/*.md"
+      ],
+      "manifest": "dev/capabilities/registry.json",
+      "discover": {
+        "patterns": [
+          "tools/*.py"
+        ],
+        "marker": "# capability:"
+      },
+      "why": "Every capability carries a marker in source and an entry here; a seam must name a definition, a provider, and a consumer, and the two sets must be exactly equal in both directions."
+    },
+    {
+      "id": "postmortem-record",
+      "kind": "required-sections",
+      "patterns": [
+        "dev/postmortem/*.md"
+      ],
+      "sections": [
+        [
+          "## What happened",
+          "## 发生了什么"
+        ],
+        [
+          "## What was green",
+          "## 当时什么是绿的"
+        ],
+        [
+          "## Root cause",
+          "## 根因"
+        ],
+        [
+          "## Guardrail added",
+          "## 新增的护栏"
+        ],
+        [
+          "## Negative control",
+          "## 负控制"
+        ],
+        [
+          "## Lessons",
+          "## 教训"
+        ]
+      ],
+      "minBodyLines": 1,
+      "why": "An incident record without what was green, and without a guardrail someone has watched fail, teaches nothing."
+    },
+    {
+      "id": "postmortem-guardrail",
+      "kind": "criteria-traced",
+      "patterns": [
+        "dev/postmortem/*.md"
+      ],
+      "sections": [
+        [
+          "## Guardrail added",
+          "## 新增的护栏"
+        ]
+      ],
+      "declaredIn": "tools/workflow.json",
+      "why": "An incident whose guardrail names nothing is a lesson, not a fix: the next change can drop it and no check goes red. Each guardrail bullet carries an id and cites the declared check or surface that now fails for this incident, so the incident-to-gate loop closes in the record itself."
+    },
+    {
+      "id": "upgrade-guide",
+      "kind": "required-sections",
+      "patterns": [
+        "dev/upgrade-guide/*.md"
+      ],
+      "sections": [
+        [
+          "## Change",
+          "## 变更"
+        ],
+        [
+          "## Migration",
+          "## 迁移"
+        ]
+      ],
+      "minBodyLines": 1,
+      "why": "A break that says what changed but not what the reader must do is a changelog entry, not an upgrade guide."
+    },
+    {
+      "id": "upgrade-guide-budget",
+      "kind": "budget",
+      "patterns": [
+        "dev/upgrade-guide/*.md"
+      ],
+      "maxLines": 45,
+      "why": "A break's reader needs what changed and what to do, not a changelog entry: over budget means the content belongs in a linked file. The unit is lines because this measures a template skeleton, not prose."
+    },
+    {
+      "id": "evolution-policy",
+      "kind": "required-sections",
+      "patterns": [
+        "docs/evolution.md",
+        "docs/evolution.zh.md"
+      ],
+      "sections": [
+        [
+          "## Which record for which change",
+          "## 改什么写哪份记录"
+        ],
+        [
+          "## Write it in the change that breaks it",
+          "## 在引入破坏的那次改动里写"
+        ],
+        [
+          "## Version state",
+          "## 版本状态"
+        ],
+        [
+          "## Consumed artifacts are append-only",
+          "## 被消费的产物只增不改"
+        ],
+        [
+          "## Retire or archive",
+          "## 退役还是封存"
+        ],
+        [
+          "## What this file does not own",
+          "## 本文件不拥有什么"
+        ]
+      ],
+      "minBodyLines": 1,
+      "why": "Evolving and retiring need one home, and that home needs a shape. Without the record selector, the write-it-now rule, the three version states, the append-only rule, the retirement standard, and the statement of what the file does not own, a break or a retirement has no rule to be held to."
+    },
+    {
+      "id": "evolution-budget",
+      "kind": "budget",
+      "patterns": [
+        "docs/evolution.md"
+      ],
+      "maxWords": 1330,
+      "why": "The evolution policy is standing context on every break and every retirement, so it is a budget. The English side is measured in words; the Chinese counterpart carries its own line ceiling (docs/i18n.md#typography). The ceiling moved from 110 lines to 1250 words when the Chinese page gained its English canonical: the words are the faithful translation of the same rules, not new rules. Relocate, then condense, then raise this number and say why. The ceiling moved 1250 → 1330 when the retirement gates' limits moved here from README's `## Known limits`, condensed into the existing 'does not own' section."
+    },
+    {
+      "id": "evolution-budget-zh",
+      "kind": "budget",
+      "patterns": [
+        "docs/evolution.zh.md"
+      ],
+      "maxLines": 110,
+      "why": "The Chinese side of the evolution policy. Lines, not words, for the same reason as every Chinese page (docs/i18n.md#typography)."
+    },
+    {
+      "id": "archive-seal",
+      "kind": "sealed-manifest",
+      "patterns": [
+        ".agents/notes/archived/*"
+      ],
+      "manifest": ".agents/notes/archived/manifest.json",
+      "why": "A record is archived because it still owns history, and history that can be edited stops being evidence: the seal binds the file's bytes and its archive date, so an edit, a deletion, an unregistered drop, and a date that disagrees with the registry all go red. Archived records live under the notes tree so they inherit its subtree rules and its class folders."
+    },
+    {
+      "id": "review-record",
+      "kind": "required-sections",
+      "patterns": [
+        "dev/review/*.md"
+      ],
+      "sections": [
+        [
+          "## Claim",
+          "## 主张"
+        ],
+        [
+          "## Evidence",
+          "## 证据"
+        ],
+        [
+          "## Findings",
+          "## 发现"
+        ],
+        [
+          "## Follow-up",
+          "## 归宿"
+        ],
+        [
+          "## Deliberate risks",
+          "## 刻意承担的风险"
+        ]
+      ],
+      "minBodyLines": 1,
+      "why": "Without an evidence section, a review records only the reviewer's impression. Without a follow-up section, every finding is fixed once and never becomes a check or a rule."
+    },
+    {
+      "id": "release-record",
+      "kind": "required-sections",
+      "patterns": [
+        "dev/release/*.md"
+      ],
+      "sections": [
+        [
+          "## Revision",
+          "## 版本"
+        ],
+        [
+          "## Scope",
+          "## 范围"
+        ],
+        [
+          "## Evidence",
+          "## 证据"
+        ],
+        [
+          "## Breaking changes",
+          "## 破坏性变更"
+        ],
+        [
+          "## Rollback",
+          "## 回滚"
+        ]
+      ],
+      "minBodyLines": 1,
+      "why": "A release note without an exact revision, without an outside install, and without rollback is a claim rather than a verified release. The revision pins which bytes were published, so a later rebuild cannot silently claim the same version."
+    },
+    {
+      "id": "skill-record",
+      "kind": "required-sections",
+      "patterns": [
+        ".agents/skills/*/SKILL.md"
+      ],
+      "sections": [
+        "## When to use",
+        "## How",
+        "## Verification",
+        "## Anti-patterns"
+      ],
+      "minBodyLines": 1,
+      "why": "A skill with no trigger, no rule, no verification step, or no named failure mode is an article nobody opens."
+    },
+    {
+      "id": "skill-trigger",
+      "kind": "skill-trigger",
+      "patterns": [
+        ".agents/skills/*/SKILL.md"
+      ],
+      "why": "A skill is loaded by its description, so a description that summarizes the skill instead of naming when it loads has silently deleted the skill from the agent's reach. This makes that prose rule fail: the description must open with a load trigger ('Use when' / 'Use before' / 'Use after' / 'Use during'), and the wording itself stays a review call."
+    },
+    {
+      "id": "no-proposal-era-headings",
+      "kind": "forbidden-regex",
+      "patterns": [
+        ".agents/notes/implemented/*.md"
+      ],
+      "regex": [
+        "^## (?:Proposal|Plan|Migration plan|Acceptance criteria)\\b",
+        "^## (提案|计划|迁移计划|验收标准)$"
+      ],
+      "why": "A moved record that keeps proposal-era headings reads as an active plan: the skeleton must be rewritten, not appended to. Requiring the implemented sections alone would let a record carry both skeletons at once."
+    },
+    {
+      "id": "no-time-based-test-sync",
+      "kind": "forbidden-regex",
+      "patterns": [
+        "tests/*",
+        "*.spec.*",
+        "*.test.*",
+        "test_*.py",
+        "*_test.py"
+      ],
+      "regex": [
+        "setTimeout\\(",
+        "waitForTimeout\\(",
+        "\\bsleep\\("
+      ],
+      "why": "A fixed wait is not evidence that setup finished or teardown settled, and it makes a suite slower and flakier at once. Wait on a readiness signal instead; when a timeout is the subject of the test, assert its observable effect (or move the wait into a helper outside this check's patterns)."
+    },
+    {
+      "id": "no-secrets",
+      "kind": "forbidden-regex",
+      "patterns": [
+        "*"
+      ],
+      "regex": [
+        "sk-[A-Za-z0-9]{20,}",
+        "AKIA[0-9A-Z]{16}",
+        "ghp_[A-Za-z0-9]{36}",
+        "-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----"
+      ],
+      "why": "Credentials never enter the repository."
+    },
+    {
+      "id": "no-conflict-markers",
+      "kind": "forbidden-regex",
+      "patterns": [
+        "*"
+      ],
+      "regex": [
+        "^(<{7}|={7}|>{7})( |$)"
+      ],
+      "why": "An unresolved merge must not reach a commit."
+    },
+    {
+      "id": "guide-budget",
+      "kind": "budget",
+      "patterns": [
+        "tools/README.md",
+        "docs/extending.md",
+        "docs/adopting.md"
+      ],
+      "maxWords": 1120,
+      "why": "The tools reference and the extension tutorial are read, not skimmed, so each carries a word ceiling. Raised 900 → 1120 when the engine's module table joined the tools page: thirteen modules with one line each is the directory structure a reader asked for, and the layout row for the package now points at that table instead of restating it. The table's wording is taken from each module's own docstring. The adoption guide joins them at the same ceiling: whoever needs it reads it once, in order, before the first change."
+    },
+    {
+      "id": "guide-budget-zh",
+      "kind": "budget",
+      "patterns": [
+        "tools/README.zh.md",
+        "docs/extending.zh.md",
+        "docs/adopting.zh.md"
+      ],
+      "maxLines": 130,
+      "why": "The Chinese side of the same three pages. Lines, not words, for the same reason as every Chinese page (docs/i18n.md#typography)."
+    },
+    {
+      "id": "notes-readme",
+      "kind": "required-sections",
+      "patterns": [
+        ".agents/notes/README.md",
+        ".agents/notes/README.zh.md"
+      ],
+      "sections": [
+        [
+          "## Layout and naming",
+          "## 布局与命名"
+        ],
+        [
+          "## The file format",
+          "## 文件格式"
+        ],
+        [
+          "## Where to look",
+          "## 去哪看"
+        ],
+        [
+          "## Modules",
+          "## 模块"
+        ]
+      ],
+      "minBodyLines": 1,
+      "why": "A record home's landing page follows the host repository's Agent Note README section for section — layout and naming, classification, archiving and deletion, when to write one, the file format — plus the one kit-specific routing section, so a reader who knows either tree knows both. The Chinese side declares the host's own translated heading names. `## Modules` joined the list with the module table: the declared modules and the rules for keeping them live in one section, which is the section this check must keep from disappearing."
+    },
+    {
+      "id": "tools-readme",
+      "kind": "required-sections",
+      "patterns": [
+        "tools/README.md",
+        "tools/README.zh.md"
+      ],
+      "sections": [
+        [
+          "## The five scripts",
+          "## 五个脚本"
+        ],
+        [
+          "## Known limits",
+          "## 已知边界"
+        ]
+      ],
+      "minBodyLines": 1,
+      "why": "The scripts' reference page must list every script and state where the tooling stops, so a reader can tell a tool failure from a failure of the change."
+    },
+    {
+      "id": "note-class",
+      "kind": "note-class",
+      "patterns": [
+        ".agents/notes/*/*/*.md",
+        ".agents/notes/*/TEMPLATE.md"
+      ],
+      "classes": [
+        "feature",
+        "bug-fix",
+        "simplification",
+        "architecture",
+        "process",
+        "testing"
+      ],
+      "lifecycles": [
+        "proposed",
+        "implemented",
+        "rejected",
+        "archived"
+      ],
+      "areasIn": ".agents/notes/README.md",
+      "areasHeading": "## Modules",
+      "why": "A record's class is path-encoded, so a record dropped into the wrong folder drifts out of the taxonomy with nothing to notice. The path class, the `Class:` line, and the closed set must agree; the set is adopted from the host repository, which gates the same tree with the same six classes. Sealed records are classed too: `archived/` is a lifecycle whose folders still carry the closed class set. Each lifecycle's `TEMPLATE.md` is matched only so a cleaned corpus keeps a subject; the runner skips it, because a skeleton is not a record yet. The module list is the table under `areasHeading` in `areasIn` — the records home, where a reader managing the list already is, rather than a second rendering of it here — and this check reads its first column, so the list has one home and the gate has one source. That list is open where the class set is closed: a subject is named once and reused, grows when a decision belongs to a domain nothing names yet, and is retired when the last record that used it is gone. Every record's topic title must open with a subject from the table, whatever its date, so the name a reader sorts and searches by is declared before it is used; a date that exempted records would only make the list something to negotiate with. The maintenance rules sit under the table, in the same section."
+    },
+    {
+      "id": "agent-input-links",
+      "kind": "link-target",
+      "patterns": [
+        "AGENTS.md",
+        "*/AGENTS.md",
+        "CLAUDE.md",
+        ".agents/skills/*/SKILL.md",
+        ".agents/notes/*/TEMPLATE.md",
+        ".agents/notes/*/TEMPLATE.zh.md",
+        "dev/*/TEMPLATE.md",
+        "dev/*/TEMPLATE.zh.md"
+      ],
+      "why": "The agent loads these files, and pairing excludes them, because agent instructions and skills are single-language by rule. Without this check a rule, a skill, or a record template can cite a file that does not exist and nothing goes red: the reader follows the link and finds nothing. A link into a stage the tier switch declares absent is exempt, which is the tolerance `pair-docs` already applies to paired documents."
+    },
+    {
+      "id": "evidence-record",
+      "kind": "evidence-record",
+      "patterns": [
+        "dev/evidence/*.md"
+      ],
+      "why": "The record is what a reviewer reads to decide whether a change's evidence holds, and tools/run-evidence.py writes it rather than a person. Its verdict is a claim about its own entries: counts that disagree with the entries below them, or a `Verdict:` of PASS beside an entry that failed, mean the record was edited, truncated, or written by a regressed generator — and a verdict nobody can trust is worse than no record. The format belongs to that writer; a change to it lands with a change to this check. The writer leaves one record per delivery — surfaces plus merge base — and a second run of the same delivery with the same verdict writes nothing; only a verdict that changed takes a `-2` successor."
+    },
+    {
+      "id": "notes-readme-budget",
+      "kind": "budget",
+      "patterns": [
+        ".agents/notes/README.md"
+      ],
+      "maxWords": 2320,
+      "why": "The record rules are standing context for every change that writes a record, and they were aligned section for section with the host repository's Agent Note README, which is 1790 words. It landed at 1353 after one condensing pass, and the ceiling was set to 1400 rather than lower so a future rule has room without a bump. Raised 1400 → 1430 when the module-first title rule landed: the first draft of that paragraph ran to 131 words, its rationale moved into the record it links to, and what remains is the rule and one clause — 60 words, against the 15 the old ceiling had left. The ceiling is 1430 rather than 1417 for the same reason the last bump left headroom. Raised 1430 → 1750 when the module list moved into this page: the table, the lead that says which axis is open, and the maintenance rules that govern it are read by whoever manages the list and by whoever is about to name a record, so they belong beside the rules rather than in the configuration the gate reads for the pointer alone. The ceiling is 1750 rather than the file's own count for the same reason again, and it stays under the host's 1790, which still carries every mechanism this page states as a rule. The paragraph that carried the title rule in `## Layout and naming` was deleted in the same change, because the section the list moved to states it too, and two statements of one rule are the drift this file exists to prevent. Raised 1750 → 2280 when the page was re-synced from the host's in full. The kit's own trigger rewording and its session-file section came out again — the session file belongs to the skill that performs the freeze — and the host's whole rule set came in: the consolidation conditions for a removed capability, the archive's permitted content changes, what a rejected record keeps, the bespoke-section allowance, and the 'recorded, never invented' rule for alternatives. None of them had survived the import. The consolidation rules then moved back into `## When to write one`, where the host keeps them, and the three sub-rules an earlier condensation had dropped came with them — the deletion of the counterpart and its consistency record, the tests that may remain, and the implementation inventories that are no longer evidence. The page carries the host's four paragraphs plus this kit's own freeze sentence and its two routing sections, `## Modules` and `## Where to look`, at 2271 words against the host's 1790. The ceiling carries 49 words of headroom so the next clause does not red on arrival; the `## Modules` maintenance paragraph is still the thing to relocate before a rule is."
+    },
+    {
+      "id": "notes-readme-budget-zh",
+      "kind": "budget",
+      "patterns": [
+        ".agents/notes/README.zh.md"
+      ],
+      "maxLines": 140,
+      "why": "The Chinese side of the record rules, mirroring the host's translated headings. Lines, not words, for the same reason as every Chinese page (docs/i18n.md#typography). Raised 140 → 155 lines for three kit rules and set back to 140 when the page was re-synced from the host's in full; the Chinese side stands at 122 lines."
+    },
+    {
+      "id": "glossary-sections",
+      "kind": "required-sections",
+      "patterns": [
+        "docs/glossary.md",
+        "docs/glossary.zh.md"
+      ],
+      "sections": [
+        [
+          "## How to use this glossary",
+          "## 如何使用本术语表"
+        ],
+        [
+          "## How to add a term",
+          "## 如何新增一个术语"
+        ]
+      ],
+      "minBodyLines": 1,
+      "why": "The glossary is the vocabulary home, so its framing must stay: how to read it, and what earns a term. Term headings are deliberately not required — terms are added and retired, and a check that pinned them would red on a rename that is otherwise legitimate."
+    },
+    {
+      "id": "plain-language-sections",
+      "kind": "required-sections",
+      "patterns": [
+        "docs/plain-language.md",
+        "docs/plain-language.zh.md"
+      ],
+      "sections": [
+        [
+          "## How to use this table",
+          "## 如何使用本表"
+        ],
+        [
+          "## When to expand",
+          "## 什么时候必须展开"
+        ]
+      ],
+      "minBodyLines": 1,
+      "why": "The human-facing half of the vocabulary layer must keep both halves: the lookup table and the rule for when a term has to be expanded."
+    },
+    {
+      "id": "reference-budget",
+      "kind": "budget",
+      "patterns": [
+        "docs/glossary.md",
+        "docs/plain-language.md"
+      ],
+      "maxWords": 1500,
+      "why": "Reference pages are looked up, not read whole, so each carries a ceiling. The first glossary batch holds 35 entries across five clusters and was condensed once at drafting; 1350 leaves both pages inside one ceiling with the glossary at ~1,300. Relocate, then condense, then raise this number and say why. Raised 1350 → 1500 when the record vocabulary arrived: `standing constraint` and `session decisions file` are the terms the record rules link to, and the `decision record` entry gained the trigger sentence. The ceiling covers two pages, and the plain-language half stays well inside it."
+    },
+    {
+      "id": "reference-budget-zh",
+      "kind": "budget",
+      "patterns": [
+        "docs/glossary.zh.md",
+        "docs/plain-language.zh.md"
+      ],
+      "maxLines": 200,
+      "why": "The Chinese side of the two reference pages. Lines, not words, for the same reason as every Chinese page (docs/i18n.md#typography). Raised 180 → 200 lines when the two record terms joined the glossary."
+    },
+    {
+      "id": "term-headings-ascii",
+      "kind": "forbidden-regex",
+      "patterns": [
+        "docs/glossary.md",
+        "docs/glossary.zh.md",
+        "docs/plain-language.md",
+        "docs/plain-language.zh.md"
+      ],
+      "regex": [
+        "^### .*[^\\x00-\\x7F]"
+      ],
+      "why": "A term heading is an identifier, so its anchor must be identical on both sides of the pair: a translated term heading would break every cross-language link into the entry. This makes that rule fail instead of relying on a translator to remember it. Framing sections stay H2 and may be translated."
+    },
+    {
+      "id": "banned-spellings",
+      "kind": "forbidden-regex",
+      "patterns": [
+        "README.md",
+        "AGENTS.md",
+        "docs/*.md",
+        ".agents/notes/*.md",
+        ".agents/skills/*.md",
+        "tools/*.md",
+        "dev/contracts/*.md",
+        "dev/capabilities/*.md",
+        "dev/review/*.md",
+        "dev/release/*.md",
+        "dev/upgrade-guide/*.md",
+        "dev/postmortem/*.md"
+      ],
+      "regex": [
+        "散文"
+      ],
+      "why": "A retronym list, executable: each entry is a spelling this repository has stopped using, and a ban is added only after the corpus is clean so the check never ships red. The one entry so far is the Chinese literary word for an essay, used as a calque of prose when the sense here is natural-language text as opposed to identifiers and code; the Chinese side writes 正文. The patterns name the files whose wording is normative."
+    },
+    {
+      "id": "testing-budget",
+      "kind": "budget",
+      "patterns": [
+        "docs/testing.md"
+      ],
+      "maxWords": 1900,
+      "why": "The testing policy is standing context on every change to a test, a fixture, or a lane, so it is a budget. The ceiling starts at 1900 because the file already carried 1465 words when the ceiling was first set, and the three new rules took it to 1759 — a 41-word headroom would red on the next rule, so the ceiling carries room instead, and the three rules that joined it (test doubles, one plane, flake diagnosis) are the content that had no home. Relocate, then condense, then raise this number and say why. An adopter retunes it: the tiers are theirs, and a project with a browser or container lane will need more room."
+    },
+    {
+      "id": "testing-budget-zh",
+      "kind": "budget",
+      "patterns": [
+        "docs/testing.zh.md"
+      ],
+      "maxLines": 125,
+      "why": "The Chinese side of the testing policy. Lines, not words, for the same reason as every Chinese page (docs/i18n.md#typography). The ceiling is 125 because the file carried 100 lines when the ceiling was set and the new sections add about fourteen."
+    },
+    {
+      "id": "tier-manifest",
+      "kind": "tier-manifest",
+      "patterns": [
+        "tools/tiers.json",
+        "dev/README.md"
+      ],
+      "why": "A tier decides which stations a project runs, so it is a fact with one home and one shape. The switch states the ladder and the project's choice; this check proves the ladder covers every stage once, that every declared lifecycle resolves to a known tier, that an absent stage owns no files, that an installed stage is owned by a check, and that the map's tier table still renders it."
+    }
+  ]
+}

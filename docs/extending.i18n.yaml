@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for extending.md (docs/i18n.md): per heading section, a hash
+# of its English and Chinese blocks outside fenced code blocks.
+# After editing either side, bring the other along and re-record with:
+#   python3 tools/pair-docs.py --write docs/extending.md
+/extending-the-kit:
+  en: ee04abf0629792b4
+  zh: a3efa33f41f3785e
+/extending-the-kit/before-you-start:
+  en: 6830edfe55e931e3
+  zh: 592b87df436a9a5f
+/extending-the-kit/data-shaped-changes:
+  en: e3e58761a2a33f36
+  zh: a2179a26995bddb0
+/extending-the-kit/a-new-decision-rule:
+  en: fd15baa859a6b82f
+  zh: c1e4df21a3c55fb6
+/extending-the-kit/syncing-a-change-into-a-copy-of-the-kit:
+  en: 9428e0e3d202ee42
+  zh: 6d0b0af55ecb1a69
+/extending-the-kit/how-to-know-it-worked:
+  en: 7b31a018fbe708c7
+  zh: df3138fb822ea546

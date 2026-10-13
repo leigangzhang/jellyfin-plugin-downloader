@@ -1,0 +1,31 @@
+# Bilingual-pair consistency record for documentation.md (docs/i18n.md): per heading section, a hash
+# of its English and Chinese blocks outside fenced code blocks.
+# After editing either side, bring the other along and re-record with:
+#   python3 tools/pair-docs.py --write docs/documentation.md
+/documentation-md:
+  en: f8ef1de08b3377e0
+  zh: 8926c46637b43f52
+/documentation-md/document-kinds:
+  en: f61a66c0fb56e3ec
+  zh: 17e2c28430028f16
+/documentation-md/one-home-per-fact:
+  en: fa215387f527ce33
+  zh: 14e3d8a57c01b653
+/documentation-md/tutorial-or-reference:
+  en: 6681286602a1d974
+  zh: ac69aff07ed566d0
+/documentation-md/generated-mirrored-or-linked:
+  en: 70cc7b4ff8ea88ff
+  zh: 3099b0a296d6ab18
+/documentation-md/budgets:
+  en: 86b784f700ed7fd8
+  zh: ac46ee0c9a7d0cc6
+/documentation-md/publication:
+  en: 1c2aedc4891b9987
+  zh: bd4b7bac7f300984
+/documentation-md/the-slop-checklist:
+  en: 2e78b1f88e9423e6
+  zh: 65b948064dc9029b
+/documentation-md/known-limits:
+  en: f7d17d716b253fab
+  zh: 7a8e391e6c22285c

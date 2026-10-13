@@ -1,0 +1,25 @@
+# Bilingual-pair consistency record for kinds.md (docs/i18n.md): per heading section, a hash
+# of its English and Chinese blocks outside fenced code blocks.
+# After editing either side, bring the other along and re-record with:
+#   python3 tools/pair-docs.py --write dev/contracts/kinds.md
+/contract-check-kinds:
+  en: 7d1f030a8e63d000
+  zh: 0b4d42a9397cee28
+/contract-check-kinds/interface:
+  en: 88b2ac5df755d166
+  zh: 5eb926cd72b48b24
+/contract-check-kinds/source-of-truth:
+  en: 3a0a0e705daa7cb5
+  zh: 3aca8add3c0ce489
+/contract-check-kinds/projection:
+  en: 0fa679fd0c84a5e7
+  zh: 085a3d40214e0fff
+/contract-check-kinds/check:
+  en: dd464e41958bfad0
+  zh: 87828582573bd6ee
+/contract-check-kinds/drift-policy:
+  en: 1862a897aea635d7
+  zh: ddd28928b50f2cb3
+/contract-check-kinds/the-registered-paste:
+  en: 37f77aa8e11e926c
+  zh: e8bc85da5973c68c

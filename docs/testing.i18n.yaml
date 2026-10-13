@@ -1,0 +1,31 @@
+# Bilingual-pair consistency record for testing.md (docs/i18n.md): per heading section, a hash
+# of its English and Chinese blocks outside fenced code blocks.
+# After editing either side, bring the other along and re-record with:
+#   python3 tools/pair-docs.py --write docs/testing.md
+/testing-md:
+  en: 61ce7a322dfd7cf1
+  zh: 8b677c3cbde33031
+/testing-md/tiers:
+  en: 742d0d0e9023fd91
+  zh: 605e89bb850678e4
+/testing-md/evidence-per-change:
+  en: f4584fdd88189e57
+  zh: f259f00e85ee724a
+/testing-md/test-doubles:
+  en: 17464e65be6b0f7c
+  zh: f79260fd99b49258
+/testing-md/determinism:
+  en: a80063f506d67ab1
+  zh: 92051b1c37ac9cb0
+/testing-md/blocking-and-observational-lanes:
+  en: 05e59653b350d533
+  zh: b8ca65f8c47f5000
+/testing-md/prove-a-new-guard:
+  en: a14de5af5aaed87d
+  zh: e1587742a64fedbe
+/testing-md/flake-policy:
+  en: 2fcf37a4327d0aa0
+  zh: 9212faa84ff2b308
+/testing-md/known-limits:
+  en: 515798d1cf3c78c5
+  zh: 7261343966a42ef5

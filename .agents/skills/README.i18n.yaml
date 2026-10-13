@@ -1,0 +1,16 @@
+# Bilingual-pair consistency record for README.md (docs/i18n.md): per heading section, a hash
+# of its English and Chinese blocks outside fenced code blocks.
+# After editing either side, bring the other along and re-record with:
+#   python3 tools/pair-docs.py --write .agents/skills/README.md
+/skills:
+  en: bb23b030843ead3c
+  zh: 361d471dc702cdfa
+/skills/using-one:
+  en: e0ec2eb1189e9b12
+  zh: 2128409a89521b13
+/skills/which-one-to-reach-for:
+  en: 93dc7914d21cf788
+  zh: 349552ba492fbaf6
+/skills/related:
+  en: 07a5a212df611345
+  zh: 4c309870e39acb64

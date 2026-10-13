@@ -1,0 +1,10 @@
+# Bilingual-pair consistency record for README.md (docs/i18n.md): per heading section, a hash
+# of its English and Chinese blocks outside fenced code blocks.
+# After editing either side, bring the other along and re-record with:
+#   python3 tools/pair-docs.py --write tests/README.md
+/the-kit-s-own-tests:
+  en: a5da943556791e38
+  zh: 0f7a86f89cebe46d
+/the-kit-s-own-tests/directory-structure:
+  en: d6b05a33e232f274
+  zh: a9c7bc2904ea21fb

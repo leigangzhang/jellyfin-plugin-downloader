@@ -1,0 +1,142 @@
+# Bilingual-pair consistency record for glossary.md (docs/i18n.md): per heading section, a hash
+# of its English and Chinese blocks outside fenced code blocks.
+# After editing either side, bring the other along and re-record with:
+#   python3 tools/pair-docs.py --write docs/glossary.md
+/glossary:
+  en: 27736140a1956b4c
+  zh: 5239954317bf627f
+/glossary/how-to-use-this-glossary:
+  en: 7554e1d80f2e3916
+  zh: 1b102888c9ab35a1
+/glossary/how-to-add-a-term:
+  en: 5fcf1e3674698d6f
+  zh: b26a57f68c2a8fdc
+/glossary/structure:
+  en: 71a991828a7d42a2
+  zh: 03b9c60d48639458
+/glossary/structure/station:
+  en: 23cec930095c442a
+  zh: 27f03ecb53baf4fa
+/glossary/structure/cross-cutting-station:
+  en: 9fdf976ea5f60fad
+  zh: bc8d503b860a6f3f
+/glossary/structure/tier:
+  en: 47e7f5cef69e8ed1
+  zh: 09bc9d1706acf0f8
+/glossary/structure/home:
+  en: 26424a4aa3bd819c
+  zh: 7e496f2cf4ba88f5
+/glossary/structure/document-kind:
+  en: b3de84df7b7b0c60
+  zh: 5bc5017e9687b44e
+/glossary/checks-and-evidence:
+  en: 42f5d6fcb2a57870
+  zh: 84a7408585e37414
+/glossary/checks-and-evidence/check:
+  en: 197cfcba2ddb330a
+  zh: bfeb69730f6f8df4
+/glossary/checks-and-evidence/gate:
+  en: bb5cadafb125ebc5
+  zh: a5c5379b0bd3b42f
+/glossary/checks-and-evidence/patterns:
+  en: 1929b9d71dbef61a
+  zh: 18dea7c62e2a0e34
+/glossary/checks-and-evidence/surface:
+  en: fd987d5164111a9c
+  zh: be18c9841de57b5f
+/glossary/checks-and-evidence/changed-surface:
+  en: dfe02e64648fdf2e
+  zh: 47eaad528d0e802e
+/glossary/checks-and-evidence/evidence:
+  en: bee8bef2f7a8fa0a
+  zh: 62051b8ae1615a95
+/glossary/checks-and-evidence/budget:
+  en: 4d9d29924899dae6
+  zh: 8f459aa44d302096
+/glossary/checks-and-evidence/lane:
+  en: 61af191afde56a49
+  zh: 96c09e5bb5841b86
+/glossary/checks-and-evidence/guard:
+  en: 4636776de87f8c52
+  zh: 6030216285757fc6
+/glossary/checks-and-evidence/empty-corpus:
+  en: 889c58b6ca0b83e4
+  zh: 93316ff955f8819c
+/glossary/checks-and-evidence/self-test:
+  en: bd3565a54f4f9e26
+  zh: 469eaf560af74d4d
+/glossary/records-and-retirement:
+  en: 4c462b45781ab61c
+  zh: 7111f00ea28dcae9
+/glossary/records-and-retirement/decision-record:
+  en: 3083e0660a729498
+  zh: 3cfdd69292499deb
+/glossary/records-and-retirement/standing-constraint:
+  en: 4e46a750bce160ce
+  zh: 2087fbca4ac02e8c
+/glossary/records-and-retirement/session-decisions-file:
+  en: 0dbe99f19c19163f
+  zh: 3598d50e8de3fb35
+/glossary/records-and-retirement/proposal-rejected:
+  en: 0498f2f07d8219d4
+  zh: 61f47e2b5858f224
+/glossary/records-and-retirement/class:
+  en: 3e941cbff77862ab
+  zh: ad22fc2393a4b77e
+/glossary/records-and-retirement/move:
+  en: 1b908291ae124cd6
+  zh: 3f6b8928af849882
+/glossary/records-and-retirement/seal-archived-frozen:
+  en: fd11596730ad8d68
+  zh: 1d7611b3412b3195
+/glossary/records-and-retirement/pair-sidecar-triplet:
+  en: 281a4409de28c43f
+  zh: fae9849a5630b3ca
+/glossary/records-and-retirement/criterion:
+  en: 548ccd22f7ab3eb2
+  zh: 09fe6a26d6aab246
+/glossary/capabilities-and-contracts:
+  en: 89a15dcd0b89c606
+  zh: 83a467cfb280c987
+/glossary/capabilities-and-contracts/capability:
+  en: d6b847342b4df28a
+  zh: 0214aa2f19b4be74
+/glossary/capabilities-and-contracts/seam:
+  en: 8b71019237304be2
+  zh: 605ca3aaf4c0ccd8
+/glossary/capabilities-and-contracts/registry:
+  en: d3da28fa9741e092
+  zh: c63e24493bf061a0
+/glossary/capabilities-and-contracts/contract:
+  en: 9366ba1f2c97bdc3
+  zh: f396f77885323de0
+/glossary/capabilities-and-contracts/mirror:
+  en: e6bbd5e1868b3b50
+  zh: 3c36a2469a40a30a
+/glossary/capabilities-and-contracts/projection:
+  en: 3ec9716fe2d8986d
+  zh: b934a2577f61a6b7
+/glossary/language-and-pairs:
+  en: 2534080a9ba72166
+  zh: fc15d84870a9d604
+/glossary/language-and-pairs/canonical:
+  en: 174fd6856874f494
+  zh: c7ba33131fb3ec37
+/glossary/language-and-pairs/counterpart:
+  en: 4f55c3f4d43ae62b
+  zh: 5a6fe2775fbdf763
+/glossary/language-and-pairs/switcher:
+  en: c0ecef77ef755cce
+  zh: 961240be3a326a70
+/glossary/language-and-pairs/identifier:
+  en: 84c051694b3b9b5c
+  zh: 02d26b37b0edabf0
+/glossary/language-and-pairs/prose:
+  en: f8e3f119e9c351c5
+  zh: 1d55f1177e947e1d
+/glossary/language-and-pairs/first-occurrence:
+  en: 167f1ca7d3121d9c
+  zh: 351ff070533acb06
+/glossary/banned-spellings:
+  en: b0af16d19e25a7a6
+  zh: 859b471cb07ce627

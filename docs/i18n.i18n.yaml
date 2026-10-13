@@ -1,0 +1,37 @@
+# Bilingual-pair consistency record for i18n.md (docs/i18n.md): per heading section, a hash
+# of its English and Chinese blocks outside fenced code blocks.
+# After editing either side, bring the other along and re-record with:
+#   python3 tools/pair-docs.py --write docs/i18n.md
+/i18n-md:
+  en: 82b3c3388605795f
+  zh: 66f2b649f81e7323
+/i18n-md/scope-and-exclusions:
+  en: 6be3041ad4b5cc3f
+  zh: 23ddb021b331d2fc
+/i18n-md/pairs-and-the-consistency-record:
+  en: a2a73861ea3419f5
+  zh: db9636e3910e7db3
+/i18n-md/identifiers-stay-english:
+  en: f62b7cdf646abcdf
+  zh: 946b95340749e543
+/i18n-md/prose-is-translated:
+  en: d112027ca0c2e71e
+  zh: 304a69dfdd931223
+/i18n-md/terminology:
+  en: 5c95a9422eadb5cf
+  zh: 16df1f640c4d9e10
+/i18n-md/typography:
+  en: c5dfc526043b7d17
+  zh: a0c51dbbb72bccd3
+/i18n-md/links-and-the-language-switcher:
+  en: e18d354823ba2ae7
+  zh: 176b6c23d85d9b27
+/i18n-md/updating-a-pair:
+  en: 6493b308570857c8
+  zh: a6db4c2fd1e6232b
+/i18n-md/what-the-gate-proves:
+  en: 2d9dce3cd1e72706
+  zh: f8be1e785a02896d
+/i18n-md/known-limits:
+  en: 33da08ce54cae78d
+  zh: aba1dd3f97164f1e

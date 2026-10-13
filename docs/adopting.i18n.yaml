@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for adopting.md (docs/i18n.md): per heading section, a hash
+# of its English and Chinese blocks outside fenced code blocks.
+# After editing either side, bring the other along and re-record with:
+#   python3 tools/pair-docs.py --write docs/adopting.md
+/adopting-into-a-repository-that-already-exists:
+  en: 3827b58cb1cbf905
+  zh: bc212c4bc3be73e0
+/adopting-into-a-repository-that-already-exists/four-collisions:
+  en: c002ba999ca868ee
+  zh: 99dc7f91100db363
+/adopting-into-a-repository-that-already-exists/the-order-that-works:
+  en: 797d683837d19e9f
+  zh: a6f1cab2e47e896a
+/adopting-into-a-repository-that-already-exists/what-not-to-do:
+  en: e8586538d94a9fde
+  zh: b110e158e430bb80
+/adopting-into-a-repository-that-already-exists/the-refactor-itself:
+  en: cb3063349b915d4d
+  zh: 7efeede8be931392
