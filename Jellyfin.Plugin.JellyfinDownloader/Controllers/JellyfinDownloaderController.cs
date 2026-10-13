@@ -207,8 +207,9 @@ public class JellyfinDownloaderController : ControllerBase
             return "torrents-csv";
         }
 
-        // 判定不出来的地址保留调用方的声明（旧 XML / 脚本仍然能用），没有声明就交后端报错。
-        return declaredKind;
+        // 判定不出来的地址保留调用方的声明；两者都没有就沿用改动前的默认 diao
+        // （配置页会先把认不出来的地址挡在保存之前）。
+        return declaredKind.Length > 0 ? declaredKind : "diao";
     }
 
     private static string UrlPath(string url)

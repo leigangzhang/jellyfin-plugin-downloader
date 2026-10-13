@@ -6,145 +6,189 @@
 <body>
   <div id="JellyfinDownloaderConfigPage" data-role="page" class="page type-interior pluginConfigurationPage">
   <style>
-    /* 统一节奏：每个配置项固定两行
-       第一行 = 标题 + 状态/输入框/操作按钮
-       第二行 = 描述（后端服务 / 端口 / Python 解释器）或 输入框（媒体目录 / 暂存目录） */
+    /* 布局节奏：一个配置项 = 一个 .jdl-item，内部固定三行——标题 / 输入 / 说明。
+       行距由这两条统一控制，所以配置项之间的间隔一致，不再松紧不一。 */
+    #JellyfinDownloaderConfigPage .jdl-item + .jdl-item { margin-top: 26px; }
+    #JellyfinDownloaderConfigPage .jdl-row + .jdl-row { margin-top: 8px; }
+
     #JellyfinDownloaderConfigPage .jdl-row {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
       flex-wrap: wrap;
     }
 
-    #JellyfinDownloaderConfigPage .jdl-row + .jdl-row { margin-top: 6px; }
-
-    /* 第一行的标签统一占位，后面的控件因此对齐到同一列 */
     #JellyfinDownloaderConfigPage .jdl-row .inputLabel {
       margin: 0;
-      flex: 0 0 96px;
+      font-weight: 600;
     }
 
     #JellyfinDownloaderConfigPage .jdl-row .fieldDescription { margin: 0; }
+    #JellyfinDownloaderConfigPage .jdl-hint { line-height: 1.55; }
 
+    /* 标题行右侧的状态 / 操作区 */
     #JellyfinDownloaderConfigPage .jdl-row__actions {
       margin-left: auto;
       display: inline-flex;
-      gap: 10px;
+      gap: 8px;
       flex-wrap: wrap;
     }
 
-    /* 第一行里的输入框：统一固定宽度，不随状态文案伸缩 */
-    #JellyfinDownloaderConfigPage .emby-input.jdl-input-inline {
-      width: 300px;
-      flex: 0 0 300px;
-    }
+    #JellyfinDownloaderConfigPage .jdl-input-block { width: 100%; }
 
-    /* 第二行里的整行输入框 */
-    #JellyfinDownloaderConfigPage .emby-input.jdl-input-block { width: 100%; }
-
-    /* 资源站列表：一行一个站，字段自动换行 */
-    #JellyfinDownloaderConfigPage .jdl-site {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      align-items: flex-end;
-      padding: 8px 0;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    }
-
-    #JellyfinDownloaderConfigPage .jdl-site__field {
+    /* 列表（资源站点 / 关键词组合）：一行一条，行尾依次是 上移 / 下移 / 删除，
+       最后一行再多一个新增按钮。 */
+    #JellyfinDownloaderConfigPage .jdl-list {
       display: flex;
       flex-direction: column;
-      gap: 2px;
-      flex: 1 1 180px;
+      gap: 8px;
+      width: 100%;
     }
 
-    #JellyfinDownloaderConfigPage .jdl-site__field > span { font-size: 12px; opacity: 0.75; }
+    #JellyfinDownloaderConfigPage .jdl-list__row {
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
+    }
 
-    #JellyfinDownloaderConfigPage .jdl-site__remove { flex: 0 0 auto; }
+    #JellyfinDownloaderConfigPage .jdl-list__field {
+      flex: 1 1 auto;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
 
-    #JellyfinDownloaderConfigPage .jdl-site + .jdl-site { margin-top: 0; }
+    #JellyfinDownloaderConfigPage .jdl-list__caption {
+      font-size: 12px;
+      line-height: 1.4;
+      min-height: 16px;
+      opacity: 0.72;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    #JellyfinDownloaderConfigPage .jdl-list__buttons {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* 小方块按钮：文字按钮在本页会挤掉输入框，图标按钮更省横向空间 */
+    #JellyfinDownloaderConfigPage .jdl-btn {
+      width: 32px;
+      height: 32px;
+      min-width: 32px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+      font-size: 15px;
+      border: 1px solid rgba(127, 127, 127, 0.35);
+      border-radius: 3px;
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+    }
+
+    #JellyfinDownloaderConfigPage .jdl-btn:hover:not(:disabled) { background: rgba(127, 127, 127, 0.16); }
+    #JellyfinDownloaderConfigPage .jdl-btn:disabled { opacity: 0.35; cursor: default; }
+    #JellyfinDownloaderConfigPage .jdl-btn--danger:hover:not(:disabled) { background: rgba(220, 60, 60, 0.18); }
+
+    /* 媒体目录 / 暂存目录的只读回显 */
+    #JellyfinDownloaderConfigPage .jdl-readonly {
+      margin: 0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      word-break: break-all;
+    }
+
+    #JellyfinDownloaderConfigPage .jdl-port-value {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 15px;
+    }
+
+    @media (max-width: 520px) {
+      /* 窄屏：行尾按钮换到下一行，输入框独占整行 */
+      #JellyfinDownloaderConfigPage .jdl-list__row { flex-wrap: wrap; }
+      #JellyfinDownloaderConfigPage .jdl-list__buttons { margin-left: auto; }
+    }
   </style>
     <div data-role="content">
       <div class="content-primary">
         <form id="jdl-config-form">
-          <div class="inputContainer">
+
+          <!-- ① 媒体目录 -->
+          <div class="jdl-item inputContainer">
             <div class="jdl-row">
-              <label class="inputLabel inputLabelUnfocused">后端服务</label>
-              <span id="jdl-backend-status" class="fieldDescription">正在运行</span>
-              <span id="jdl-backend-diag" class="fieldDescription"></span>
+              <label class="inputLabel inputLabelUnfocused" for="jdl-media">媒体目录</label>
+            </div>
+            <div class="jdl-row">
+              <input id="jdl-media" type="text" class="emby-input jdl-input-block"
+                     autocomplete="off" spellcheck="false" placeholder="留空 = 自动取 Jellyfin 库路径" />
+            </div>
+            <div class="jdl-row">
+              <span id="jdl-media-resolved" class="fieldDescription jdl-readonly"></span>
+            </div>
+            <div class="jdl-row">
+              <span id="jdl-staging" class="fieldDescription jdl-readonly"></span>
+            </div>
+            <div class="jdl-row">
+              <span class="fieldDescription jdl-hint">存储下载资源的父目录，默认取值自 Jellyfin 库路径。下载中/未完成的资源文件存储在媒体目录下的 <code>.staging</code> 目录中，下载完成后一次性移动到目标资源目录中。</span>
+            </div>
+          </div>
+
+          <!-- ② 资源站点 -->
+          <div class="jdl-item inputContainer">
+            <div class="jdl-row">
+              <span class="inputLabel inputLabelUnfocused">资源站点</span>
+            </div>
+            <div class="jdl-row">
+              <div class="jdl-list" id="jdl-sites"></div>
+            </div>
+            <div class="jdl-row">
+              <span class="fieldDescription jdl-hint">获取 magnet 和云盘链接的 BT 资源站点。系统内置两个：<code>https://m.diao.im/api/search</code> 与 <code>https://torrents-csv.com/service/search</code>，一行都没有时用内置默认。每个站点占一行，可以用行尾的按钮上下调整顺序——排序越靠前的搜索优先级越高。</span>
+            </div>
+          </div>
+
+          <!-- ③ 关键词组合 -->
+          <div class="jdl-item inputContainer">
+            <div class="jdl-row">
+              <span class="inputLabel inputLabelUnfocused">关键词组合</span>
+            </div>
+            <div class="jdl-row">
+              <div class="jdl-list" id="jdl-keywords"></div>
+            </div>
+            <div class="jdl-row">
+              <span class="fieldDescription jdl-hint">添加固定关键词全局优化搜索资源的质量，对所有下载生效，比如添加资源来源、画质等关键词。同一个关键词组合支持多个关键词，通过空格分隔；多组关键词按先后顺序依次搜索。不建议添加电影名、导演等仅绑定特定有限资源的关键词。一行都没有时用内置默认。</span>
+            </div>
+          </div>
+
+          <!-- ④ 服务端口 -->
+          <div class="jdl-item inputContainer">
+            <div class="jdl-row">
+              <label class="inputLabel inputLabelUnfocused">服务端口</label>
+              <span id="jdl-port-value" class="jdl-port-value">—</span>
+              <span id="jdl-port-note" class="fieldDescription"></span>
               <span class="jdl-row__actions">
                 <button id="jdl-backend-refresh" type="button" is="emby-button" class="raised">刷新状态</button>
                 <button id="jdl-backend-restart" type="button" is="emby-button" class="raised">重启后端</button>
               </span>
             </div>
             <div class="jdl-row">
-              <span class="fieldDescription">随插件自动启动，异常时点「重启后端」。</span>
+              <span id="jdl-backend-status" class="fieldDescription"></span>
+            </div>
+            <div class="jdl-row">
+              <span class="fieldDescription jdl-hint">后端在本机监听的端口，默认 8123；启动时若端口被占用会自动往后取（8123 → 8124 → …）。</span>
             </div>
           </div>
 
-          <div class="inputContainer">
-            <div class="jdl-row">
-              <label class="inputLabel inputLabelUnfocused" for="jdl-port">端口</label>
-              <input id="jdl-port" type="number" min="1" max="65535" step="1" class="emby-input jdl-input-inline" />
-            </div>
-            <div class="jdl-row">
-              <span class="fieldDescription">后端在本机监听的端口，默认 8123；保存后会自动重启后端。</span>
-            </div>
+          <div class="jdl-item">
+            <button id="jdl-save" type="button" is="emby-button" class="raised button-submit block">保存</button>
           </div>
-
-          <div class="inputContainer">
-            <div class="jdl-row">
-              <label class="inputLabel inputLabelUnfocused" for="jdl-python">Python 解释器</label>
-              <input id="jdl-python" type="text" class="emby-input jdl-input-inline" placeholder="留空 = 自动探测" />
-              <span class="jdl-row__actions">
-                <button id="jdl-python-install" type="button" is="emby-button" class="raised">安装 / 更换 Python</button>
-              </span>
-            </div>
-            <div class="jdl-row">
-              <span class="fieldDescription">留空自动探测（需 3.9+），也可手填路径。</span>
-              <span id="jdl-python-line" class="fieldDescription"></span>
-            </div>
-          </div>
-
-          <div class="inputContainer">
-            <div class="jdl-row">
-              <label class="inputLabel inputLabelUnfocused" for="jdl-media">媒体目录</label>
-              <span class="fieldDescription">片库根目录，留空自动取 Jellyfin 的库路径。</span>
-            </div>
-            <div class="jdl-row">
-              <input id="jdl-media" type="text" class="emby-input jdl-input-block" placeholder="留空 = 从 Jellyfin 解析" />
-            </div>
-          </div>
-
-          <div class="inputContainer">
-            <div class="jdl-row">
-              <label class="inputLabel inputLabelUnfocused" for="jdl-staging">暂存目录</label>
-              <span class="fieldDescription">下载先落这里，验证后再归档；留空即同盘 <code>.staging</code>。</span>
-            </div>
-            <div class="jdl-row">
-              <input id="jdl-staging" type="text" class="emby-input jdl-input-block" placeholder="留空 = 媒体目录下的 .staging" />
-            </div>
-          </div>
-
-          <div class="inputContainer">
-            <div class="jdl-row">
-              <label class="inputLabel inputLabelUnfocused">资源站</label>
-              <span class="fieldDescription">后端从这些站收磁力候选。类型决定用哪段适配器；「网页搜索地址」填了才会走云盘通道（网址里要有 <code>{q}</code> 占位符）。<b>接口地址可以留空</b>——只发云盘资源、没有搜索 API 的站就只填网页搜索地址。整行留空 = 用内置默认的两个站。</span>
-            </div>
-            <div id="jdl-sites"></div>
-            <button id="jdl-site-add" type="button" is="emby-button" class="raised">添加资源站</button>
-          </div>
-
-          <div class="inputContainer">
-            <div class="jdl-row">
-              <label class="inputLabel inputLabelUnfocused" for="jdl-keywords">L1 关键字组合</label>
-              <span class="fieldDescription">每行一条，与片名拼成一条查询，按顺序排在搜索阶梯最前（发布者署名）。留空 = 用后端内置默认。</span>
-            </div>
-            <textarea id="jdl-keywords" class="emby-textarea jdl-input-block" rows="4" placeholder="留空 = 后端内置默认"></textarea>
-          </div>
-
-          <button id="jdl-save" type="button" is="emby-button" class="raised button-submit block">保存</button>
         </form>
       </div>
     </div>
@@ -181,34 +225,204 @@
         if (window.Dashboard && Dashboard.alert) { Dashboard.alert(message); }
       }
 
-      // Python：输入框留空即自动探测；这里回显「当前实际会用的解释器」
-      function renderPython(status) {
-        var line = q('jdl-python-line');
-        if (!line) { return; }
-        var found = status && (status.pythonFound || status.pythonOk);
-        if (found && status.pythonOk) {
-          line.textContent = '当前：' + status.python
-            + (status.pythonVersion ? '（' + status.pythonVersion + '，' + status.pythonSource + '）' : '（' + status.pythonSource + '）');
-          return;
+      function svg(path) {
+        var ns = 'http://www.w3.org/2000/svg';
+        var node = document.createElementNS(ns, 'svg');
+        node.setAttribute('viewBox', '0 0 24 24');
+        node.setAttribute('width', '18');
+        node.setAttribute('height', '18');
+        node.setAttribute('aria-hidden', 'true');
+        var shape = document.createElementNS(ns, 'path');
+        shape.setAttribute('d', path);
+        shape.setAttribute('fill', 'currentColor');
+        node.appendChild(shape);
+        return node;
+      }
+
+      var ICONS = {
+        up: 'M12 5l7 7h-4v7h-6v-7H5z',
+        down: 'M12 19l-7-7h4V5h6v7h4z',
+        add: 'M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z',
+        remove: 'M5 11h14v2H5z'
+      };
+
+      function iconButton(icon, label, extraClass, onClick, action) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'jdl-btn' + (extraClass ? ' ' + extraClass : '');
+        button.title = label;
+        button.setAttribute('aria-label', label);
+        if (action) { button.setAttribute('data-action', action); }
+        button.appendChild(svg(ICONS[icon]));
+        button.addEventListener('click', onClick);
+        return button;
+      }
+
+      // ---- 列表：资源站点与关键词组合共用同一套交互（上移 / 下移 / 删除 / 新增） ----
+
+      function listField(placeholder, value) {
+        var wrap = document.createElement('span');
+        wrap.className = 'jdl-list__field';
+        var caption = document.createElement('span');
+        caption.className = 'jdl-list__caption';
+        wrap.appendChild(caption);
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'emby-input';
+        input.value = value || '';
+        input.placeholder = placeholder || '';
+        input.autocomplete = 'off';
+        input.spellcheck = false;
+        wrap.appendChild(input);
+        return { wrap: wrap, caption: caption, input: input };
+      }
+
+      function moveRow(list, row, delta) {
+        var rows = Array.prototype.slice.call(list.children);
+        var index = rows.indexOf(row);
+        var target = index + delta;
+        if (index < 0 || target < 0 || target >= rows.length) { return; }
+        if (delta < 0) { list.insertBefore(row, rows[target]); } else { list.insertBefore(rows[target], row); }
+        syncList(list);
+      }
+
+      // 每轮增删移之后重算：首行不能上移、末行不能下移；新增按钮只在最后一行。
+      function syncList(list) {
+        var rows = Array.prototype.slice.call(list.children);
+        rows.forEach(function (row, index) {
+          var up = row.querySelector('[data-action="up"]');
+          var down = row.querySelector('[data-action="down"]');
+          var remove = row.querySelector('[data-action="remove"]');
+          if (up) { up.disabled = index === 0; }
+          if (down) { down.disabled = index === rows.length - 1; }
+          // 「最后一行仅保留新增站点 + 号」：末行不显示删除，其余每行都有。
+          if (remove) { remove.style.display = index === rows.length - 1 ? 'none' : ''; }
+          // 新增按钮每轮都先摘掉，再加到新的末行上（否则它会留在旧行里越攒越多）。
+          var add = row.querySelector('[data-action="add"]');
+          if (add) { add.remove(); }
+        });
+        var last = rows[rows.length - 1];
+        if (last) {
+          last.querySelector('.jdl-list__buttons').appendChild(
+            iconButton('add', '新增一行', 'jdl-btn--add', function () {
+              appendRow(list, { placeholder: list.getAttribute('data-placeholder') || '' });
+            }, 'add'));
         }
-        if (found && !status.pythonOk) {
-          line.textContent = '检测到 ' + status.python
-            + (status.pythonVersion ? '（' + status.pythonVersion + '）' : '') + '，但需要 3.9+。';
-        } else {
-          line.textContent = '未检测到可用的 python3（后端需要 3.9+）。';
+      }
+
+      function buildRow(list, data) {
+        var row = document.createElement('div');
+        row.className = 'jdl-list__row';
+        var field = listField(data.placeholder || '', data.value || '');
+        row.appendChild(field.wrap);
+
+        var buttons = document.createElement('span');
+        buttons.className = 'jdl-list__buttons';
+        buttons.appendChild(iconButton('up', '上移（提高优先级）', '', function () { moveRow(list, row, -1); }, 'up'));
+        buttons.appendChild(iconButton('down', '下移（降低优先级）', '', function () { moveRow(list, row, 1); }, 'down'));
+        buttons.appendChild(iconButton('remove', '删除这一行', 'jdl-btn--danger', function () {
+          row.remove();
+          syncList(list);
+        }, 'remove'));
+        row.appendChild(buttons);
+
+        row._field = field;
+        return row;
+      }
+
+      function appendRow(list, data) {
+        var row = buildRow(list, data);
+        list.appendChild(row);
+        syncList(list);
+        return row;
+      }
+
+      function seedList(list, items, placeholder) {
+        list.innerHTML = '';
+        list.setAttribute('data-placeholder', placeholder);
+        (items && items.length ? items : ['']).forEach(function (item) {
+          appendRow(list, { value: item, placeholder: placeholder });
+        });
+      }
+
+      function listValues(list) {
+        return Array.prototype.slice.call(list.querySelectorAll('.jdl-list__row'))
+          .map(function (row) { return (row._field.input.value || '').trim(); })
+          .filter(function (value) { return value.length > 0; });
+      }
+
+      // ---- 资源站点 ----
+
+      function siteHintFor(address) {
+        var value = (address || '').trim();
+        if (!value) { return ''; }
+        if (value.indexOf('{q}') >= 0) { return value + ' · 云盘搜索页'; }
+        var host = '';
+        try { host = new URL(value).hostname.toLowerCase(); } catch (error) { host = ''; }
+        if (host === 'm.diao.im' || host === 'diao.im') { return 'diao.im · 搜索 API'; }
+        if (host === 'torrents-csv.com' || host === 'www.torrents-csv.com') { return 'torrents-csv · 聚合索引'; }
+        return host ? host + ' · 未能识别' : '';
+      }
+
+      function renderSites(sites) {
+        var list = q('jdl-sites');
+        list.innerHTML = '';
+        list.setAttribute('data-placeholder', 'https://站点地址/api/search');
+        var items = (sites || []).map(function (site) {
+          var address = (site.baseUrl || site.base_url || '').trim();
+          return address || (site.webSearchUrl || '').trim();
+        });
+        (items.length ? items : ['']).forEach(function (address) {
+          var row = appendRow(list, { value: address, placeholder: 'https://站点地址/api/search' });
+          row._field.caption.textContent = siteHintFor(address);
+          row._field.input.addEventListener('input', function () {
+            row._field.caption.textContent = siteHintFor(row._field.input.value);
+          });
+        });
+      }
+
+      function readSites() {
+        return listValues(q('jdl-sites')).map(function (address) {
+          return { Name: '', Kind: '', BaseUrl: address, WebSearchUrl: '' };
+        });
+      }
+
+      // ---- 关键词组合 ----
+
+      function renderKeywords(keywords) {
+        seedList(q('jdl-keywords'), keywords || [], '如：高清剧集网 DDHDTV');
+      }
+
+      function readKeywords() {
+        return listValues(q('jdl-keywords'));
+      }
+
+      // ---- 状态与服务端口 ----
+
+      function renderPort(status) {
+        var value = q('jdl-port-value');
+        if (!value) { return; }
+        var port = status && (status.port || status.backendPort) ? (status.port || status.backendPort) : 8123;
+        var requested = status && status.portRequested;
+        var host = window.location && window.location.hostname ? window.location.hostname : '127.0.0.1';
+        value.textContent = host + ':' + port;
+        var portNote = q('jdl-port-note');
+        if (portNote) {
+          portNote.textContent = requested && requested !== port
+            ? '（' + requested + ' 已被占用，实际监听 ' + port + '）'
+            : '';
         }
       }
 
       function renderStatus(status) {
         var text = q('jdl-backend-status');
-        var diag = q('jdl-backend-diag');
+        if (!text) { return; }
         if (!status) { text.textContent = '状态未知'; return; }
         var parts = [status.running ? '正在运行' : '已停止'];
         if (status.pid) { parts.push('pid ' + status.pid); }
         parts.push(status.managed ? '插件管理' : (status.running ? '外部进程' : '—'));
         text.textContent = parts.join(' · ');
-        diag.textContent = status.scriptExists === false ? '脚本不存在：' + (status.script || '?') : '';
-        renderPython(status);
+        renderPort(status);
       }
 
       function refreshStatus() {
@@ -217,98 +431,30 @@
         });
       }
 
-      // 资源站列表：一行一个站，字段名与后端 source_config.py 的站点条目一一对应。
-      // 服务端 JSON 是 camelCase（name/kind/baseUrl/webSearchUrl），提交时按 C# 属性名
-      // （Name/Kind/BaseUrl/WebSearchUrl）发，模型绑定不区分大小写——两处都兼容着读。
-      function siteField(labelText, field, value, options) {
-        var wrap = document.createElement('label');
-        wrap.className = 'jdl-site__field';
-        var caption = document.createElement('span');
-        caption.textContent = labelText;
-        wrap.appendChild(caption);
-        var input;
-        if (options) {
-          input = document.createElement('select');
-          // 手改过 XML 的类型值不在选项里时，也要把它显示出来：否则 select 会落到第一项，
-          // 用户看到的是「diao」、保存下去的也是「diao」——一次静默的数据改写。
-          var choices = options.slice();
-          if (value && choices.indexOf(value) < 0) { choices.push(value); }
-          choices.forEach(function (option) {
-            var node = document.createElement('option');
-            node.value = option;
-            node.textContent = option;
-            input.appendChild(node);
-          });
-        } else {
-          input = document.createElement('input');
-          input.type = 'text';
+      function renderMedia(resolved) {
+        var node = q('jdl-media-resolved');
+        if (node) {
+          node.textContent = resolved ? '当前解析到：' + resolved : '';
         }
-        input.className = 'emby-input';
-        input.dataset.field = field;
-        input.value = value || '';
-        wrap.appendChild(input);
-        return wrap;
-      }
-
-      function makeSiteRow(site) {
-        site = site || {};
-        var row = document.createElement('div');
-        row.className = 'jdl-site';
-        row.appendChild(siteField('名称', 'Name', site.Name || site.name));
-        row.appendChild(siteField('类型', 'Kind', site.Kind || site.kind || 'diao', ['diao', 'torrents-csv']));
-        row.appendChild(siteField('接口地址', 'BaseUrl', site.BaseUrl || site.baseUrl));
-        row.appendChild(siteField('网页搜索地址（可选）', 'WebSearchUrl', site.WebSearchUrl || site.webSearchUrl));
-        var remove = document.createElement('button');
-        remove.type = 'button';
-        remove.className = 'raised jdl-site__remove';
-        remove.textContent = '删除';
-        remove.addEventListener('click', function () { row.remove(); });
-        row.appendChild(remove);
-        return row;
-      }
-
-      function renderSites(sites) {
-        var host = q('jdl-sites');
-        host.innerHTML = '';
-        (sites || []).forEach(function (site) { host.appendChild(makeSiteRow(site)); });
-      }
-
-      function readSites() {
-        var rows = root.querySelectorAll('#jdl-sites .jdl-site');
-        var out = [];
-        for (var i = 0; i < rows.length; i++) {
-          var value = function (field) {
-            var node = rows[i].querySelector('[data-field="' + field + '"]');
-            return node ? node.value.trim() : '';
-          };
-          var baseUrl = value('BaseUrl');
-          var webSearchUrl = value('WebSearchUrl');
-          if (!baseUrl && !webSearchUrl) { continue; }
-          out.push({
-            Name: value('Name'),
-            Kind: value('Kind') || 'diao',
-            BaseUrl: baseUrl,
-            WebSearchUrl: webSearchUrl
-          });
+        // 暂存目录固定是媒体目录下的 .staging，不支持修改；这里只做回显。
+        var staging = q('jdl-staging');
+        if (staging) {
+          var mediaRoot = resolved ? resolved.replace(/\/+$/, '') : '';
+          staging.textContent = mediaRoot ? '暂存目录（不可修改）：' + mediaRoot + '/.staging' : '';
         }
-        return out;
-      }
-
-      function readKeywords() {
-        return (q('jdl-keywords').value || '')
-          .split('\n')
-          .map(function (line) { return line.trim(); })
-          .filter(function (line) { return line.length > 0; });
       }
 
       function load() {
         ajax('GET', 'config').then(function (config) {
-          q('jdl-port').value = config.BackendPort || 8123;
-          q('jdl-staging').value = config.StagingRoot || '';
-          q('jdl-media').value = config.MediaRoot || config.resolvedMediaRoot || '';
-          q('jdl-python').value = config.BackendPython || '';
+          var resolved = config.resolvedMediaRoot || '';
+          var media = q('jdl-media');
+          // 留空 = 用 Jellyfin 库解析出来的路径，所以解析结果只做 placeholder，
+          // 不当成用户输入回填——否则「留空跟随媒体库」会被一次保存固化成配置值。
+          media.value = config.MediaRoot || '';
+          media.placeholder = resolved ? '留空 = ' + resolved : '留空 = 自动取 Jellyfin 库路径';
+          renderMedia(resolved);
           renderSites(config.btSites || []);
-          q('jdl-keywords').value = (config.l1Keywords || []).join('\n');
+          renderKeywords(config.l1Keywords || []);
           return refreshStatus();
         }).catch(function (error) {
           q('jdl-backend-status').textContent = '配置读取失败：' + (error && error.status ? error.status : '网络错误');
@@ -317,10 +463,7 @@
 
       function save() {
         return ajax('POST', 'config', {
-          BackendPort: parseInt(q('jdl-port').value, 10) || 8123,
-          StagingRoot: (q('jdl-staging').value || '').trim(),
           MediaRoot: (q('jdl-media').value || '').trim(),
-          BackendPython: (q('jdl-python').value || '').trim(),
           BtSites: readSites(),
           L1Keywords: readKeywords()
         });
@@ -335,39 +478,23 @@
 
       q('jdl-save').addEventListener('click', function () {
         q('jdl-backend-status').textContent = '正在保存…';
-        save().then(function () {
+        save().then(function (result) {
           if (window.Dashboard && Dashboard.processPluginConfigurationUpdateResult) {
             Dashboard.processPluginConfigurationUpdateResult();
           }
           q('jdl-backend-status').textContent = '已保存（后端已重启），正在刷新状态…';
+          if (result && result.backendRestarted === false) {
+            note(result.backendDetail || '后端重启失败');
+          }
           return refreshStatus();
         }).catch(function (error) {
           q('jdl-backend-status').textContent = '保存失败：' + errorText(error, '');
         });
       });
 
-      q('jdl-site-add').addEventListener('click', function () {
-        q('jdl-sites').appendChild(makeSiteRow({}));
-      });
-
       q('jdl-backend-refresh').addEventListener('click', function () {
         q('jdl-backend-status').textContent = '正在刷新…';
         refreshStatus();
-      });
-
-      q('jdl-python-install').addEventListener('click', function () {
-        var line = q('jdl-python-line');
-        line.textContent = '正在准备安装…';
-        ajax('POST', 'python/install', {}).then(function (result) {
-          if (result && result.status) { renderPython(result.status); }
-          var lines = [(result && result.detail) || '已给出安装指引'];
-          if (result && result.command) { lines.push('推荐命令：' + result.command); }
-          if (result && result.url) { lines.push('下载页：' + result.url); }
-          line.textContent = lines.join('　·　');
-          setTimeout(refreshStatus, 2000);
-        }).catch(function (error) {
-          line.textContent = '安装指引获取失败：' + (error && error.status ? error.status : '网络错误');
-        });
       });
 
       q('jdl-backend-restart').addEventListener('click', function () {
