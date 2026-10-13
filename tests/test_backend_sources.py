@@ -407,6 +407,50 @@ class QueryLadderTests(unittest.TestCase):
                 search_pool.parse_args()
 
 
+class SeasonDetectionTests(unittest.TestCase):
+    """季号识别的三种显式写法都要认，且只认显式写法（不猜）。
+
+    只认 `Sxx` 会把中文资源站的「第二季」整批漏成「没表态」，严格按季就收不住它们；
+    反过来把 `全集`/`第11集` 也当成季号会误杀。两个方向都在这里钉住。
+    """
+
+    def seasons(self, name):
+        return search_pool.candidate_seasons({"name": name})
+
+    def test_explicit_forms_are_recognised(self):
+        cases = {
+            "Show.S01E05.1080p": {1},
+            "Show.S02.2160p": {2},
+            "Show.第2季[第01-03集].2160p": {2},
+            "Show.第二季[第01-03集].2160p": {2},
+            "Show.Season 3.1080p.WEB-DL": {3},
+            "Show.第十二季.S12.1080p": {12},
+            "本周更新.第二十季.1080p": {20},
+        }
+        for name, expect in cases.items():
+            with self.subTest(name=name):
+                self.assertEqual(self.seasons(name), expect)
+
+    def test_a_name_without_a_season_token_says_nothing(self):
+        for name in ("Show[全集][简繁].1080p", "Show[全季][简繁].1080p",
+                     "Show[第11集][中文字幕]", "Show[全12集][国语].2160p"):
+            with self.subTest(name=name):
+                self.assertEqual(self.seasons(name), set(), "没表态的名字不该被猜出季号")
+
+    def test_conflicting_evidence_keeps_both_seasons(self):
+        """名字里既有「第二季」又有 `S01`：并集，宁可留着也不因为冲突丢掉。"""
+        self.assertEqual(self.seasons("Show.第二季.S01.1080p"), {1, 2})
+
+    def test_chinese_numerals_parse_up_to_ninety_nine(self):
+        self.assertEqual(search_pool.cn_number("十"), 10)
+        self.assertEqual(search_pool.cn_number("十一"), 11)
+        self.assertEqual(search_pool.cn_number("二十"), 20)
+        self.assertEqual(search_pool.cn_number("二十一"), 21)
+        self.assertIsNone(search_pool.cn_number("百"))
+        self.assertIsNone(search_pool.cn_number(""))
+        self.assertIsNone(search_pool.cn_number("一二三四"))
+
+
 class StrictSeasonFilterTests(unittest.TestCase):
     """严格按季的收口：锚点档带回来的「别的季」必须在这一层被丢掉（复核报告 F4）。
 
@@ -456,6 +500,34 @@ class StrictSeasonFilterTests(unittest.TestCase):
         self.assertNotIn("B" * 40, hashes, "明确标了 S02 的候选不该出现在按 S01 的搜索里")
         self.assertIn("A" * 40, hashes, "S01 的候选必须留着")
         self.assertIn("C" * 40, hashes, "没标季号的候选留着，不猜")
+
+    def test_strict_mode_drops_a_chinese_numeral_other_season(self):
+        """「第二季」这种不带 Sxx 的写法同样要被收口（复核要点里我自己点出的缺口）。"""
+        page = diao_payload(
+            [
+                l1_torrent("A" * 40, "【高清剧集网发布 www.DDHDTV.com】周三俱乐部[全12集]"
+                                     ".Wednesday.Club.S01.1080p", files=list(self.FILES)),
+                l1_torrent("D" * 40, "【高清剧集网发布 www.DDHDTV.com】星期三.第二季[第01-03集]"
+                                     ".2160p", files=list(self.FILES)),
+            ],
+            has_more=False,
+        )
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            json_out = Path(tmp) / "out.json"
+            code, printed = run_main_with_fakes(
+                ["search_pool.py", "周三俱乐部", "--no-pool", "--sleep", "0",
+                 "--season", "1", "--collection-hint", "第1季", "--strict-match",
+                 "--json-out", str(json_out),
+                 "--candidates-out", str(Path(tmp) / "c.magnets")],
+                page, [],
+            )
+            self.assertEqual(code, 0, printed)
+            hashes = {item["ih"] for item in json.loads(
+                json_out.read_text(encoding="utf-8"))["candidates"]}
+        self.assertNotIn("D" * 40, hashes, "中文「第二季」的候选不该出现在按 S01 的搜索里")
+        self.assertIn("A" * 40, hashes)
 
     def test_without_strict_mode_nothing_is_dropped(self):
         hashes, _ = self.run_search([])

@@ -983,15 +983,41 @@ def candidate_markers(candidate, season=1):
     }
 
 
-# 裸季标记（`S02`、`第二季` 里的 S 写法）：只用来判断「这条候选明确属于哪一季」。
+# 季号的几种显式写法：`S02`（裸）、`第2季`/`第二季`、`Season 2`。中文资源站两种混用，
+# 只认 `Sxx` 会把「第二季」整批漏成「没表态」——所以三种都要认。
 SEASON_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])S(\d{1,2})(?![Ee0-9])", re.IGNORECASE)
+SEASON_WORD_RE = re.compile(
+    r"(?:第\s*([0-9]{1,2}|[一二三四五六七八九十两]{1,3})\s*季|season\s*([0-9]{1,2})(?![0-9]))",
+    re.IGNORECASE,
+)
+CN_DIGITS = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
+             "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+
+
+def cn_number(text):
+    """中文数字 → int（只处理 1..99）；解析不出来返回 None。"""
+    text = (text or "").strip()
+    if not text or len(text) > 3:
+        return None
+    if "十" not in text:
+        return CN_DIGITS.get(text) if len(text) == 1 else None
+    head, _, tail = text.partition("十")
+    if head and head not in CN_DIGITS:
+        return None
+    if tail and tail not in CN_DIGITS:
+        return None
+    tens = CN_DIGITS[head] if head else 1
+    ones = CN_DIGITS[tail] if tail else 0
+    return tens * 10 + ones
 
 
 def candidate_seasons(candidate):
     """这条候选的名字/文件名里**明确**出现的季号集合；空集 = 它没表态。
 
-    只看显式的 `SxxEyy` 与裸 `Sxx`，不做任何假设：`全集`、`第11集` 这种不带季号的名字
-    返回空集，由调用方决定怎么处理（严格按季时留着，不猜）。
+    只认显式写法（`SxxEyy`、裸 `Sxx`、`第N季`/`第X季`、`Season N`），不做任何假设：
+    `全集`、`全季`、`第11集` 这种不带季号的名字返回空集，由调用方决定怎么处理（严格按季
+    时留着，不猜）。三种写法是**并集**：名字里既有「第二季」又有 `S01` 时两边都算，
+    宁可留着让人看见，也不因为一处冲突就把它丢掉。
     """
     texts = [candidate.get("name") or ""]
     texts.extend(
@@ -1000,8 +1026,14 @@ def candidate_seasons(candidate):
     )
     blob = " ".join(texts)
     seasons = {int(match.group(1)) for match in MARKER_PATTERN.finditer(blob)}
-    if not seasons:
-        seasons = {int(match.group(1)) for match in SEASON_TOKEN_RE.finditer(blob)}
+    seasons |= {int(match.group(1)) for match in SEASON_TOKEN_RE.finditer(blob)}
+    for match in SEASON_WORD_RE.finditer(blob):
+        word, arabic = match.group(1), match.group(2)
+        value = int(word) if word and word.isdigit() else (cn_number(word) if word else None)
+        if value is None and arabic:
+            value = int(arabic)
+        if value:
+            seasons.add(value)
     return seasons
 
 
