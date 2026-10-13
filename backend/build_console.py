@@ -42,7 +42,6 @@ from media_download_lib import (  # noqa: E402
     read_watcher_state,
     path_is_within,
 )
-from candidate_score import score_candidate  # noqa: E402
 
 # marks/snapshots 与 pool/watches/pan 同属插件自己的数据根（JMD_DATA_DIR
 # 可整体搬走；JMD_CONSOLE_STATE_DIR 仍可只覆盖这一部分）
@@ -433,32 +432,6 @@ def list_watches() -> list:
             state.setdefault("info_hash", ih)
             out.append(state)
     return out
-
-
-def rescore_entry(probe: dict, key: str, measured_speed_mbps: float) -> dict | None:
-    """用实测速度回填单个候选并按同一套 policy 重算分，返回更新后的候选。"""
-    policy = probe.get("policy") or {}
-    for entry in probe.get("ranked") or []:
-        if candidate_key(entry) != key:
-            continue
-        cand = dict(entry)
-        cand["measured_speed_mbps"] = float(measured_speed_mbps)
-        try:
-            result = score_candidate(cand, policy)
-        except Exception:
-            return None
-        cand["score"] = result["score"]
-        cand["dimensions"] = result["dimensions"]
-        cand["breakdown"] = result["breakdown"]
-        cand["provisional"] = result.get("provisional", False)
-        min_score = probe.get("min_score") or 45
-        cand["band"] = (
-            "优秀" if result["score"] >= 75 else
-            "良好" if result["score"] >= 60 else
-            "可接受" if result["score"] >= min_score else "不推荐"
-        )
-        return cand
-    return None
 
 
 def build_snapshot(

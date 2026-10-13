@@ -13,16 +13,16 @@
 | 能力 | 说明 |
 |---|---|
 | 详情页入口 | 电影 / 剧集 / 单集页面的「获取资源」按钮，仅管理员可见（前端隐藏 + 后端校验双重把关） |
-| 多来源候选 | 按优先级逐级降级：结构化搜索 API → 浏览器发现 → 本地 Pansou 实例（可选）；磁力与迅雷云盘分享同池比较 |
-| 统一打分 | `100 × (0.34·画质 + 0.28·下载速度 + 0.26·观看体验 + 0.12·适配成本)`，候选全量排名，**不按规则硬淘汰** |
+| 可配置资源站 | 资源站清单是插件配置（默认保留原有两个站），后端逐个搜索；加一个站不用改代码 |
+| 发布者关键字优先 | 配置的关键字组合（默认「高清剧集网」「DDHDTV」）与片名拼成查询，**排在搜索阶梯最前**，严格按季时同样跑 |
+| 统一打分 | `100 × (0.34·画质 + 0.28·下载速度 + 0.26·观看体验 + 0.12·适配成本)`，候选全量排名，**不按规则硬淘汰**；下载速度这一维只由做种者数（与外部索引快照）决定 |
 | 面板决策 | 面板里列出每个候选的总分与四维拆解（画质/速度/体验/适配）、体积、码率、字幕、片源，可调最低分阈值 |
 | 分季抓取 | 剧集页先拉季列表；选定季后再抓，快照按 `<剧名>.sNN.*.json` 分季存放，切季不重复搜索 |
 | 严格按季 | 默认开启：搜索只带季关键词，并隐藏没标季号的候选与同名噪音条目 |
-| 实测速度 | 可对头部候选做短测，把实测吞吐写回分数后重新排名（实测只影响"速度"分，不越过画质与体验） |
 | 提交与监控 | 提交到迅雷、在线改保存路径与选片、测真实 ETA，不合格只清理本次任务；合格则启动后台 watcher |
 | 六层校验 | `ffprobe` 流信息 → 三段抽样解码 → 集号/残片/重复大文件 → Jellyfin 数据库对账 → 临时文件与结构卫生 → 硬字幕启发式 |
 | 自动归档 | 校验通过后按 `剧名 S01E01.ext` / `片名 (年份).ext` 规范命名，同盘原子移动到媒体库并触发库刷新 |
-| 云盘通道 | 迅雷云盘分享链接作为一等候选：转存前按标题粗排，转存后用本机云盘缓存里的真实文件清单精排 |
+| 云盘通道 | 资源站的「网页搜索地址」（插件配置，含 `{q}` 占位符）抓出迅雷云盘分享链接，作为一等候选：转存前按标题粗排，转存后用本机云盘缓存里的真实文件清单精排 |
 
 ---
 
@@ -44,11 +44,10 @@
                                           ▼
                       Python 后端 127.0.0.1:8123（仅本机）
                       console_server.py（标准库 http.server，零依赖）
-                        /api/search      建候选池 + 打分排名
+                        /api/search      建候选池 + 打分排名（资源站逐个搜 + 云盘网页搜索）
                         /api/snapshot    面板快照（任务/候选/标记）
                         /api/submit      提交迅雷
                         /api/watch       起 watcher（下载→校验→归档）
-                        /api/verify      手工复验
                         /api/cleanup     清理残留
                         /api/pan/*       云盘转存/取回状态机
                         /api/mark        人工标记
@@ -56,7 +55,7 @@
                                           │
                         后端脚本（backend/*.py）│
                         ├─ 迅雷数据库 / 云盘缓存（只读）
-                        ├─ aria2c（种子元数据、测速）
+                        ├─ aria2c（种子元数据）
                         └─ ffprobe/ffmpeg（媒体验证）
 ```
 
@@ -78,7 +77,7 @@
 | Python | **3.9+**，后端只用标准库。插件会自动探测（配置项 → PATH → 常见安装位置），也可以手工指定或一键安装 |
 | .NET SDK | **9.0**，仅构建时需要。`build.sh` 默认使用 Homebrew 的 `dotnet@9` |
 | 迅雷（Thunder） | 桌面客户端，用于提交下载与云盘转存/取回 |
-| aria2c | 抓种子元数据与实测速度：`brew install aria2` |
+| aria2c | 抓种子元数据：`brew install aria2` |
 | ffmpeg / ffprobe | 媒体验证与抽样解码：`brew install ffmpeg` |
 
 ---
@@ -117,6 +116,10 @@ https://raw.githubusercontent.com/leigangzhang/jellyfin-plugin-downloader/main/m
 | Python 解释器 | 留空 | 留空 = 自动探测；也可填绝对路径，或用「安装 / 更换 Python」按钮 |
 | 媒体目录 | 留空 | 留空 = 由插件从 Jellyfin 媒体库配置解析出库根 |
 | 暂存目录 | 留空 | 留空 = 媒体根同盘的 `.staging`（保证归档能同盘原子移动） |
+| 资源站 | 留空 | 每行一个站：名称 / 类型（`diao`、`torrents-csv`）/ 接口地址 / 网页搜索地址。留空 = 内置默认的两个站；**填了网页搜索地址才会走云盘通道**（该地址必须含 `{q}` 占位符） |
+| L1 关键字组合 | 留空 | 每行一条查询后缀，与片名拼成一条查询并排在搜索阶梯最前。留空 = 内置默认（`高清剧集网`、`DDHDTV`） |
+
+> 资源站与关键字由插件写进后端的环境变量（`JMD_BT_SITES` / `JMD_L1_KEYWORDS`），所以**保存后会自动重启后端**才生效。配置坏掉时后端会打印 `SOURCE_CONFIG_ERROR` 并明确失败，不会悄悄用默认值顶替。
 
 **开始使用**：进入任意电影 / 剧集 / 单集详情页 → 点 **「获取资源」**。
 
@@ -167,9 +170,10 @@ jellyfin-plugin-downloader/
 │   ├── console_server.py                   # HTTP 服务 + 面板快照
 │   ├── build_console.py                    # 快照组装
 │   ├── candidate_score.py                  # 打分（四维权重）
+│   ├── source_config.py                    # 资源站清单 + L1 关键字组合（唯一事实源）
 │   ├── search_pool.py / probe_magnets.py   # 候选来源与打分排名
 │   ├── pan_search.py / pan_pool.py / pan_transfer.py  # 云盘分享：找链接/入池/转存取回
-│   ├── speed_probe.py / submit_xunlei.py   # 实测速度 / 提交迅雷
+│   ├── submit_xunlei.py                    # 提交迅雷
 │   ├── watch_download.py / verify_media.py / handle_media_issues.py / cleanup_download.py
 │   ├── check_exists.py / media_download_lib.py
 │   └── state/                              # 运行时数据（不入库）：pool / watches / snapshots / pan / marks
@@ -225,7 +229,8 @@ Jellyfin 的卸载按钮只删文件，程序集仍在内存里。重启 Jellyfi
 ## 开发说明
 
 - **前端**：改 `Jellyfin.Plugin.JellyfinDownloader/Web/inject.js` 或 `style.css`（以 `EmbeddedResource` 内嵌进 DLL），必须重新 `./build.sh && ./install.sh` 才生效。
-- **打分**：四维权重在 `backend/candidate_score.py` 的 `DEFAULT_WEIGHTS`；改完只需重装后端（`install.sh` 会带上 `backend/`）。
+- **打分**：四维权重在 `backend/candidate_score.py` 的 `DEFAULT_WEIGHTS`；速度这一维只读做种者数与外部索引快照（aria2c 短窗测速已删除）。改完只需重装后端（`install.sh` 会带上 `backend/`）。
+- **取源与配置**：站点清单、`kind` 适配器与 L1 关键字组合的默认值和校验都在 `backend/source_config.py`；`search_pool.py` 与 `console_server.py` 都只读这一份，不要在别处再定义一套。
 - **后端边界**：`backend/` 是随插件走的自包含副本，数据根固定为 `backend/state/`（可用 `JMD_DATA_DIR` 覆盖），与作者本机的下载 skill 完全隔离，互不读写。
 - **后端环境变量**：由插件注入 `JMD_MEDIA_ROOT`（媒体库根）与 `JMD_STAGING_ROOT`（暂存区），脚本读不到时才回落到默认值。
 - **手工验证**：取源打分链已有离线契约测试（`tests/test_backend_scoring.py` 等，跑 `python3 -m unittest discover -s tests`）；下载/验证/归档路径仍靠 `./uninstall.sh --verify-only`、Jellyfin 日志、面板快照三者交叉确认。

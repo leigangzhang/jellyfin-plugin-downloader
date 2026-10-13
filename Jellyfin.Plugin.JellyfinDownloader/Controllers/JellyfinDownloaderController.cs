@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
+using Jellyfin.Plugin.JellyfinDownloader.Configuration;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
@@ -64,6 +65,8 @@ public class JellyfinDownloaderController : ControllerBase
             StagingRoot = config?.StagingRoot ?? string.Empty,
             MediaRoot = config?.MediaRoot ?? string.Empty,
             BackendPython = config?.BackendPython ?? string.Empty,
+            btSites = config?.BtSites ?? new List<BtSiteConfig>(),
+            l1Keywords = config?.L1Keywords ?? new List<string>(),
             resolvedMediaRoot = MediaPaths.MediaRoot,
         });
     }
@@ -102,14 +105,53 @@ public class JellyfinDownloaderController : ControllerBase
             PythonLocator.Invalidate();
         }
 
+        if (body.BtSites is not null)
+        {
+            var error = ValidateBtSites(body.BtSites);
+            if (error is not null)
+            {
+                return BadRequest(new { error });
+            }
+
+            config.BtSites = body.BtSites
+                .Where(site => !string.IsNullOrWhiteSpace(site.BaseUrl))
+                .Select(site => new BtSiteConfig
+                {
+                    Name = (site.Name ?? string.Empty).Trim(),
+                    Kind = (site.Kind ?? string.Empty).Trim().ToLowerInvariant(),
+                    BaseUrl = site.BaseUrl.Trim(),
+                    WebSearchUrl = (site.WebSearchUrl ?? string.Empty).Trim(),
+                })
+                .ToList();
+        }
+
+        if (body.L1Keywords is not null)
+        {
+            config.L1Keywords = body.L1Keywords
+                .Select(keyword => (keyword ?? string.Empty).Trim())
+                .Where(keyword => keyword.Length > 0)
+                .Distinct()
+                .ToList();
+        }
+
         plugin.SaveConfiguration();
+
+        // 这个页面上的每个字段最终都是后端**启动时**的参数：端口是命令行参数，
+        // 媒体根 / 暂存区 / 站点清单 / L1 关键字都是 BackendManager.Start 写进去的环境
+        // 变量。所以保存后一律重启后端，配置页那行「保存后会自动重启后端」说的就是这件事。
+        var restart = BackendManager.Restart();
+
         return new JsonResult(new
         {
             ok = true,
+            backendRestarted = restart.Ok,
+            backendDetail = restart.Detail,
             BackendPort = config.BackendPort,
             StagingRoot = config.StagingRoot,
             MediaRoot = config.MediaRoot,
             BackendPython = config.BackendPython,
+            btSites = config.BtSites,
+            l1Keywords = config.L1Keywords,
         });
     }
 
@@ -426,6 +468,48 @@ public class JellyfinDownloaderController : ControllerBase
         using var reader = new StreamReader(stream, Encoding.UTF8);
         return reader.ReadToEnd();
     }
+
+    /// <summary>
+    /// Shape check for the station list. Returns an error message, or null when the
+    /// list may be saved. Only the shape is checked here: the backend
+    /// (<c>backend/source_config.py</c>) owns the accepted kinds, the defaults and
+    /// the size limits, and it rejects a bad list loudly instead of silently using
+    /// the defaults.
+    /// </summary>
+    private static string? ValidateBtSites(List<BtSiteConfig> sites)
+    {
+        var kinds = new[] { "diao", "torrents-csv" };
+        for (var index = 0; index < sites.Count; index++)
+        {
+            var site = sites[index];
+            var label = "第 " + (index + 1) + " 个资源站";
+            var kind = (site.Kind ?? string.Empty).Trim().ToLowerInvariant();
+            if (!kinds.Contains(kind))
+            {
+                return label + "：类型必须是 diao 或 torrents-csv";
+            }
+
+            if (!IsHttpUrl(site.BaseUrl))
+            {
+                return label + "：接口地址必须是 http(s) URL";
+            }
+
+            var web = (site.WebSearchUrl ?? string.Empty).Trim();
+            if (web.Length > 0 && (!IsHttpUrl(web) || !web.Contains("{q}", StringComparison.Ordinal)))
+            {
+                return label + "：网页搜索地址要么留空，要么是含 {q} 占位符的 http(s) URL";
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsHttpUrl(string? value)
+    {
+        var url = (value ?? string.Empty).Trim();
+        return url.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || url.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+    }
 }
 
 /// <summary>Payload for POST /JellyfinDownloader/config.</summary>
@@ -442,4 +526,10 @@ public class ConfigUpdate
 
     /// <summary>Gets or sets the Python interpreter (optional; empty = auto-detect).</summary>
     public string? BackendPython { get; set; }
+
+    /// <summary>Gets or sets the BT resource stations (optional; empty list = backend defaults).</summary>
+    public List<BtSiteConfig>? BtSites { get; set; }
+
+    /// <summary>Gets or sets the L1 keyword combinations (optional; empty list = backend defaults).</summary>
+    public List<string>? L1Keywords { get; set; }
 }

@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-10-13-ranking-flow-simplification.md (docs/i18n.md): per heading section, a hash
+# of its English and Chinese blocks outside fenced code blocks.
+# After editing either side, bring the other along and re-record with:
+#   python3 tools/pair-docs.py --write .agents/notes/implemented/architecture/2026-10-13-ranking-flow-simplification.md
+/decision-ranking-flow-a-configurable-station-list-publisher-keywords-first-and-no-speed-probe:
+  en: e39a55aa70c41a2a
+  zh: 0c4e4bbd52de2f55
+/decision-ranking-flow-a-configurable-station-list-publisher-keywords-first-and-no-speed-probe/problem:
+  en: 1e719028cee98684
+  zh: ef26ccf47cad6f53
+/decision-ranking-flow-a-configurable-station-list-publisher-keywords-first-and-no-speed-probe/decision:
+  en: f47409dc87f8d4ea
+  zh: fe503a22f8f5b544
+/decision-ranking-flow-a-configurable-station-list-publisher-keywords-first-and-no-speed-probe/alternatives-considered:
+  en: 358dc73136321dc8
+  zh: 73db5011b767dff4
+/decision-ranking-flow-a-configurable-station-list-publisher-keywords-first-and-no-speed-probe/consequences:
+  en: 6402e23b0d8bc567
+  zh: f19a1bbf59e4d9d2
+/decision-ranking-flow-a-configurable-station-list-publisher-keywords-first-and-no-speed-probe/testing:
+  en: b0e4f1c94731a062
+  zh: 57c0e01f48dea949

@@ -1,13 +1,13 @@
 {
-  "note": "速度子分级 golden：与 backend/candidate_score.py 的 _speed_score 契约同步；由 tests/test_backend_scoring.py 逐条断言（speed 为 0-100 的子分）。",
+  "note": "速度子分级 golden：与 backend/candidate_score.py 的 _speed_score 契约同步；由 tests/test_backend_scoring.py 逐条断言（speed 为 0-100 的子分）。速度分只剩「多少人正在做种」：aria2c 短窗测速已删除，所以这里不再有 measured 分支——测量字段出现与否必须给出逐位相同的分数（由测试统一加一遍来证明）。",
   "policy": {
     "kind": "movie",
     "duration_seconds": 7200
   },
   "cases": [
     {
-      "id": "uncounted-strong-swarm",
-      "why": "有强 swarm 但没被抽中测速：直接用种子先验",
+      "id": "seeds-strong",
+      "why": "强 swarm：种子先验封顶 1.0",
       "candidate": {
         "seeds": 141,
         "peers": 200
@@ -19,81 +19,8 @@
       }
     },
     {
-      "id": "counted-window-zero",
-      "why": "被抽中、窗口内 0 字节：必须不低于同 swarm 的未抽中候选",
-      "candidate": {
-        "seeds": 141,
-        "peers": 200,
-        "measured_speed_mbps": 0.0,
-        "speed_unmeasured": true
-      },
-      "expect": {
-        "speed": 100.0,
-        "mode": "unmeasured",
-        "score_source": "seeds-prior"
-      }
-    },
-    {
-      "id": "counted-zero-no-flag",
-      "why": "只写了 measured=0.0、没带 speed_unmeasured：仍按未测到处理",
-      "candidate": {
-        "seeds": 141,
-        "peers": 200,
-        "measured_speed_mbps": 0.0
-      },
-      "expect": {
-        "speed": 100.0,
-        "mode": "seeds",
-        "score_source": "seeds-prior"
-      }
-    },
-    {
-      "id": "counted-huge",
-      "why": "实测极大值：实测曲线封顶 1.0，采纳实测",
-      "candidate": {
-        "seeds": 141,
-        "peers": 200,
-        "measured_speed_mbps": 1000000.0
-      },
-      "expect": {
-        "speed": 100.0,
-        "mode": "measured",
-        "score_source": "measured"
-      }
-    },
-    {
-      "id": "counted-slow-weak-swarm",
-      "why": "弱 swarm 实测 3.5MB/s：实测高于先验，采纳实测（加分）",
-      "candidate": {
-        "seeds": 8,
-        "peers": 10,
-        "measured_speed_mbps": 3.5,
-        "speed_unmeasured": true
-      },
-      "expect": {
-        "speed": 54.25,
-        "mode": "measured",
-        "score_source": "measured"
-      }
-    },
-    {
-      "id": "counted-slow-strong-swarm",
-      "why": "强 swarm 实测 3.5MB/s：实测低于先验，分数保持先验（不减分）",
-      "candidate": {
-        "seeds": 141,
-        "peers": 200,
-        "measured_speed_mbps": 3.5,
-        "speed_unmeasured": true
-      },
-      "expect": {
-        "speed": 100.0,
-        "mode": "measured",
-        "score_source": "seeds-prior"
-      }
-    },
-    {
-      "id": "weak-swarm-uncounted",
-      "why": "1 个种子的未抽中候选：先验只有 0.14",
+      "id": "seeds-weak",
+      "why": "1 个种子：先验只有 0.1156，不打中性下限（有信号就信信号）",
       "candidate": {
         "seeds": 1,
         "peers": 0
@@ -105,22 +32,7 @@
       }
     },
     {
-      "id": "weak-swarm-counted-zero",
-      "why": "1 个种子的被抽中候选：取中性 0.40 下限，不低于未抽中",
-      "candidate": {
-        "seeds": 1,
-        "peers": 0,
-        "measured_speed_mbps": 0.0,
-        "speed_unmeasured": true
-      },
-      "expect": {
-        "speed": 40.0,
-        "mode": "unmeasured",
-        "score_source": "neutral"
-      }
-    },
-    {
-      "id": "no-signal-uncounted",
+      "id": "no-signal",
       "why": "完全没有 swarm 数据：中性 0.40",
       "candidate": {
         "seeds": 0,
@@ -133,39 +45,72 @@
       }
     },
     {
-      "id": "no-signal-measured-slow",
-      "why": "无 swarm 数据 + 实测 0.5MB/s：不得低于中性 0.40",
+      "id": "external-fresh",
+      "why": "announce 沉默、外部快照新鲜（≤7 天）：不打折，先验封顶",
       "candidate": {
         "seeds": 0,
         "peers": 0,
-        "measured_speed_mbps": 0.5
-      },
-      "expect": {
-        "speed": 40.0,
-        "mode": "measured",
-        "score_source": "neutral"
-      }
-    },
-    {
-      "id": "no-signal-measured-fast",
-      "why": "无 swarm 数据 + 实测 15MB/s：实测封顶，采纳实测",
-      "candidate": {
-        "seeds": 0,
-        "peers": 0,
-        "measured_speed_mbps": 15.0
+        "external_seeders": 5000,
+        "external_seeders_age_days": 3.0
       },
       "expect": {
         "speed": 100.0,
-        "mode": "measured",
-        "score_source": "measured"
+        "mode": "seeds-external",
+        "score_source": "seeds-prior"
+      }
+    },
+    {
+      "id": "external-stale",
+      "why": "22.7 天的旧快照：折扣到 0.686，比新鲜低、仍高于中性 0.40",
+      "candidate": {
+        "seeds": 0,
+        "peers": 0,
+        "external_seeders": 5000,
+        "external_seeders_age_days": 22.7
+      },
+      "expect": {
+        "speed": 68.6,
+        "mode": "seeds-external",
+        "score_source": "seeds-prior"
+      }
+    },
+    {
+      "id": "announce-beats-external",
+      "why": "announce 有读数时不再看外部快照（两条路给出同一个分数）",
+      "candidate": {
+        "seeds": 20,
+        "peers": 30,
+        "external_seeders": 5000,
+        "external_seeders_age_days": 3.0
+      },
+      "expect": {
+        "speed": 63.74,
+        "mode": "seeds",
+        "score_source": "seeds-prior"
       }
     },
     {
       "id": "dead-swarm",
-      "why": "announce 判定不可达：仍是 0.05",
+      "why": "announce 判定不可达：0.05，先验被忽略",
       "candidate": {
         "seeds": 141,
         "peers": 200,
+        "dead_swarm": true
+      },
+      "expect": {
+        "speed": 5.0,
+        "mode": "dead-swarm",
+        "score_source": "dead-swarm"
+      }
+    },
+    {
+      "id": "dead-swarm-beats-external",
+      "why": "可达性判决压过外部快照：外部 5000 也不能把死种抬起来",
+      "candidate": {
+        "seeds": 0,
+        "peers": 0,
+        "external_seeders": 5000,
+        "external_seeders_age_days": 3.0,
         "dead_swarm": true
       },
       "expect": {

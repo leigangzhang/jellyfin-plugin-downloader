@@ -37,10 +37,17 @@ Class: architecture
 - **因此改为按名字偏好该发布者，分两处且有界。** `backend/candidate_score.py` 里，候选名
   命中 `DDHDTV_SOURCE_TOKENS`（`ddhdtv`、`高清剧集网`）时给**总分**加
   `DDHDTV_SOURCE_BONUS = 4.0`，记进 `breakdown["source_preference"]`；四个维度分加与不加
-  逐位相同。`backend/search_pool.py` 的阶梯新增 `publisher` 档位，查询 `<片名> DDHDTV`，位置
-  在别名/年份档之后、裸片名档之前；纯中文片名（token 是 ASCII）与严格按季模式都跳过。
-- `backend/speed_probe.py` 保留为手动诊断工具；`backend/console_server.py` 的正常路径
-  不再传 `--speed-probe`。
+  逐位相同。`backend/search_pool.py` 的阶梯当时新增了 `publisher` 档位，查询 `<片名> DDHDTV`，
+  位置在别名/年份档之后、裸片名档之前；纯中文片名（token 是 ASCII）与严格按季模式都跳过。
+  后继记录把这一条硬编码档位换成了可配置、排在最前、并且在严格模式下同样运行的 `anchor` 档。
+- `backend/speed_probe.py` 当时保留为手动诊断工具；`backend/console_server.py` 的正常路径
+  不再传 `--speed-probe`。后继记录把这个诊断工具本身也删掉了。
+
+> 部分被
+> [排序流程 —— 可配置的资源站清单、发布者关键字优先，删掉测速探针](2026-10-13-ranking-flow-simplification.zh.md)
+> 取代（1.0.0.8）。那份记录把 `publisher` 档位变成可配置的 `anchor` 档，并删除
+> `speed_probe.py`、`measure_speeds`、`--speed-probe*` 参数与 `/api/verify`。本记录其余部分
+> ——做种者先验作为下限、外部快照及其折扣、有界的按名字偏好发布者——仍然成立。
 
 ## 曾考虑的替代方案
 

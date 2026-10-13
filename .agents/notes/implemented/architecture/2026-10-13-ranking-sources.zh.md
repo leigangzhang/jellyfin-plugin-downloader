@@ -29,7 +29,14 @@ Class: architecture
   那属于探针），**不写** `metadata_at`（只有拿到可读文件清单的候选才配盖这枚章），并以
   `release_key` 标记重复但不合并（`--collapse-releases` 默认关）。
 - 控制台显式传 `L1_MAX_QUERIES = 12` 与 `L1_KEYWORD_BUDGET_SECS = 36`，使 L1 阶梯的
-  最坏情况是 `12 × 36 = 432s`，对上控制台的 `SEARCH_POOL_TIMEOUT = 600s`。
+  最坏情况是 `12 × 36 = 432s`，对上控制台的 `SEARCH_POOL_TIMEOUT = 600s`。后继记录在
+  「把同一份预算按配置的每个站切分」的前提下保住了这个上界，所以它与站点数量无关。
+
+> 被
+> [排序流程 —— 可配置的资源站清单、发布者关键字优先，删掉测速探针](2026-10-13-ranking-flow-simplification.zh.md)
+> 扩展（1.0.0.8）。第二磁力源变成了可配置站点清单里的一项（`kind: torrents-csv` 与
+> `kind: diao` 并列），并在本记录重排的那条阶梯之前新增了可配置的 `anchor` 档。翻页、
+> 外部快照与预算上界仍然成立。
 
 ## 曾考虑的替代方案
 

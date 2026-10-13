@@ -36,7 +36,15 @@ Two changes, both in `backend/search_pool.py` plus one new module.
   duplicates without merging them (`--collapse-releases` is off by default).
 - The console passes `L1_MAX_QUERIES = 12` and `L1_KEYWORD_BUDGET_SECS = 36` explicitly,
   so the L1 ladder's worst case is `12 × 36 = 432s` against the console's
-  `SEARCH_POOL_TIMEOUT = 600s`.
+  `SEARCH_POOL_TIMEOUT = 600s`. The successor below keeps that bound while splitting the
+  same budget across every configured station, so it holds for any station count.
+
+> Extended by
+> [Ranking flow — a configurable station list, publisher keywords first, and no speed
+> probe](2026-10-13-ranking-flow-simplification.md) (1.0.0.8). The second magnet channel
+> became one entry in a configurable station list (`kind: torrents-csv` alongside
+> `kind: diao`), and a configurable `anchor` tier was added ahead of the ladder this
+> record reordered. Paging, the external-seeder snapshot and the budget bound still hold.
 
 ## Alternatives considered
 

@@ -36,4 +36,19 @@ public class PluginConfiguration : BasePluginConfiguration
     /// Empty means "resolve it from the Jellyfin library configuration".
     /// </summary>
     public string MediaRoot { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets the BT resource stations the backend searches. Empty means the
+    /// backend's built-in defaults (the two stations this plugin shipped with);
+    /// the defaults, the accepted <c>Kind</c> values and the validation live in
+    /// <c>backend/source_config.py</c>.
+    /// </summary>
+    public List<BtSiteConfig> BtSites { get; set; } = new();
+
+    /// <summary>
+    /// Gets the L1 keyword combinations. Each entry is appended to the film title
+    /// and asked before every other query tier, in order. Empty means the
+    /// backend's built-in defaults.
+    /// </summary>
+    public List<string> L1Keywords { get; set; } = new();
 }

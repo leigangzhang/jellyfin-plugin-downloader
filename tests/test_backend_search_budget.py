@@ -37,6 +37,7 @@ if str(BACKEND) not in sys.path:
 
 import probe_magnets as pm  # noqa: E402
 import search_pool as sp  # noqa: E402
+import source_config  # noqa: E402
 
 # 中文片名 + 中文整包词：search_pool 的阶梯有「中英不混搭」规则，混搭会得到空 plan。
 TITLE = "假标题"
@@ -97,14 +98,21 @@ class SearchBudgetCase(unittest.TestCase):
             "--collection-hint", HINT_FIRST,
             "--collection-hint", HINT_SECOND,
             "--max-queries", "2",
-            "--extra-source", "",  # 第二通道关掉：本用例只考察 L1 的落盘
             "--pool-file", self.pool,
             "--candidates-out", self.candidates,
             "--json-out", self.json_out,
         ]
         stdout = io.StringIO()
+        # 只留一个站、并把锚点档显式关掉（空数组）：本用例只考察 L1 阶梯的落盘，
+        # 站点清单与关键字配置都不该改变它的查询序列。
+        env = {
+            source_config.ENV_SITES: json.dumps([source_config.DEFAULT_SITES[0]]),
+            source_config.ENV_KEYWORDS: "[]",
+        }
         with mock.patch.object(sp, "fetch_query_pages", fake_fetch), \
-             mock.patch.object(sys, "argv", argv), redirect_stdout(stdout):
+             mock.patch.object(sys, "argv", argv), \
+             mock.patch.dict(os.environ, env, clear=False), \
+             redirect_stdout(stdout):
             rc = sp.main()
         return rc, stdout.getvalue()
 
@@ -254,7 +262,7 @@ class ConsoleRoundStatusTests(unittest.TestCase):
         self.params = {
             "title": "Demo", "kind": "movie", "category": "Movies", "slug": "demo",
             "key": "demo", "duration": 120.0, "year": "", "alt_title": [],
-            "season": None, "episode": None, "allow_pansou": False, "allow_pan": False,
+            "season": None, "episode": None,
             "sources": "magnet", "original_title": "", "strict_season": True,
             "final_dir": self.tmp, "probe_kind": "movie",
             "pool_file": os.path.join(self.tmp, "pool.json"),
@@ -308,8 +316,8 @@ class ConsoleRoundStatusTests(unittest.TestCase):
             "空轮时磁盘上那份候选是上一轮的，必须标出来",
         )
         # 更严格的一条：绕开 console 的包装，直接让 build_snapshot 从磁盘重建
-        # （它没拿到显式传参时必须回落到 context.json，否则 /api/verify 之后的重建
-        # 仍会得到 probe_partial=False + 上一轮 candidates 的自相矛盾）。
+        # （它没拿到显式传参时必须回落到 context.json，否则任何一次重建快照都会得到
+        # probe_partial=False + 上一轮 candidates 的自相矛盾）。
         direct = self.bc.build_snapshot("demo")
         self.assertTrue(direct["probe_partial"], "build_snapshot(slug) 没从 context 取回 partial")
         self.assertEqual(direct["probe_timeout_stage"], "metadata")

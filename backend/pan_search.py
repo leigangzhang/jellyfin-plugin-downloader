@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Collect Xunlei cloud-share links from pages, pasted text, or a Pansou API.
+"""Collect Xunlei cloud-share links from resource pages or pasted text.
 
-Scripted search engines do not work from this network (Bing answers with an
-endless redirect loop for datacenter/VPN exits), so *finding* a resource page
-stays a browser task. Everything after that is here: turn a resource page, a
-pasted blob, or a Pansou-compatible API response into scored pan candidates.
+This is the cloud-drive half of the two-channel pool: the console builds each
+configured station's web-search URL (`source_config.web_search_urls`, filled
+with the film's title) and hands it here as `--page`, so "search the station's
+page, then save the share into the cloud drive" is one scripted path. The local
+Pansou instance is gone -- an unconfigured station contributes no cloud entry,
+and the console says so instead of returning a silent empty.
 
     pan_search.py --page URL --title "剧名"          # resource page -> candidates
     pan_search.py --text-file /tmp/page.txt ...      # already-copied page text
-    pan_search.py --pansou http://localhost:53460 ...  # Pansou instance
 
 Output feeds `pan_pool.py` / `probe_magnets.py --extra-candidates`.
 """
@@ -113,50 +114,18 @@ def fetch_page(url, timeout=25):
     return raw.decode(charset, "replace")
 
 
-def pansou_search(base_url, keyword, timeout=25, limit=50):
-    url = (
-        f"{base_url.rstrip('/')}/api/search?kw={urllib.parse.quote(keyword)}"
-        "&res=merge&src=all"
-    )
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        payload = json.loads(response.read())
-    merged = (payload.get("data") or {}).get("merged_by_type") or {}
-    entries = []
-    for kind, items in merged.items():
-        for item in (items or [])[:limit]:
-            raw_url = item.get("url") or ""
-            if "pan.xunlei.com/s/" in raw_url:
-                parsed = parse_share_text(raw_url)
-                if parsed:
-                    note = clean_text(item.get("note") or "")
-                    entries.append(
-                        {
-                            # The note is the release name (resolution, source,
-                            # subtitle tags); score on it, not on the bare title.
-                            "name": note or "",
-                            "share_url": parsed[0]["share_url"],
-                            "share_id": parsed[0]["share_id"],
-                            "pass_code": item.get("password")
-                            or parsed[0]["pass_code"],
-                            "snippet": note[:160],
-                            "source": f"pansou:{kind}",
-                        }
-                    )
-    return entries
-
-
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("title")
-    parser.add_argument("--page", action="append", default=[], help="资源页 URL，可重复")
+    parser.add_argument(
+        "--page",
+        action="append",
+        default=[],
+        help="资源页 URL，可重复。控制台把插件配置里各资源站的「网页搜索地址」"
+             "（含 {q} 占位符，见 source_config.py）填好片名后从这里传进来",
+    )
     parser.add_argument("--text-file", action="append", default=[])
     parser.add_argument("--text", default="")
-    parser.add_argument(
-        "--pansou",
-        default=os.environ.get("PANSOU_BASE", "http://127.0.0.1:64056"),
-        help="Pansou 实例地址（默认本机 64056）",
-    )
     parser.add_argument("--timeout", type=int, default=25)
     parser.add_argument("--candidates-out", default="")
     parser.add_argument("--json-out", default="")
@@ -211,16 +180,6 @@ def main():
         for entry in entries:
             entry["source"] = "text"
         found.extend(entries)
-
-    if args.pansou:
-        try:
-            entries = pansou_search(args.pansou, args.title, args.timeout)
-        except (OSError, urllib.error.URLError, ValueError) as exc:
-            report["errors"].append({"pansou": args.pansou, "error": str(exc)})
-            print(f"PANSOU_ERROR {exc}")
-            entries = []
-        found.extend(entries)
-        print(f"  pansou {args.pansou} -> {len(entries)} 个云盘链接")
 
     deduped = []
     seen = set()
@@ -308,7 +267,8 @@ def main():
     if not candidates:
         print(
             "NO_PAN_LINK 页面里没有 pan.xunlei.com 分享链接；"
-            "用浏览器搜索资源站后再把页面 URL 或整页文本喂进来"
+            "把资源站真正带分享链接的搜索页填进插件配置的「网页搜索地址」"
+            "（含 {q} 占位符），或把页面文本用 --text/--text-file 喂进来"
         )
         return 4
     print(

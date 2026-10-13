@@ -78,63 +78,40 @@ UNCCOUNTED_SCENARIOS = (
     {"seeds": 0, "peers": 50},
     {"seeds": 0, "peers": 0},
 )
-MEASUREMENTS = (0.0, 0.0005, 0.001, -1.0, 0.5, 2.0, 15.0, 1000000.0)
+# 已废弃的测量字段（池子里可能还躺着上一版写下的值）：它们必须被完全忽略。
+STALE_MEASUREMENTS = (
+    {"measured_speed_mbps": 0.0},
+    {"measured_speed_mbps": 0.0005, "speed_unmeasured": True},
+    {"measured_speed_mbps": -1.0, "speed_unmeasured": True},
+    {"measured_speed_mbps": 0.2},
+    {"measured_speed_mbps": 3.5},
+    {"measured_speed_mbps": 1000000.0, "speed_unmeasured": True},
+)
 
 
-class MeasuredSpeedOnlyAdds(unittest.TestCase):
-    """实测只加分：任何一次短窗口结果都不得低于「不测量」时的分数。"""
+class MeasuredSpeedIsNotAScoringInput(unittest.TestCase):
+    """aria2c 短窗测速已删除：测量字段出现也不得改变分数。
 
-    def test_any_measurement_keeps_or_raises_the_speed_score(self):
+    这条守卫防的是「路径删了、读侧还在读」：池子里可能还躺着上一版写下的
+    `measured_speed_mbps` / `speed_unmeasured`，它们必须被完全忽略，而不是换一种
+    方式继续参与排名。速度分只剩种子先验（与外部快照兜底）。
+    """
+
+    def test_stale_measurement_fields_never_move_the_score(self):
         for base in UNCCOUNTED_SCENARIOS:
-            uncounted = speed_of(**base)
-            for measured in MEASUREMENTS:
-                for flag in ({}, {"speed_unmeasured": True}):
-                    with self.subTest(swarm=base, measured=measured, flag=bool(flag)):
-                        got = speed_of(
-                            **{**base, "measured_speed_mbps": measured, **flag}
-                        )
-                        self.assertGreaterEqual(got, uncounted - 1e-9)
+            reference = scored(**base)
+            for stale in STALE_MEASUREMENTS:
+                with self.subTest(swarm=base, stale=stale):
+                    got = scored(**{**base, **stale})
+                    self.assertAlmostEqual(got["score"], reference["score"], delta=1e-9)
+                    self.assertEqual(got["breakdown"]["speed"], reference["breakdown"]["speed"])
 
-    def test_zero_measurement_never_scores_like_a_dead_swarm(self):
-        # 改进前：measured<=0.001 → 0.02，比 dead_swarm 的 0.05 还低。
-        for measured in (0.0, 0.0005, -1.0):
-            for flag in ({}, {"speed_unmeasured": True}):
-                with self.subTest(measured=measured, flag=bool(flag)):
-                    detail = speed_detail(
-                        seeds=0, peers=0, measured_speed_mbps=measured, **flag
-                    )
-                    self.assertNotAlmostEqual(detail["speed_floor"], 0.02)
-                    self.assertGreaterEqual(speed_of(
-                        seeds=0, peers=0, measured_speed_mbps=measured, **flag
-                    ), 40.0 - 1e-9)
-
-    def test_strong_swarm_counted_zero_is_not_below_uncounted(self):
-        # 验收口径：seeds=141/peers=200、窗口 0 字节的被抽中候选不得低于未抽中。
-        uncounted = scored(seeds=141, peers=200)
-        counted = scored(
-            seeds=141, peers=200, measured_speed_mbps=0.0, speed_unmeasured=True
-        )
-        self.assertGreaterEqual(
-            counted["dimensions"]["speed"], uncounted["dimensions"]["speed"]
-        )
-        self.assertGreaterEqual(counted["score"], uncounted["score"])
-        self.assertEqual(counted["breakdown"]["speed"]["mode"], "unmeasured")
-        self.assertEqual(uncounted["breakdown"]["speed"]["mode"], "seeds")
-
-    def test_measured_below_the_prior_is_ignored_not_penalised(self):
-        detail = speed_detail(seeds=141, peers=200, measured_speed_mbps=3.5)
-        self.assertEqual(detail["mode"], "measured")
-        self.assertEqual(detail["score_source"], "seeds-prior")
-        self.assertEqual(detail["seeds_prior"], 1.0)
-        self.assertAlmostEqual(speed_of(seeds=141, peers=200), 100.0)
-
-    def test_measured_above_the_prior_is_adopted(self):
-        detail = speed_detail(
-            seeds=8, peers=10, measured_speed_mbps=3.5, speed_unmeasured=True
-        )
-        self.assertEqual(detail["mode"], "measured")
-        self.assertEqual(detail["score_source"], "measured")
-        self.assertGreater(speed_of(seeds=8, peers=10), 45.0)
+    def test_no_measured_branch_is_left_in_the_breakdown(self):
+        detail = speed_detail(seeds=141, peers=200, measured_speed_mbps=3.5,
+                              speed_unmeasured=True)
+        self.assertEqual(detail["mode"], "seeds")
+        for gone in ("measured_mbps", "measured_discarded", "speed_floor"):
+            self.assertNotIn(gone, detail)
 
 
 class FallbackSemanticsKept(unittest.TestCase):
@@ -152,46 +129,18 @@ class FallbackSemanticsKept(unittest.TestCase):
         self.assertEqual(detail["score_source"], "neutral")
         self.assertAlmostEqual(speed_of(seeds=0, peers=0), 40.0)
 
-    def test_unmeasured_between_neutral_and_prior(self):
-        # 1 个种子：先验 0.1156 < 中性 0.40 → 取 0.40；8 个种子：先验 0.4568 → 取先验。
-        self.assertAlmostEqual(
-            speed_of(seeds=1, peers=0, measured_speed_mbps=0.0, speed_unmeasured=True),
-            40.0,
-        )
-        self.assertAlmostEqual(
-            speed_of(seeds=8, peers=10, measured_speed_mbps=0.0, speed_unmeasured=True),
-            round(speed_of(seeds=8, peers=10), 6),
-        )
-
 
 class ModeAndSourceExplainThePath(unittest.TestCase):
-    """同一 swarm 的「抽中 / 没抽中」两条路径子分一致，但标签必须可解释。"""
-
-    def test_counted_and_uncounted_share_the_score_but_not_the_label(self):
-        uncounted = speed_detail(seeds=141, peers=200)
-        counted = speed_detail(
-            seeds=141, peers=200, measured_speed_mbps=0.0, speed_unmeasured=True
-        )
-        self.assertEqual(uncounted["mode"], "seeds")
-        self.assertEqual(counted["mode"], "unmeasured")
-        self.assertEqual(uncounted["score_source"], counted["score_source"])
-        self.assertEqual(uncounted["seeds_prior"], counted["seeds_prior"])
-
-    def test_discarded_measurement_is_recorded_for_diagnosis(self):
-        discarded = speed_detail(seeds=141, peers=200, measured_speed_mbps=0.0)
-        self.assertEqual(discarded["measured_discarded"], 0.0)
-        adopted = speed_detail(seeds=141, peers=200, measured_speed_mbps=1000000.0)
-        self.assertNotIn("measured_discarded", adopted)
-        self.assertEqual(adopted["measured_mbps"], 1000000.0)
+    """mode / score_source 取自声明的集合；已废弃的字段不许造出新分支。"""
 
     def test_mode_and_source_come_from_the_declared_set(self):
-        modes = {"measured", "unmeasured", "dead-swarm", "unknown", "seeds", "seeds-external"}
-        sources = {"measured", "seeds-prior", "neutral", "dead-swarm"}
+        modes = {"dead-swarm", "unknown", "seeds", "seeds-external"}
+        sources = {"seeds-prior", "neutral", "dead-swarm"}
         for base in UNCCOUNTED_SCENARIOS:
             for overrides in (
                 {},
-                {"measured_speed_mbps": 0.0, "speed_unmeasured": True},
-                {"measured_speed_mbps": 2.0},
+                {"measured_speed_mbps": 2.0, "speed_unmeasured": True},
+                {"external_seeders": 18, "external_seeders_age_days": 22.7},
                 {"dead_swarm": True},
             ):
                 with self.subTest(swarm=base, overrides=overrides):
@@ -199,45 +148,29 @@ class ModeAndSourceExplainThePath(unittest.TestCase):
                     self.assertIn(detail["mode"], modes)
                     self.assertIn(detail["score_source"], sources)
 
+    def test_same_swarm_scores_the_same_with_or_without_a_stale_measurement(self):
+        uncounted = speed_detail(seeds=141, peers=200)
+        stale = speed_detail(seeds=141, peers=200, measured_speed_mbps=0.0,
+                             speed_unmeasured=True)
+        self.assertEqual(uncounted["mode"], "seeds")
+        self.assertEqual(stale["mode"], "seeds")
+        self.assertEqual(uncounted["score_source"], stale["score_source"])
+        self.assertEqual(uncounted["seeds_prior"], stale["seeds_prior"])
 
-class SaturatedPriorIsTiedOnPurpose(unittest.TestCase):
+
+class SaturatedPriorIsCapped(unittest.TestCase):
     """先验封顶（seeds≥120、peers≥200）时速度维度打平，这是口径而非缺陷。
 
-    t8 报告把这列为未决项：``max(先验, 实测曲线)`` 在饱和区无法区分最强的那批候选。
-    队长复核过一个候选修法——「确实测到过吞吐」给一点证据余量——结论是它在饱和区
-    **永远不可见**（上限就是 1.0），只会在 0.4–1.0 的中间带把「有实测」抬高 3 分，
-    等于给噪声开口子，故不采纳。这个类把当前口径钉住：谁想改，先改这里的断言。
+    测速删除之后这条口径更硬：速度子分完全由 swarm 大小决定，所以饱和区的那批候选
+    在速度维度上必然同分，谁想区分它们必须先改这里的断言。
     """
 
-    def test_saturated_prior_ties_regardless_of_measurement(self):
-        uncounted = speed_of(seeds=141, peers=200)
-        self.assertAlmostEqual(uncounted, 100.0)
-        # 实测只要有可用值、且曲线不高于先验，就落在 floor 上 → 与未抽中打平。
-        for measured in (0.5, 1.0, 3.5, 15.0):
-            with self.subTest(measured=measured):
-                self.assertAlmostEqual(
-                    speed_of(seeds=141, peers=200, measured_speed_mbps=measured), 100.0
-                )
-        # 窗口内 0 字节的「未测到」路径同样打平——这正是改进前的逆激励所在。
-        self.assertAlmostEqual(
-            speed_of(seeds=141, peers=200, measured_speed_mbps=0.0, speed_unmeasured=True),
-            100.0,
-        )
+    def test_saturated_prior_is_full_marks(self):
+        self.assertAlmostEqual(speed_of(seeds=141, peers=200), 100.0)
 
-    def test_below_saturation_the_measured_curve_can_still_win(self):
-        # 先验未封顶时排序仍可判定：曲线高于先验就被采纳，低于先验则落在先验上。
-        prior_only = speed_of(seeds=8, peers=10)
-        measured_fast = speed_of(seeds=8, peers=10, measured_speed_mbps=3.5)
-        measured_slow = speed_of(seeds=8, peers=10, measured_speed_mbps=0.2)
-        self.assertGreater(measured_fast, prior_only)
-        # 子分是 0.457×100=45.68 再四舍五入到两位，所以用「未超过先验」钉住语义，
-        # 同时确认慢实测确实被判成 floor（score_source 报的是 seeds-prior）。
-        self.assertLessEqual(measured_slow, prior_only)
-        slow_detail = speed_detail(seeds=8, peers=10, measured_speed_mbps=0.2)
-        self.assertEqual(slow_detail["score_source"], "seeds-prior")
-        fast_detail = speed_detail(seeds=8, peers=10, measured_speed_mbps=3.5)
-        self.assertEqual(fast_detail["score_source"], "measured")
-
+    def test_below_saturation_more_seeds_score_higher(self):
+        self.assertGreater(speed_of(seeds=8, peers=10), speed_of(seeds=1, peers=0))
+        self.assertGreater(speed_of(seeds=141, peers=200), speed_of(seeds=8, peers=10))
 
 
 class ExternalSeedersPrior(unittest.TestCase):
@@ -372,26 +305,21 @@ class ExternalSeedersPrior(unittest.TestCase):
         )
         self.assertEqual(detail["external_seeders_discount"], 1.0)
 
-    def test_measurement_still_only_adds_on_top_of_the_external_prior(self):
+    def test_stale_measurement_fields_do_not_move_the_external_prior(self):
         base = {"seeds": 0, "peers": 0, "external_seeders": 18,
                 "external_seeders_age_days": 22.7}
-        uncounted = speed_of(**base)
-        for measured in (0.0, 0.0005, -1.0, 0.5, 2.0, 15.0, 1000000.0):
-            with self.subTest(measured=measured):
-                self.assertGreaterEqual(speed_of(**{**base, "measured_speed_mbps": measured}),
-                                        uncounted - 1e-9)
+        reference = scored(**base)["breakdown"]["speed"]
+        for stale in ({"measured_speed_mbps": 0.0},
+                      {"measured_speed_mbps": 2.0},
+                      {"measured_speed_mbps": 1000000.0, "speed_unmeasured": True}):
+            with self.subTest(stale=stale):
+                self.assertEqual(scored(**{**base, **stale})["breakdown"]["speed"], reference)
 
-    def test_unmeasured_and_dead_swarm_keep_their_semantics(self):
-        unmeasured = speed_detail(
-            seeds=0,
-            peers=0,
-            external_seeders=5000,
-            external_seeders_age_days=22.7,
-            measured_speed_mbps=0.0,
-            speed_unmeasured=True,
-        )
-        self.assertEqual(unmeasured["mode"], "unmeasured")
-        self.assertAlmostEqual(unmeasured["seeds_prior"], 0.686)
+    def test_external_prior_and_dead_swarm_keep_their_semantics(self):
+        external = speed_detail(
+            seeds=0, peers=0, external_seeders=5000, external_seeders_age_days=22.7)
+        self.assertEqual(external["mode"], "seeds-external")
+        self.assertAlmostEqual(external["seeds_prior"], 0.686)
         dead = speed_detail(
             seeds=0, peers=0, external_seeders=5000, external_seeders_age_days=3.0,
             dead_swarm=True,
@@ -466,7 +394,7 @@ class GoldenFixture(unittest.TestCase):
     def test_fixture_cases_match(self):
         doc = json.loads(FIXTURE.read_text(encoding="utf-8"))
         policy = SCORING.normalize_policy(doc["policy"])
-        self.assertEqual(len(doc["cases"]), 12)
+        self.assertEqual(len(doc["cases"]), 8)
         for case in doc["cases"]:
             with self.subTest(case=case["id"]):
                 result = SCORING.score_candidate(candidate(**case["candidate"]), policy)
@@ -476,6 +404,20 @@ class GoldenFixture(unittest.TestCase):
                 )
                 self.assertEqual(detail["mode"], case["expect"]["mode"])
                 self.assertEqual(detail["score_source"], case["expect"]["score_source"])
+
+    def test_stale_measurement_fields_never_change_a_golden_case(self):
+        """每个 golden 行都加一遍已废弃的测量字段：分数与 breakdown 必须逐位相同。"""
+        doc = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        policy = SCORING.normalize_policy(doc["policy"])
+        stale = {"measured_speed_mbps": 3.5, "speed_unmeasured": True}
+        for case in doc["cases"]:
+            with self.subTest(case=case["id"]):
+                reference = SCORING.score_candidate(candidate(**case["candidate"]), policy)
+                injected = SCORING.score_candidate(
+                    candidate(**{**case["candidate"], **stale}), policy)
+                self.assertEqual(injected["breakdown"]["speed"],
+                                 reference["breakdown"]["speed"])
+                self.assertAlmostEqual(injected["score"], reference["score"], delta=1e-9)
 
 
 if __name__ == "__main__":

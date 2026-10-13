@@ -3,16 +3,22 @@
 
 Flow:
 
-    gather candidates            browser file / --magnet / info hash / Pansou
+    gather candidates            --candidate-file from search_pool / --extra-candidates
       -> tracker health          seeds and peers per info hash
-      -> metadata                file list, size, resolution, bitrate
+      -> metadata                file list, size, resolution, bitrate (a reference
+                                 value for the score, plus the structural gate)
       -> score                   candidate_score.rank_candidates
-      -> optional speed probe    aria2c short window for the current top-N
-      -> re-score and report     best candidate + full ranked table
+      -> re-score and report     live-check writes back, ranked table is rebuilt
+      -> rank                    best candidate + full ranked table
 
 Nothing except structural validity and the disk-safety ceiling is filtered
 out; the skill's old core rules (1080p, 4-6 Mbps, 5-10 GB, Chinese subtitles)
 are weighted preferences inside the score.
+
+The aria2c speed probe is gone. It measured 1.16-8.50x spread across repeats of
+the same torrent and cost 17.6-24.1s per candidate, so it could not order the
+list; the "speed" dimension is now the seed/peer prior plus the external-seeder
+snapshot, with no measured-throughput branch.
 """
 
 import argparse
@@ -43,13 +49,6 @@ from candidate_score import (
     structural_reject,
 )
 from media_download_lib import GB, JUNK_EXTS, POOL_DIR, VIDEO_EXTS
-from speed_probe import measure_torrent_speed
-
-# Local Pansou instance (aggregates 网盘 + magnetic sources). Override with
-# PANSOU_API when the port changes.
-PANSOU_API = os.environ.get(
-    "PANSOU_API", "http://127.0.0.1:64056/api/search"
-)
 
 # Tracker 列表只保留本机实测可达的项（2026-10-13 实测，守卫在 tests/test_backend_probe.py）：
 #
@@ -83,16 +82,12 @@ SCRAPE_TIMEOUT_SECONDS = 5
 # 各阶段的最小预算按实测单条耗时定（见 t3/t4 记录）：
 #   health    announce/scrape 实测 0.5–0.9s
 #   metadata  成功 6.19–8.44s（失败 26.6s），低于 5s 基本是白跑
-#   speed     单条探针实测 17.6–24.1s（metadata 12s + warmup 3s + 窗口 10s），
-#             下限取 25s，保证不会「开了头就超预算」
 MIN_NETWORK_BUDGET_SECONDS = 0.5
 MIN_HEALTH_BUDGET_SECONDS = 1.0
 MIN_METADATA_BUDGET_SECONDS = 5.0
-MIN_SPEED_BUDGET_SECONDS = 25.0
 
 METADATA_TTL_SECONDS = 7 * 24 * 3600
 HEALTH_TTL_SECONDS = 3600
-SPEED_TTL_SECONDS = 6 * 3600
 MIN_VIDEO_BYTES = 100 * 1024 ** 2
 
 # 池子会被 metadata 阶段的 worker 线程写入，同时主线程要逐条落盘；没有锁的话
@@ -642,9 +637,13 @@ def build_policy(args, duration_seconds):
 
 
 def gather_candidates(args):
-    """Collect candidate info hashes from every allowed source."""
-    direct = list(args.magnet)
-    direct.extend(f"magnet:?xt=urn:btih:{value}" for value in args.info_hash)
+    """读取 search_pool 写下的候选清单（每行一个磁力或 info hash）。
+
+    只剩这一个入口：这次简化删掉了浏览器搜磁力（`--magnet` / `--info-hash`）与本地
+    Pansou 两条路。L1 取源的结果由 `--candidate-file` 送进来，云盘候选由
+    `--extra-candidates` 送进来。
+    """
+    direct = []
     if args.candidate_file:
         try:
             with open(args.candidate_file, "r", encoding="utf-8") as handle:
@@ -655,43 +654,14 @@ def gather_candidates(args):
                 )
         except OSError as exc:
             print(f"CANDIDATE_FILE_ERROR {exc}")
-            return None, []
+            return None
 
     extracted = []
-    unsupported = []
     for index, candidate in enumerate(direct):
         info_hash = parse_candidate(candidate)
         if info_hash:
             extracted.append((f"direct#{index}", info_hash))
-        elif candidate.lower().startswith("thunder://"):
-            unsupported.append(candidate)
-
-    if args.allow_pansou and args.query:
-        extracted.extend(search_pansou(args.query, args.limit))
-    return extracted, unsupported
-
-
-def search_pansou(query, limit):
-    print(
-        "Searching Pansou for: "
-        + json.dumps({"query": query, "limit": limit}, ensure_ascii=False)
-    )
-    url = f"{PANSOU_API}?kw={urllib.parse.quote(query)}&res=merge&src=all"
-    try:
-        with urllib.request.urlopen(url, timeout=30) as response:
-            payload = json.loads(response.read())
-    except (OSError, urllib.error.URLError, ValueError) as exc:
-        print(f"PANSOU_ERROR {exc}")
-        return []
-    magnets = (
-        payload.get("data", {}).get("merged_by_type", {}).get("magnet", [])[:limit]
-    )
-    found = []
-    for index, item in enumerate(magnets):
-        info_hash = parse_magnet(item.get("url", ""))
-        if info_hash:
-            found.append((f"pansou#{index}", info_hash))
-    return found
+    return extracted
 
 
 def dedupe(extracted):
@@ -770,96 +740,6 @@ def _save_progress(pool_path, pool, query=""):
         save_pool(pool_path, pool, query)
     except OSError as exc:  # 落盘失败不该打断搜索
         print(f"  (进度落盘失败：{exc})", flush=True)
-
-
-def measure_speeds(ranked, pool, now, args, pool_path="", budget=None):
-    """Probe real throughput for the current leaders and fold it into the pool.
-
-    `budget` (SoftBudget) stops the loop before starting a new probe once the
-    round is out of time; each probe already measured ~20s, so starting one
-    more cannot be afforded.
-    """
-    targets = [
-        item
-        for item in ranked
-        if item.get("kind") != "pan"  # cloud-drive candidates have no ih / no aria2c probe
-        and (
-            args.refresh_speed
-            or not is_fresh(pool, item["ih"], "measured_at", SPEED_TTL_SECONDS, now)
-        )
-    ][: max(args.speed_top, 1)]
-    if not targets:
-        print("Speed probe skipped: every leader has a fresh measurement")
-        return
-    print(f"\nMeasuring real download speed for {len(targets)} candidates...")
-    for index, candidate in enumerate(targets, start=1):
-        if budget is not None and budget.out_of_time("speed", MIN_SPEED_BUDGET_SECONDS):
-            print(
-                f"  [{index}/{len(targets)}] 软预算已用尽，跳过剩余测速"
-                f"（timeout_stage={budget.timeout_stage}）"
-            )
-            break
-        measured = measure_torrent_speed(
-            candidate["ih"],
-            seconds=args.speed_seconds,
-            warmup=args.speed_warmup,
-        )
-        if measured.get("error") or measured.get("speed_bps", 0) <= 0:
-            if measured.get("metadata_ok"):
-                # 元数据能解析 = 种子可达。窗口内没测到有效吞吐（大文件、块大、
-                # 起步慢，或迅雷另有加速通道）不足以判死种，也不该按种子数
-                # 给一个偏低的假分——按「未知」中性处理。
-                candidate["dead_swarm"] = False
-                candidate["metadata_verified"] = True
-                candidate["speed_unmeasured"] = True
-                candidate["speed_probe_error"] = "no payload measured in window"
-                update_pool_entry(
-                    pool,
-                    candidate["ih"],
-                    probe_ok_at=now,
-                    dead_swarm=False,
-                )
-                print(
-                    f"  [{index}/{len(targets)}] 元数据可解析、窗口内未测到吞吐"
-                    f" → 按未知中性给分  {str(candidate.get('name'))[:52]}"
-                )
-                _save_progress(pool_path, pool, args.query)
-                continue
-            # speed-probe 失败：aria2c 抓不到 metadata（提前退出/0 字节）。
-            # 种子数（seeds）只证明该 hash 在索引里有过做种者，不证明当前
-            # DHT/tracker 能取到 metadata——迅雷提交同样会「种子解析失败」。
-            # 直接判 dead_swarm（速度子分 0.05），不再落入种子数估算分支，
-            # 避免 "229 seeds → 0.95 分" 掩盖 metadata 不可达。
-            candidate["dead_swarm"] = True
-            candidate["metadata_verified"] = False
-            candidate["speed_probe_error"] = measured.get("error", "")
-            update_pool_entry(
-                pool,
-                candidate["ih"],
-                probe_failed_at=now,
-                dead_swarm=True,
-            )
-            print(
-                f"  [{index}/{len(targets)}] METADATA_UNREACHABLE → dead-swarm  "
-                f"{str(candidate.get('name'))[:60]}"
-            )
-            _save_progress(pool_path, pool, args.query)
-            continue
-        speed_mbps = measured["speed_bps"] / 1024 ** 2
-        candidate["measured_speed_mbps"] = speed_mbps
-        candidate["measured_speed_bps"] = measured["speed_bps"]
-        candidate["speed_probe_error"] = ""
-        update_pool_entry(
-            pool,
-            candidate["ih"],
-            measured_at=now,
-            measured_speed_mbps=speed_mbps,
-        )
-        print(
-            f"  [{index}/{len(targets)}] {speed_mbps:6.2f}MB/s  "
-            f"{str(candidate.get('name'))[:60]}"
-        )
-        _save_progress(pool_path, pool, args.query)
 
 
 def is_fresh(pool, info_hash, field, ttl, now):
@@ -998,29 +878,9 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("query", nargs="?", default="")
     parser.add_argument(
-        "--magnet",
-        action="append",
-        default=[],
-        help="Browser-collected magnet URI; may be repeated",
-    )
-    parser.add_argument(
-        "--info-hash",
-        action="append",
-        default=[],
-        help="Browser-collected 40-character info hash; may be repeated",
-    )
-    parser.add_argument(
         "--candidate-file",
-        help="Text file with one magnet URI or info hash per line",
+        help="search_pool 写下的候选清单：每行一个磁力或 info hash",
     )
-    parser.add_argument(
-        "--allow-pansou",
-        "--allow-pansou-fallback",
-        dest="allow_pansou",
-        action="store_true",
-        help="Also merge Pansou search results into the candidate pool",
-    )
-    parser.add_argument("--limit", type=int, default=30, help="Pansou page size")
     parser.add_argument("--timeout", type=int, default=25, help="Metadata timeout")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--kind", choices=["movie", "episode"], default="movie")
@@ -1072,11 +932,6 @@ def parse_args():
         help="Episode markers this candidate should cover, e.g. S01E01",
     )
     parser.add_argument(
-        "--speed-probe",
-        action="store_true",
-        help="Measure real throughput for the current leaders before choosing",
-    )
-    parser.add_argument(
         "--no-live-check",
         dest="live_check",
         action="store_false",
@@ -1100,19 +955,6 @@ def parse_args():
             "partial/timeout_stage set."
         ),
     )
-    parser.add_argument("--speed-seconds", type=int, default=10)
-    parser.add_argument("--speed-warmup", type=int, default=3)
-    parser.add_argument(
-        "--speed-top",
-        type=int,
-        default=10,
-        help="How many leaders to measure (default 10)",
-    )
-    parser.add_argument(
-        "--refresh-speed",
-        action="store_true",
-        help="Re-measure even when a fresh pool measurement exists",
-    )
     parser.add_argument("--pool-file", default="")
     parser.add_argument(
         "--extra-candidates",
@@ -1135,7 +977,7 @@ def main():
     round_started_at = time.time()
     budget = SoftBudget(args.budget_secs)
     timers = StageTimers()
-    completed = {"health": 0, "metadata": 0, "live_check": 0, "speed": 0}
+    completed = {"health": 0, "metadata": 0, "live_check": 0}
     if budget.enabled:
         print(
             "软预算: "
@@ -1180,30 +1022,14 @@ def main():
         )
     )
 
-    extracted, unsupported = gather_candidates(args)
+    extracted = gather_candidates(args)
     if extracted is None:
         return 2
     if not extracted:
-        if unsupported:
-            print(
-                "UNSUPPORTED_THUNDER_DIRECT_LINK "
-                + json.dumps(
-                    {
-                        "count": len(unsupported),
-                        "reason": (
-                            "thunder:// currently supports wrapped magnet or info "
-                            "hash only; direct HTTP/FTP/ed2k links must use a "
-                            "dedicated direct-download flow"
-                        ),
-                    },
-                    ensure_ascii=False,
-                )
-            )
-            return 3
         if not args.extra_candidates:
             print(
-                "NO_CANDIDATES provide --magnet, --info-hash, --candidate-file, "
-                "--extra-candidates, or --allow-pansou with a query"
+                "NO_CANDIDATES 需要 --candidate-file（search_pool 的产物）"
+                "或 --extra-candidates（pan_pool 的云盘候选）"
             )
             return 4
         print("没有磁力候选，仅对云盘/额外候选打分")
@@ -1296,10 +1122,6 @@ def main():
             external_age = entry.get("external_seeders_age_days")
             if external_age is not None:
                 resource["external_seeders_age_days"] = external_age
-        if is_fresh(pool, info_hash, "measured_at", SPEED_TTL_SECONDS, now):
-            resource["measured_speed_mbps"] = float(
-                entry.get("measured_speed_mbps") or 0.0
-            )
         resources.append(resource)
         warning = (
             "  <- 无外部 seeder（tracker 只返回本机）"
@@ -1493,12 +1315,7 @@ def main():
         )
         timers.done("live_check", live_started)
         completed["live_check"] = live_summary["checked"]
-        ranked = rank_candidates(enriched, policy)
-
-    if args.speed_probe:
-        speed_started = timers.start()
-        measure_speeds(ranked, pool, now, args, pool_path=pool_path, budget=budget)
-        timers.done("speed", speed_started)
+        # re-score：live-check 把「本轮证明可达」写进了候选字典，排名要按新事实重算。
         ranked = rank_candidates(enriched, policy)
 
     save_pool(pool_path, pool, args.query)
@@ -1550,7 +1367,6 @@ def main():
                 "breakdown": item.get("breakdown"),
                 "seeds": item.get("seeds"),
                 "peers": item.get("peers"),
-                "measured_speed_mbps": item.get("measured_speed_mbps"),
                 "main_video_gb": item.get("main_video_gb"),
                 "estimated_bitrate_mbps": item.get("estimated_bitrate_mbps"),
                 "resolution": item.get("resolution"),
@@ -1625,7 +1441,8 @@ def main():
             "name": best.get("name", ""),
             "magnet": output["ranked"][0]["magnet"],
             "reason": "metadata 不可达（dead-swarm），迅雷提交同样会种子解析失败",
-            "next_step": "降级到下一级候选来源重新获取资源（L2 浏览器发现 magnet+云盘 / L3 Pansou 搜索 magnet+云盘）",
+            "next_step": "换一条候选或换资源站：在插件配置里增删资源站 / 关键字组合，"
+                          "或给站点填上「网页搜索地址」走云盘通道",
         }
         write_json_atomic(args.json_out, output)
         print(
@@ -1636,7 +1453,8 @@ def main():
                     "name": best.get("name", ""),
                     "ih": best.get("ih") or best.get("id"),
                     "magnet": output["ranked"][0]["magnet"],
-                    "next_step": "降级到下一级候选来源重新获取资源（L2 浏览器发现 magnet+云盘 / L3 Pansou 搜索 magnet+云盘）",
+                    "next_step": "换一条候选或换资源站：在插件配置里增删资源站 / 关键字组合，"
+                          "或给站点填上「网页搜索地址」走云盘通道",
                 },
                 ensure_ascii=False,
             )

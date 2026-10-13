@@ -47,11 +47,22 @@ The measured-throughput probe is no longer a ranking input. It can only raise a 
   `backend/candidate_score.py`, a name containing `DDHDTV_SOURCE_TOKENS` (`ddhdtv`,
   `高清剧集网`) adds `DDHDTV_SOURCE_BONUS = 4.0` to the **total** score, recorded as
   `breakdown["source_preference"]`; the four dimension scores are bit-identical with and
-  without it. In `backend/search_pool.py`, the ladder gains a `publisher` tier querying
+  without it. In `backend/search_pool.py`, the ladder gained a `publisher` tier querying
   `<name> DDHDTV`, placed after the alias/year tiers and before the bare-title tier, and
-  skipped for pure-CJK names (the token is ASCII) and in strict season mode.
-- `backend/speed_probe.py` remains as a manual diagnostic. `backend/console_server.py`
-  no longer passes `--speed-probe` on its normal path.
+  skipped for pure-CJK names (the token is ASCII) and in strict season mode. The
+  successor below replaced that single hardcoded tier with a configurable `anchor` tier
+  that runs first and runs in strict mode too.
+- `backend/speed_probe.py` was kept as a manual diagnostic at the time, and
+  `backend/console_server.py` stopped passing `--speed-probe` on its normal path. The
+  successor below deleted the diagnostic itself.
+
+> Superseded in part by
+> [Ranking flow — a configurable station list, publisher keywords first, and no speed
+> probe](2026-10-13-ranking-flow-simplification.md) (1.0.0.8). That record turns the
+> `publisher` tier into the configurable `anchor` tier, and deletes `speed_probe.py`,
+> `measure_speeds`, the `--speed-probe*` flags and `/api/verify`. Everything else here —
+> the seeders prior as a floor, the external-seeder snapshot and its discount, the
+> bounded name-based publisher preference — still holds.
 
 ## Alternatives considered
 

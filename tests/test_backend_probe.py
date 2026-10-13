@@ -1,9 +1,9 @@
 """probe_magnets 的离线契约测试：软预算、partial 落盘、live-check 复用 metadata。
 
 这些测试全部离线（不碰网络、不碰 backend/state/）：网络入口
-（`announce_health` / `tracker_health` / `fetch_metadata` / `measure_torrent_speed`
-/ `public_ip`）在用例里被替换成「一被调用就失败」的桩，所以任何一次真实网络
-调用都会把用例打红，而不是悄悄通过。
+（`announce_health` / `tracker_health` / `fetch_metadata` / `public_ip`）在用例里被
+替换成「一被调用就失败」的桩，所以任何一次真实网络调用都会把用例打红，而不是悄悄
+通过。aria2c 测速入口已删除，所以这里没有它的桩。
 
 夹具在 tests/fixtures/jmd_probe/：合成的 info hash + 合成 pool，与任何真实种子无关。
 golden_ranked.json 是**改动前**用同一份夹具跑出来的排名，用来钉住「正常路径的
@@ -54,7 +54,6 @@ def offline_network_guard(test_case):
         mock.patch.object(pm, "announce_health", boom("announce_health")),
         mock.patch.object(pm, "tracker_health", boom("tracker_health")),
         mock.patch.object(pm, "fetch_metadata", boom("fetch_metadata")),
-        mock.patch.object(pm, "measure_torrent_speed", boom("measure_torrent_speed")),
         mock.patch.object(pm, "public_ip", boom("public_ip")),
     ]
 
@@ -383,7 +382,7 @@ class ConsoleWiringTests(unittest.TestCase):
     def setUp(self):
         self.source = (BACKEND / "console_server.py").read_text(encoding="utf-8")
 
-    def test_console_does_not_pass_the_speed_probe_any_more(self):
+    def test_console_passes_the_probe_budget_and_no_speed_probe(self):
         self.assertNotIn("speed-probe", self.source)
         self.assertIn('"--budget-secs"', self.source)
         self.assertIn("PROBE_BUDGET_SECS", self.source)

@@ -18,9 +18,29 @@ API facts (measured 2026-09-21 / re-measured 2026-10-13, https://m.diao.im/api/s
   `data.has_more`, which the first implementation never read; see
   `fetch_query_pages` for how far paging is now allowed to go.
 
+Stations and the anchor tier
+----------------------------
+The stations are configuration, not constants: `source_config.py` owns the list
+(`JMD_BT_SITES`), the `kind` -> adapter mapping, and the validation. Each station
+gets an equal slice of the per-keyword wall clock, so **adding a station divides
+the budget instead of extending the round**; the round's worst case stays
+`--max-queries x --page-budget-secs` no matter how many stations are configured.
+
+Before every other tier the plan asks each station for `title + keyword`, using
+the configured L1 keyword combinations (`JMD_L1_KEYWORDS`, default
+`高清剧集网` / `DDHDTV`). Those are the publisher's own signatures inside the
+release name (`【高清剧集网发布 www.DDHDTV.com】...`), which makes this the most
+precise tier the index understands. Measured 2026-10-13 on `m.diao.im`:
+`漫长的季节 DDHDTV` -> 6/6 publisher hits, `漫长的季节 高清剧集网` -> 10/10, but
+`漫长的季节 高清剧集发布网` -> 0 and `漫长的季节 BBHDTV` -> 0 -- the defaults are
+the two that were measured to work, not the phrase that reads like the
+publisher's name. The tier also runs under `--strict-match`: it carries no
+season marker, so a strict season search mixes the show's other seasons into the
+list (the strictly-seasonal tiers still run, after it).
+
 Keyword policy
 --------------
-Aliases/original titles (with the year) come first, then the bare title, then
+Aliases/original titles (with the year) come next, then the bare title, then
 one extra word at a time. The 2026-10-13 audit measured why: for a title built
 from a common word (`狂飙`) the bare-title window was 0/10 the intended show,
 while `The Knockout 2023` was 10/10 in a single ~1s request -- and blind paging
@@ -59,7 +79,7 @@ Field contract with the probe and the scorer
 * `--collapse-releases` still only marks (`release_key` / `duplicate_hashes`)
   unless it is passed explicitly, and the external channel name still travels in
   `external_sources` -- never in `sources`, which is the probe's extraction
-  label space (`direct#N` / `pansou#N`).
+  label space (`direct#N`).
 """
 
 import argparse
@@ -73,11 +93,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+import source_config
 import torrents_csv_source
 
 from media_download_lib import GB, JUNK_EXTS, POOL_DIR, VIDEO_EXTS
 
-DEFAULT_BASE_URL = "https://m.diao.im/api/search"
 MAX_LIMIT = 10
 MIN_VIDEO_BYTES = 100 * 1024 ** 2
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) JellyfinPool/1.0"
@@ -89,16 +109,14 @@ DEFAULT_PAGE_ERRORS = 2
 DEFAULT_PAGE_TIMEOUT = 20
 # 下游 probe 的软预算，与控制台 PROBE_BUDGET_SECS 同值；只用于结尾提示文案。
 PROBE_BUDGET_SECS_HINT = 720
-DEFAULT_EXTRA_SOURCES = ("torrents-csv",)
-# 发布者定向档位：`<片名> DDHDTV` 在这个索引上几乎只返回该发布者的条目
-# （2026-10-13 实测：`Wednesday DDHDTV` 20/20 命中、`挑情丑闻 DDHDTV` 1/1）。
-# 它比按剧名搜索可靠得多——该源把《星期三》命名为《周三俱乐部》，
-# 所以 `Wednesday S01` 一条都搜不到它，而 `Wednesday DDHDTV` 能。
-# token 只用 ASCII，且该档位按「中英不混搭」规则只在片名含 ASCII 时生效。
-PUBLISHER_QUERY_TOKEN = "DDHDTV"
+# 结构化 API 站的缺省接口地址。真正用哪个站由配置决定（`collect` 对每个站显式传
+# `base_url`）；这个缺省只服务于手工调用与测试，值取内置默认站。
+DEFAULT_API_BASE_URL = source_config.DEFAULT_SITES[0]["base_url"]
 # 被偏好的发布者在种子名里的署名（与 candidate_score 的偏好判据同一组）。
+# 这是**按名字收窄候选**用的判据；搜索档位的后缀由 source_config 配置。
 PUBLISHER_NAME_TOKENS = ("ddhdtv", "高清剧集网")
-# 第二阶段源在同一个 wall-clock 预算里预留的切片（秒）；剩不到 3s 就整段跳过。
+# 第二阶段源（非结构化 API 的那些站）在同一个 wall-clock 预算里预留的秒数切片；
+# 站点多于一个时按站均分，剩不到 3s 的整段跳过。
 EXTRA_SOURCE_MIN_SECS = 3.0
 DEFAULT_EXTRA_SOURCE_RESERVE_SECS = 8.0
 
@@ -146,19 +164,28 @@ def build_query_plan(
     platforms=(),
     precision_query="",
     strict_match=False,
+    anchor_keywords=(),
 ):
     """Precision-first query ladder; each entry is tried until the pool is big enough.
 
-    Tier order (non-strict): alias/year -> alias -> title/year -> title ->
-    collection hints -> platform -> precision query. Aliases and the year come
-    first because they are what buys precision on this index: a common-word
-    title returned 0/10 intended hits while `The Knockout 2023` returned 10/10
-    (2026-10-13 audit). The bare title is still in the ladder -- it is the only
-    tier that works for titles with no alias and no year.
+    Tier order (non-strict): **anchor** -> alias/year -> alias -> title/year ->
+    title -> collection hints -> platform -> precision query. The anchor tier is
+    `title + <configured keyword>` for every configured L1 keyword combination;
+    it goes first because the publisher's own signature inside the release name
+    is the most precise thing this index knows about a release. Aliases and the
+    year come next because they are what buys precision on this index: a
+    common-word title returned 0/10 intended hits while `The Knockout 2023`
+    returned 10/10 (2026-10-13 audit). The bare title is still in the ladder --
+    it is the only tier that works for titles with no alias and no year.
 
     Strict mode exists to keep a series search inside one season, so it never
-    falls back to the bare title; it only runs `<name> <hint>` combinations,
-    with aliases ahead of the primary title (an alias is less ambiguous).
+    falls back to the bare title; it runs the anchor tier first and then only
+    `<name> <hint>` combinations, with aliases ahead of the primary title (an
+    alias is less ambiguous). The anchor tier carries no season marker, so under
+    strict mode it can surface the show's other seasons -- there is no
+    season-marker filter downstream, the caller's season terms are the only
+    strictness today, and `title + <season hint> + <keyword>` measures 0 hits on
+    this index (2026-10-13).
     """
     names = [name for name in [title, *alt_titles] if name]
     aliases = names[1:]
@@ -171,6 +198,13 @@ def build_query_plan(
             return
         seen.add(query)
         plan.append({"query": query, "tier": tier})
+
+    # 发布者/站点署名档位：配置的每一条关键字组合都排在最前，对每个片名各跑一次。
+    # 片名在前、别名在后（与下面的别名档相反）：索引里的名字是本地化片名，第一枪打它
+    # 命中率最高。不做「中英不混搭」过滤——后缀是用户配的，成句与否由用户判断。
+    for name in names:
+        for keyword in anchor_keywords or ():
+            add(f"{name} {keyword}", "anchor")
 
     if strict_match:
         # 严格匹配：跳过基础片名/年份/平台档位，只用显式传入的整包词，
@@ -193,11 +227,6 @@ def build_query_plan(
         add(name, "alias")
     if year:
         add(f"{title} {year}", "year")
-    # 发布者档位：在裸片名之前试一次「片名 + 发布者」——它比裸片名精确得多
-    # （该源会用完全不同的中文名发布同一部剧），而且只在片名含 ASCII 时才有意义。
-    for name in names:
-        if re.search(r"[A-Za-z]", name):
-            add(f"{name} {PUBLISHER_QUERY_TOKEN}", "publisher")
     for name in names:
         add(name, "title")
     for hint in collection_hints:
@@ -210,7 +239,7 @@ def build_query_plan(
     return plan
 
 
-def search_api(query, limit=MAX_LIMIT, offset=0, base_url=DEFAULT_BASE_URL, timeout=20):
+def search_api(query, limit=MAX_LIMIT, offset=0, base_url=DEFAULT_API_BASE_URL, timeout=20):
     """One API call. Never send limit > 10; retry smaller if the API balks."""
     safe_limit = max(1, min(int(limit), MAX_LIMIT))
     attempts = sorted({safe_limit, 5, 2, 1}, reverse=True)
@@ -317,8 +346,8 @@ def torrents_csv_to_candidate(entry, query=""):
     this function is the boundary where they get their pool-side names.
 
     The channel name goes to `external_sources`, NOT `sources`: `sources` is
-    already taken by the probe's extraction labels (`direct#N` / `pansou#N`),
-    and overwriting it would corrupt that contract.
+    already taken by the probe's extraction labels (`direct#N`), and overwriting
+    it would corrupt that contract.
 
     No `metadata_at` is set: without a file list this candidate has not passed
     the metadata gate, and pretending otherwise would make the probe skip the
@@ -349,15 +378,37 @@ def torrents_csv_to_candidate(entry, query=""):
     }
 
 
-def is_publisher_candidate(name):
+def publisher_filter_tokens(keywords=()):
+    """`--publisher-only` 按名字收窄候选面时用的判据（小写、保序去重）。
+
+    取「配置的每条关键字组合」+「组合里按空白切开的每个词」+ 静态署名。两套都要：
+    查询后缀是用户写的（可能像 `高清剧集发布网` 这样在索引里查不到），而种子名里的
+    署名是 `高清剧集网`——只按其中一套匹配就会把真正的目标漏掉。实测（2026-10-13）
+    `漫长的季节 高清剧集发布网` 命中 0 条，而它的名字里确实有 `高清剧集网`。
+    """
+    tokens = []
+    for keyword in keywords or ():
+        parts = [str(keyword), *str(keyword).split()]
+        for token in parts:
+            token = token.strip().lower()
+            if token and token not in tokens:
+                tokens.append(token)
+    for token in PUBLISHER_NAME_TOKENS:
+        if token not in tokens:
+            tokens.append(token)
+    return tuple(tokens)
+
+
+def is_publisher_candidate(name, tokens=None):
     """候选名是否来自被偏好的发布者（`高清剧集网` / `DDHDTV`）。
 
     与 `candidate_score.DDHDTV_SOURCE_TOKENS` 是同一份判据的两个用途：那边给总分加分
     （优先级），这边用于 `--publisher-only` 收窄候选面（单一来源）。两边都只看名字，
-    因为索引只返回名字，不返回发布者字段。
+    因为索引只返回名字，不返回发布者字段。`tokens` 省略时用静态署名；取源链传
+    `publisher_filter_tokens(配置的关键字)`，让「配了哪家」决定「只留哪家」。
     """
     text = (name or "").lower()
-    return any(token in text for token in PUBLISHER_NAME_TOKENS)
+    return any(token in text for token in (tokens if tokens is not None else PUBLISHER_NAME_TOKENS))
 
 
 def release_resolution(name):
@@ -449,7 +500,7 @@ def fetch_query_pages(
     request_limit=MAX_LIMIT,
     pages=DEFAULT_PAGES,
     budget=None,
-    base_url=DEFAULT_BASE_URL,
+    base_url=DEFAULT_API_BASE_URL,
     timeout=DEFAULT_PAGE_TIMEOUT,
     search=search_api,
     sleep=0.0,
@@ -650,30 +701,29 @@ def merge_pool_entry(existing, incoming, allow_metadata_at=True, keys=None):
     return existing
 
 
-def collect_external_source(args, names, candidates, budget):
-    """Second discovery channel, inside the remainder of the same budget.
+def collect_external_source(args, site, names, candidates, budget):
+    """One non-API station, inside the slice the caller reserved for it.
 
-    Never raises and never touches the L1 path: an unreachable channel is
+    Never raises and never touches the L1 path: an unreachable station is
     reported as a status and contributes zero candidates.
     """
-    source = args.extra_source
+    kind = str(site.get("kind") or "")
+    source = site.get("name") or kind
     report = {
-        "source": source, "status": None, "queries": 0, "entries": 0,
+        "source": source, "kind": kind, "status": None, "queries": 0, "entries": 0,
         "new": 0, "elapsed_secs": 0.0, "message": "",
         # Reported so the caller (and its tests) can see which slice this
-        # channel was actually allowed to spend, not which one it was meant to.
+        # station was actually allowed to spend, not which one it was meant to.
         "budget_secs": round(budget.budget_secs, 2) if budget is not None else None,
     }
-    if not source:
-        report["status"] = "disabled"
-        return report
-    if source != torrents_csv_source.SOURCE_NAME:
+    if kind != torrents_csv_source.SOURCE_NAME:
         report["status"] = "unknown-source"
-        report["message"] = source
+        report["message"] = kind
         return report
     if budget is None or budget.remaining() < EXTRA_SOURCE_MIN_SECS:
         report["status"] = "budget-exhausted"
         return report
+    base_url = site.get("base_url") or torrents_csv_source.DEFAULT_BASE_URL
     started = time.time()
     seen_queries = []
     for name in names:
@@ -688,7 +738,7 @@ def collect_external_source(args, names, candidates, budget):
             name,
             limit=args.extra_source_limit,
             timeout=max(EXTRA_SOURCE_MIN_SECS, min(float(args.extra_source_timeout), remaining)),
-            base_url=args.extra_source_base_url,
+            base_url=base_url,
         )
         report["queries"] += 1
         report["status"] = result.get("status")
@@ -738,17 +788,27 @@ def save_pool(path, entries, query=""):
         return False
 
 
-def collect(args):
-    """Run the query ladder and return (pool, candidates, reports, external_reports).
+def collect(args, sites=None, keywords=None):
+    """Run the query ladder once per configured station.
 
-    `--publisher-only` 时阶梯只剩发布者档：这是「只用这一家源」的语义，
-    不是「优先用它」——优先靠打分侧的偏好，单源靠这里收窄搜索面。
+    返回 (pool, candidates, reports, external_reports)。`sites` / `keywords` 省略时
+    从环境变量读（`source_config`）；显式传入是留给测试的入口。
+
+    `--publisher-only` 时阶梯只剩锚点档：这是「只用这一家源」的语义，不是「优先用它」
+    ——优先靠打分侧的偏好，单源靠这里收窄搜索面。
     """
     pool = load_pool(args.pool_file)
     candidates = {}
     reports = []
     external_reports = []
     now = time.time()
+
+    if sites is None:
+        sites = source_config.load_sites()[0]
+    if keywords is None:
+        keywords = source_config.load_keywords()[0]
+    api_sites = [site for site in sites if site.get("kind") == source_config.DIAO_KIND]
+    extra_sites = [site for site in sites if site.get("kind") != source_config.DIAO_KIND]
 
     # 没传 --collection-hint 才用内置默认词；传了就用传的（严格按季依赖这一点，
     # 否则 argparse 的 append 会往默认词后面追加，把「全集」也一起跑了）
@@ -761,27 +821,19 @@ def collect(args):
         platforms=args.platform,
         precision_query=args.precision_query,
         strict_match=getattr(args, "strict_match", False),
+        anchor_keywords=keywords,
     )
     if getattr(args, "publisher_only", False):
-        publisher_steps = [
-            step for step in plan if step.get("tier") == "publisher"
-        ]
-        if not publisher_steps:
-            # 片名不含 ASCII（或标题形态特殊）时 build_query_plan 不会生成发布者档，
-            # 这里补一条显式查询，好让「只用该源」在纯中文片名上同样成立。
-            fallback = f"{args.title} {PUBLISHER_QUERY_TOKEN}".strip()
-            publisher_steps = [
-                {"query": fallback, "tier": "publisher"}
-            ]
-        plan = publisher_steps
+        # 锚点档就是「这一家源」的档位，单源模式把其它档位全部丢掉。档位来自配置，
+        # 与片名用哪种字符无关，所以不再需要「片名不含 ASCII 就补一条查询」的兜底。
+        plan = [step for step in plan if step.get("tier") == "anchor"]
     if args.max_queries:
         plan = plan[: args.max_queries]
     request_limit = max(1, min(int(args.limit), MAX_LIMIT))
 
-    extra_source = getattr(args, "extra_source", "")
     total_budget = float(getattr(args, "page_budget_secs", DEFAULT_PAGE_BUDGET_SECS))
     reserve = 0.0
-    if extra_source:
+    if extra_sites:
         requested = float(getattr(args, "extra_source_reserve_secs", 0.0) or 0.0)
         reserve = requested if requested > 0 else min(
             float(getattr(args, "extra_source_timeout", DEFAULT_EXTRA_SOURCE_RESERVE_SECS)),
@@ -789,81 +841,103 @@ def collect(args):
         )
         # 预留切片不能吃掉整个预算，否则翻页永远没得跑。
         reserve = min(reserve, max(total_budget - 1.0, 0.0))
-    page_budget_secs = max(total_budget - reserve, 1.0)
-    seen_hashes = set()
+    # 预算按站均分：**加一个站是切分同一份墙钟，不是把这一轮拉长**。每个（档位, 站）
+    # 组合拿自己的一份切片，所以最坏墙钟仍是 `--max-queries × --page-budget-secs`，
+    # 与配了几个站无关——这是控制台 `L1_MAX_QUERIES × L1_KEYWORD_BUDGET_SECS ≤ 450s`
+    # 那条推算成立的前提（见 console_server 顶部注释）。
+    api_budget = max(total_budget - reserve, 1.0) / max(len(api_sites), 1)
+    extra_budget = reserve / len(extra_sites) if extra_sites else 0.0
+    # 每个站一份「见过的 hash」：它同时是「连续两页没有新 hash 就停」的判据
+    # （见 fetch_query_pages），所以两个索引不能共用一份——第二个站在第一个站已经
+    # 返回过的那批 hash 上会被误判成「没有新东西」而提前停止翻页。候选去重仍然是全局
+    # 的（`candidates` 以 info hash 为键）。
+    seen_hashes_by_site = {}
+
+    if not api_sites:
+        # 只配了非 API 站时，阶梯一次都不用跑：没有站会去查它，跑它只会多打印几行、
+        # 多落几次盘。非 API 站自己的循环在下面。
+        plan = []
 
     try:
         for step in plan:
             query = step["query"]
-            deadline = Deadline(page_budget_secs)
-            outcome = fetch_query_pages(
-                query,
-                request_limit=request_limit,
-                pages=getattr(args, "pages", DEFAULT_PAGES),
-                budget=deadline,
-                base_url=args.base_url,
-                timeout=getattr(args, "timeout", DEFAULT_PAGE_TIMEOUT),
-                sleep=args.sleep,
-                workers=getattr(args, "page_workers", DEFAULT_PAGE_WORKERS),
-                no_new_pages=getattr(args, "no_new_pages", DEFAULT_NO_NEW_PAGES),
-                error_limit=getattr(args, "page_errors", DEFAULT_PAGE_ERRORS),
-                seen_hashes=seen_hashes,
-            )
-            hits = 0
-            fresh = 0
-            for page in outcome["pages"]:
-                hits += len(page["torrents"])
-                for item in page["torrents"]:
-                    candidate = torrent_to_candidate(item, query)
-                    if not candidate["ih"]:
-                        continue
-                    if candidate["ih"] in candidates:
-                        continue
-                    candidate["release_key"] = release_key(candidate)
-                    candidate["duplicate_hashes"] = []
-                    candidates[candidate["ih"]] = candidate
-                    fresh += 1
-            for error in outcome["errors"]:
-                print("SEARCH_ERROR " + json.dumps(
-                    dict(error, query=query), ensure_ascii=False))
+            for site in api_sites:
+                site_name = site.get("name") or site.get("kind") or "site"
+                seen_hashes = seen_hashes_by_site.setdefault(site["base_url"], set())
+                deadline = Deadline(api_budget)
+                outcome = fetch_query_pages(
+                    query,
+                    request_limit=request_limit,
+                    pages=getattr(args, "pages", DEFAULT_PAGES),
+                    budget=deadline,
+                    base_url=site["base_url"],
+                    timeout=getattr(args, "timeout", DEFAULT_PAGE_TIMEOUT),
+                    sleep=args.sleep,
+                    workers=getattr(args, "page_workers", DEFAULT_PAGE_WORKERS),
+                    no_new_pages=getattr(args, "no_new_pages", DEFAULT_NO_NEW_PAGES),
+                    error_limit=getattr(args, "page_errors", DEFAULT_PAGE_ERRORS),
+                    seen_hashes=seen_hashes,
+                )
+                hits = 0
+                fresh = 0
+                for page in outcome["pages"]:
+                    hits += len(page["torrents"])
+                    for item in page["torrents"]:
+                        candidate = torrent_to_candidate(item, query)
+                        if not candidate["ih"]:
+                            continue
+                        if candidate["ih"] in candidates:
+                            continue
+                        candidate["release_key"] = release_key(candidate)
+                        candidate["duplicate_hashes"] = []
+                        candidates[candidate["ih"]] = candidate
+                        fresh += 1
+                for error in outcome["errors"]:
+                    print("SEARCH_ERROR " + json.dumps(
+                        dict(error, query=query, site=site_name), ensure_ascii=False))
 
-            reports.append(
-                {
-                    "query": query,
-                    "tier": step["tier"],
-                    "pages": len(outcome["pages"]),
-                    "requests": outcome["requests"],
-                    "hits": hits,
-                    "new": fresh,
-                    "has_more": outcome["pages"][-1]["has_more"] if outcome["pages"] else False,
-                    "stopped_by": outcome["stopped_by"],
-                    "elapsed_secs": round(deadline.elapsed(), 2),
-                }
-            )
-            # N3：每完成一个关键词就把已完成的部分原子落盘（池 + 候选磁力）。
+                reports.append(
+                    {
+                        "query": query,
+                        "tier": step["tier"],
+                        "site": site_name,
+                        "pages": len(outcome["pages"]),
+                        "requests": outcome["requests"],
+                        "hits": hits,
+                        "new": fresh,
+                        "has_more": outcome["pages"][-1]["has_more"] if outcome["pages"] else False,
+                        "stopped_by": outcome["stopped_by"],
+                        "elapsed_secs": round(deadline.elapsed(), 2),
+                    }
+                )
+                print(
+                    f"  [{step['tier']:<9}] {site_name[:14]:<14} {query[:38]:<38} "
+                    f"hits={hits:3d} new={fresh:3d} "
+                    f"页={len(outcome['pages'])} {outcome['stopped_by']} "
+                    f"{deadline.elapsed():.1f}s"
+                )
+            # N3：每完成一个关键词（含它在每个站上的那次查询）就把已完成的部分原子
+            # 落盘（池 + 候选磁力）。
             land_progress(args, pool, candidates, reports, now=now)
             usable = [
                 item for item in candidates.values() if item.get("main_video_gb")
             ]
-            print(
-                f"  [{step['tier']:<10}] {query[:46]:<46} "
-                f"hits={hits:3d} new={fresh:3d} 可用={len(usable)} "
-                f"页={len(outcome['pages'])} {outcome['stopped_by']} "
-                f"{deadline.elapsed():.1f}s"
-            )
+            print(f"  [{step['tier']:<9}] 本档累计可用={len(usable)}")
             if len(usable) >= args.enough:
                 print(f"  已达到 --enough {args.enough}，停止扩展关键词")
                 break
             if args.sleep:
                 time.sleep(args.sleep)
 
-        if extra_source:
+        for site in extra_sites:
             names = [name for name in [args.title, *(args.alt_title or [])] if name]
             external_reports.append(
-                collect_external_source(args, names, candidates, Deadline(reserve))
+                collect_external_source(
+                    args, site, names, candidates, Deadline(extra_budget)
+                )
             )
-            for report in external_reports:
-                print("EXTRA_SOURCE " + json.dumps(report, ensure_ascii=False))
+        for report in external_reports:
+            print("EXTRA_SOURCE " + json.dumps(report, ensure_ascii=False))
     finally:
         # 手动中断（KeyboardInterrupt）/异常路径也兜一次：pager 已经返回的那几个
         # 关键词的候选不能因为后面被杀而丢掉。正常路径这里等同再写一次同样内容。
@@ -1043,23 +1117,23 @@ def parse_args():
     parser.add_argument("--enough", type=int, default=12, help="可用候选达到该数量即停止扩展")
     parser.add_argument("--sleep", type=float, default=0.4)
     parser.add_argument("--timeout", type=int, default=DEFAULT_PAGE_TIMEOUT)
-    parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument(
-        "--extra-source",
-        default=torrents_csv_source.SOURCE_NAME,
-        help="第二阶段发现通道（仅支持 torrents-csv）；传空字符串关闭",
+        "--extra-source-limit",
+        type=int,
+        default=torrents_csv_source.DEFAULT_RESULT_LIMIT,
+        help="非 API 站（如 torrents-csv）每次查询要几条",
     )
     parser.add_argument(
-        "--extra-source-base-url",
-        default=torrents_csv_source.DEFAULT_BASE_URL,
+        "--extra-source-timeout",
+        type=int,
+        default=torrents_csv_source.DEFAULT_TIMEOUT,
+        help="非 API 站单次查询超时（同时是默认的预留切片秒数，见下）",
     )
-    parser.add_argument("--extra-source-limit", type=int, default=torrents_csv_source.DEFAULT_RESULT_LIMIT)
-    parser.add_argument("--extra-source-timeout", type=int, default=torrents_csv_source.DEFAULT_TIMEOUT)
     parser.add_argument(
         "--extra-source-reserve-secs",
         type=float,
         default=DEFAULT_EXTRA_SOURCE_RESERVE_SECS,
-        help="从 --page-budget-secs 里给第二阶段源预留的秒数",
+        help="从 --page-budget-secs 里给非 API 站预留的总秒数，按站均分",
     )
     parser.add_argument(
         "--collapse-releases",
@@ -1169,17 +1243,35 @@ def main():
     if not args.json_out:
         args.json_out = f"/tmp/{slug}.search.json"
 
+    sites, site_errors = source_config.load_sites()
+    keywords, keyword_errors = source_config.load_keywords()
+    for error in site_errors + keyword_errors:
+        print("SOURCE_CONFIG_ERROR " + json.dumps({"error": error}, ensure_ascii=False))
+    if not sites:
+        # 配置坏了就明说，不拿默认值兜底——否则「我配了但没生效」是看不见的状态。
+        print(
+            "SOURCE_CONFIG_ERROR "
+            + json.dumps(
+                {"error": "没有可用的资源站，本轮不搜索（修好插件配置里的资源站列表后重试）"},
+                ensure_ascii=False,
+            )
+        )
+        return 2
+
     print(
         "搜索来源: "
         + json.dumps(
             {
-                "base_url": args.base_url,
+                "sites": [
+                    {"name": site["name"], "kind": site["kind"], "base_url": site["base_url"]}
+                    for site in sites
+                ],
+                "l1_keywords": keywords,
                 "limit": args.limit,
                 "pages": args.pages,
                 "page_budget_secs": args.page_budget_secs,
                 "page_workers": args.page_workers,
                 "max_queries": args.max_queries,
-                "extra_source": args.extra_source or "disabled",
                 "pool_file": args.pool_file or "disabled",
             },
             ensure_ascii=False,
@@ -1188,7 +1280,9 @@ def main():
     # collect() 自己带 try/finally（每完成一个关键词落一次盘），所以这里只在它
     # **成功返回之后**再包一层：collect 抛异常时不能进这个 finally——那时局部名
     # 还没绑定，用空字典落一次盘会把刚才的渐进落盘成果清成空文件（实测过）。
-    pool, candidates, reports, external_reports = collect(args)
+    pool, candidates, reports, external_reports = collect(
+        args, sites=sites, keywords=keywords
+    )
     try:
 
         if args.collapse_releases:
@@ -1199,34 +1293,36 @@ def main():
             candidates = collapsed
 
         if getattr(args, "publisher_only", False):
-            # 单源：只留这一家发布者的候选。其余候选在收集阶段已经被限制成
-            # 「发布者档」返回的内容，这里再按名字收一次口，防止索引把不相关结果
-            # 混进同一个查询里。
+            # 单源：只留配置里那家发布者的候选。候选在收集阶段已经只剩锚点档返回的
+            # 内容，这里再按名字收一次口，防止索引把不相关结果混进同一个查询里。
+            # 判据同时取「配置的关键字」与「种子名里的静态署名」：两者可能不是同一个
+            # 字符串（`高清剧集发布网` 查得到 0 条，而名字里写的是 `高清剧集网`）。
+            tokens = publisher_filter_tokens(keywords)
             kept = {
                 ih: item
                 for ih, item in candidates.items()
-                if is_publisher_candidate(item.get("name"))
+                if is_publisher_candidate(item.get("name"), tokens)
             }
             dropped = len(candidates) - len(kept)
             print(
                 "PUBLISHER_ONLY "
                 + json.dumps(
-                    {"kept": len(kept), "dropped": dropped},
+                    {"kept": len(kept), "dropped": dropped, "tokens": list(tokens)},
                     ensure_ascii=False,
                 )
             )
             if not kept:
-                # 单源模式下「一条都没有」必须说清是哪来的空：该源没有这个片名，
-                # 而不是搜索坏了或索引挂了。否则使用者只会看到一个空结果。
+                # 单源模式下「一条都没有」必须说清是哪来的空：这些关键词没有这个片名
+                # 的资源，而不是搜索坏了或索引挂了。否则使用者只会看到一个空结果。
                 print(
                     "PUBLISHER_ONLY_EMPTY "
                     + json.dumps(
                         {
-                            "publisher": PUBLISHER_QUERY_TOKEN,
+                            "keywords": list(keywords),
                             "dropped": dropped,
                             "reason": (
-                                "被偏好的发布者没有这个片名的资源；"
-                                "用 --publisher-only 关掉可回到全源搜索"
+                                "配置的 L1 关键字没有这个片名的资源；"
+                                "在插件配置里增删关键字组合，或关掉单源模式回到全源搜索"
                             ),
                         },
                         ensure_ascii=False,
@@ -1249,7 +1345,11 @@ def main():
             "title": args.title,
             "alt_titles": args.alt_title,
             "year": args.year,
-            "base_url": args.base_url,
+            "sites": [
+                {"name": site["name"], "kind": site["kind"], "base_url": site["base_url"]}
+                for site in sites
+            ],
+            "l1_keywords": list(keywords),
             "limit": args.limit,
             "pages": args.pages,
             "page_budget_secs": args.page_budget_secs,

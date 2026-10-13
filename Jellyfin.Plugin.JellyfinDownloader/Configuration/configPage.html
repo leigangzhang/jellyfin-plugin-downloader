@@ -41,6 +41,29 @@
 
     /* 第二行里的整行输入框 */
     #JellyfinDownloaderConfigPage .emby-input.jdl-input-block { width: 100%; }
+
+    /* 资源站列表：一行一个站，字段自动换行 */
+    #JellyfinDownloaderConfigPage .jdl-site {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: flex-end;
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    #JellyfinDownloaderConfigPage .jdl-site__field {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      flex: 1 1 180px;
+    }
+
+    #JellyfinDownloaderConfigPage .jdl-site__field > span { font-size: 12px; opacity: 0.75; }
+
+    #JellyfinDownloaderConfigPage .jdl-site__remove { flex: 0 0 auto; }
+
+    #JellyfinDownloaderConfigPage .jdl-site + .jdl-site { margin-top: 0; }
   </style>
     <div data-role="content">
       <div class="content-primary">
@@ -102,6 +125,23 @@
             <div class="jdl-row">
               <input id="jdl-staging" type="text" class="emby-input jdl-input-block" placeholder="留空 = 媒体目录下的 .staging" />
             </div>
+          </div>
+
+          <div class="inputContainer">
+            <div class="jdl-row">
+              <label class="inputLabel inputLabelUnfocused">资源站</label>
+              <span class="fieldDescription">后端从这些站收磁力候选。类型决定用哪段适配器；「网页搜索地址」填了才会走云盘通道（网址里要有 <code>{q}</code> 占位符）。整行留空 = 用内置默认的两个站。</span>
+            </div>
+            <div id="jdl-sites"></div>
+            <button id="jdl-site-add" type="button" is="emby-button" class="raised">添加资源站</button>
+          </div>
+
+          <div class="inputContainer">
+            <div class="jdl-row">
+              <label class="inputLabel inputLabelUnfocused" for="jdl-keywords">L1 关键字组合</label>
+              <span class="fieldDescription">每行一条，与片名拼成一条查询，按顺序排在搜索阶梯最前（发布者署名）。留空 = 用后端内置默认。</span>
+            </div>
+            <textarea id="jdl-keywords" class="emby-textarea jdl-input-block" rows="4" placeholder="留空 = 后端内置默认"></textarea>
           </div>
 
           <button id="jdl-save" type="button" is="emby-button" class="raised button-submit block">保存</button>
@@ -177,12 +217,94 @@
         });
       }
 
+      // 资源站列表：一行一个站，字段名与后端 source_config.py 的站点条目一一对应。
+      // 服务端 JSON 是 camelCase（name/kind/baseUrl/webSearchUrl），提交时按 C# 属性名
+      // （Name/Kind/BaseUrl/WebSearchUrl）发，模型绑定不区分大小写——两处都兼容着读。
+      function siteField(labelText, field, value, options) {
+        var wrap = document.createElement('label');
+        wrap.className = 'jdl-site__field';
+        var caption = document.createElement('span');
+        caption.textContent = labelText;
+        wrap.appendChild(caption);
+        var input;
+        if (options) {
+          input = document.createElement('select');
+          options.forEach(function (option) {
+            var node = document.createElement('option');
+            node.value = option;
+            node.textContent = option;
+            input.appendChild(node);
+          });
+        } else {
+          input = document.createElement('input');
+          input.type = 'text';
+        }
+        input.className = 'emby-input';
+        input.dataset.field = field;
+        input.value = value || '';
+        wrap.appendChild(input);
+        return wrap;
+      }
+
+      function makeSiteRow(site) {
+        site = site || {};
+        var row = document.createElement('div');
+        row.className = 'jdl-site';
+        row.appendChild(siteField('名称', 'Name', site.Name || site.name));
+        row.appendChild(siteField('类型', 'Kind', site.Kind || site.kind || 'diao', ['diao', 'torrents-csv']));
+        row.appendChild(siteField('接口地址', 'BaseUrl', site.BaseUrl || site.baseUrl));
+        row.appendChild(siteField('网页搜索地址（可选）', 'WebSearchUrl', site.WebSearchUrl || site.webSearchUrl));
+        var remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'raised jdl-site__remove';
+        remove.textContent = '删除';
+        remove.addEventListener('click', function () { row.remove(); });
+        row.appendChild(remove);
+        return row;
+      }
+
+      function renderSites(sites) {
+        var host = q('jdl-sites');
+        host.innerHTML = '';
+        (sites || []).forEach(function (site) { host.appendChild(makeSiteRow(site)); });
+      }
+
+      function readSites() {
+        var rows = root.querySelectorAll('#jdl-sites .jdl-site');
+        var out = [];
+        for (var i = 0; i < rows.length; i++) {
+          var value = function (field) {
+            var node = rows[i].querySelector('[data-field="' + field + '"]');
+            return node ? node.value.trim() : '';
+          };
+          var baseUrl = value('BaseUrl');
+          var webSearchUrl = value('WebSearchUrl');
+          if (!baseUrl && !webSearchUrl) { continue; }
+          out.push({
+            Name: value('Name'),
+            Kind: value('Kind') || 'diao',
+            BaseUrl: baseUrl,
+            WebSearchUrl: webSearchUrl
+          });
+        }
+        return out;
+      }
+
+      function readKeywords() {
+        return (q('jdl-keywords').value || '')
+          .split('\n')
+          .map(function (line) { return line.trim(); })
+          .filter(function (line) { return line.length > 0; });
+      }
+
       function load() {
         ajax('GET', 'config').then(function (config) {
           q('jdl-port').value = config.BackendPort || 8123;
           q('jdl-staging').value = config.StagingRoot || '';
           q('jdl-media').value = config.MediaRoot || config.resolvedMediaRoot || '';
           q('jdl-python').value = config.BackendPython || '';
+          renderSites(config.btSites || []);
+          q('jdl-keywords').value = (config.l1Keywords || []).join('\n');
           return refreshStatus();
         }).catch(function (error) {
           q('jdl-backend-status').textContent = '配置读取失败：' + (error && error.status ? error.status : '网络错误');
@@ -194,8 +316,17 @@
           BackendPort: parseInt(q('jdl-port').value, 10) || 8123,
           StagingRoot: (q('jdl-staging').value || '').trim(),
           MediaRoot: (q('jdl-media').value || '').trim(),
-          BackendPython: (q('jdl-python').value || '').trim()
+          BackendPython: (q('jdl-python').value || '').trim(),
+          BtSites: readSites(),
+          L1Keywords: readKeywords()
         });
+      }
+
+      function errorText(error, fallback) {
+        if (error && error.responseJSON && error.responseJSON.error) {
+          return error.responseJSON.error;
+        }
+        return fallback + (error && error.status ? error.status : '网络错误');
       }
 
       q('jdl-save').addEventListener('click', function () {
@@ -204,11 +335,15 @@
           if (window.Dashboard && Dashboard.processPluginConfigurationUpdateResult) {
             Dashboard.processPluginConfigurationUpdateResult();
           }
-          q('jdl-backend-status').textContent = '已保存，正在刷新状态…';
+          q('jdl-backend-status').textContent = '已保存（后端已重启），正在刷新状态…';
           return refreshStatus();
         }).catch(function (error) {
-          q('jdl-backend-status').textContent = '保存失败：' + (error && error.status ? error.status : '网络错误');
+          q('jdl-backend-status').textContent = '保存失败：' + errorText(error, '');
         });
+      });
+
+      q('jdl-site-add').addEventListener('click', function () {
+        q('jdl-sites').appendChild(makeSiteRow({}));
       });
 
       q('jdl-backend-refresh').addEventListener('click', function () {

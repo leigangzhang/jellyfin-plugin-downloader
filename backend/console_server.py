@@ -2,7 +2,7 @@
 """省流版本地控制台服务（Python 标准库 http.server，零第三方依赖）。
 
 静态：/ /editor.html /app.js /console.css /vendor/*
-API：/api/snapshot /api/search /api/verify /api/submit /api/watch /api/cleanup
+API：/api/snapshot /api/search /api/submit /api/watch /api/cleanup
      /api/pan/<subcommand> /api/mark /api/publish /api/publish/rollback
 
 所有写动作都委托给主 skill 脚本（subprocess）或复用其库函数（import），本服务
@@ -26,8 +26,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 import build_console as bc
+import source_config
 from media_download_lib import MEDIA_ROOT, STAGING_ROOT, path_is_within  # noqa: E402
-from speed_probe import measure_torrent_speed  # noqa: E402
 
 MAIN_SCRIPTS = bc.MAIN_SCRIPTS
 WEB_DIR = bc.WEB_DIR
@@ -310,8 +310,6 @@ class Handler(BaseHTTPRequestHandler):
             return self._bad("invalid json body")
         if path == "/api/search":
             return self._api_search(body)
-        if path == "/api/verify":
-            return self._api_verify(body)
         if path == "/api/submit":
             return self._api_submit(body)
         if path == "/api/watch":
@@ -373,19 +371,19 @@ class Handler(BaseHTTPRequestHandler):
         alt_title = body.get("alt_title") or []
         season = body.get("season")
         episode = body.get("episode")
-        allow_pansou = bool(body.get("allow_pansou", True))
-        allow_pan = bool(body.get("allow_pan", False))
-        # 抓取来源：magnet（默认，仅磁力）/ pan（仅云盘）/ both（两者）
+        # 抓取来源：magnet（仅资源站磁力）/ pan（仅云盘）/ both（两者）。
+        # 本地 Pansou 已删除，所以云盘候选只能来自「站点网页搜索地址」，见
+        # `_run_search_job` 的云盘阶段。
         sources = str(body.get("sources") or "").lower()
         if sources not in ("magnet", "pan", "both"):
-            sources = "both" if (allow_pansou and allow_pan) else ("pan" if allow_pan else "magnet")
+            sources = "pan" if body.get("allow_pan") else "magnet"
         # 原始片名（英文名等）：既提升召回，也用于「同名噪音」判定
         original_title = str(body.get("original_title") or "")
         # 严格按季：只跑季关键词，不带基础片名（默认开；关掉则整剧+季词都跑）
         strict_season = bool(body.get("strict_season", True))
-        # 单源：只搜被偏好的发布者（高清剧集网 / DDHDTV），并只保留该源候选。
+        # 单源：只跑配置的 L1 关键字档（发布者署名），并只保留该源候选。
         # **默认开**（2026-10-13 使用者要求「开启单源」）：候选面收窄成一家源。
-        # 仍可用 body 里的 "publisher_only": false 单次关掉——该源没有资源的片名
+        # 仍可用 body 里的 "publisher_only": false 单次关掉——关键字没有资源的片名
         # 会搜不到候选，所以保留这个退路，且空结果会被打印成 PUBLISHER_ONLY_EMPTY。
         publisher_only = bool(body.get("publisher_only", True))
         final_dir = body.get("final_dir") or bc.derive_final_dir(title, kind, year)
@@ -395,7 +393,7 @@ class Handler(BaseHTTPRequestHandler):
         params = {
             "title": title, "kind": kind, "slug": slug, "duration": duration,
             "year": year, "alt_title": alt_title, "season": season, "episode": episode,
-            "allow_pansou": allow_pansou, "allow_pan": allow_pan, "sources": sources,
+            "sources": sources,
             "original_title": original_title, "strict_season": strict_season,
             "publisher_only": publisher_only,
             "final_dir": final_dir,
@@ -422,44 +420,6 @@ class Handler(BaseHTTPRequestHandler):
         return self._ok(resp)
 
     # ---- verify -----------------------------------------------------------
-    def _api_verify(self, body):
-        slug = body.get("slug") or ""
-        ih = (body.get("ih") or "").strip()
-        if not bc.valid_slug(slug):
-            return self._bad("invalid slug")
-        if not bc.valid_ih(ih):
-            return self._bad("invalid info hash")
-        res = measure_torrent_speed(ih.upper(), seconds=15, warmup=3)
-        speed_mbps = float(res.get("speed_bps") or 0) / 1e6
-        alive = bool(res.get("bytes")) and float(res.get("speed_bps") or 0) > 0
-
-        probe = bc.read_probe(slug)
-        if probe:
-            updated = bc.rescore_entry(probe, ih.upper(), speed_mbps)
-            if updated:
-                ranked = probe.get("ranked") or []
-                for i, entry in enumerate(ranked):
-                    if bc.candidate_key(entry) == ih.upper():
-                        ranked[i] = updated
-                        break
-                ranked.sort(key=lambda e: float(e.get("score") or 0), reverse=True)
-                for i, entry in enumerate(ranked, start=1):
-                    entry["rank"] = i
-                probe["ranked"] = ranked
-                if ranked:
-                    probe["best"] = ranked[0]
-                bc.save_probe(slug, probe)
-
-        verify = {
-            "ih": ih.upper(),
-            "speed_mbps": round(speed_mbps, 3),
-            "alive": alive,
-            "bytes": res.get("bytes", 0),
-            "error": res.get("error", ""),
-        }
-        return self._ok({"verify": verify, "snapshot": _build_snapshot(slug)})
-
-    # ---- submit / watch / cleanup ----------------------------------------
     def _api_submit(self, body):
         ih = (body.get("ih") or "").strip()
         final_dir = body.get("final_dir") or ""
@@ -613,7 +573,7 @@ def season_hints(season: int) -> list:
 def episode_hints(season: int, episode: int) -> list:
     """把「第 N 集」的常见写法交给搜索阶梯（单集页专用）。
 
-    没有这一档，单集页只能搜到季包：diao.im 上单集资源的名字是
+    没有这一档，单集页只能搜到季包：索引上单集资源的名字是
     `[第01集]` / `S01E01` 这种写法，靠「第1季」是搜不出来的。
     """
     return [f"第{episode:02d}集", f"第{episode}集", f"S{season:02d}E{episode:02d}"]
@@ -639,7 +599,11 @@ def _run_search_job(jid, p):
         want_pan = sources in ("pan", "both")
 
         if want_magnet:
-            log("L1 搜索（diao.im）…")
+            sites, _ = source_config.load_sites()
+            if sites:
+                log("L1 搜索（资源站：{}）…".format("、".join(s["name"] for s in sites)))
+            else:
+                log("L1 搜索：资源站配置为空或不可用，search_pool 会报 SOURCE_CONFIG_ERROR")
             search_cmd = [
                 "search_pool.py", p["title"],
                 "--pool-file", p["pool_file"],
@@ -682,18 +646,26 @@ def _run_search_job(jid, p):
 
         pan_cand = ""
         if want_pan:
-            log("云盘搜索（Pansou）…")
-            pan_cand = os.path.join("/tmp", f"{p['slug']}_pan.json")
-            run_cli_stream(
-                ["pan_search.py", p["title"], "--pansou", "http://127.0.0.1:64056", "--candidates-out", pan_cand],
-                log, 300,
-            )
-            # 保留云盘候选（含提取码），供快照富化（probe 的 ranked 输出不含 pass_code）
-            if os.path.isfile(pan_cand):
-                try:
-                    shutil.copyfile(pan_cand, os.path.join(bc.SNAPSHOTS_DIR, f"{p['key']}.pan.json"))
-                except OSError:
-                    pass
+            # 云盘通道 = 各资源站自己的「网页搜索地址」（插件配置的 web_search_url）。
+            # 一个站点都没填时，必须明说「没有入口」——空候选和「搜了但没链接」是两件事。
+            sites, _ = source_config.load_sites()
+            web_urls = source_config.web_search_urls(p["title"], sites)
+            if not web_urls:
+                log("云盘通道没有入口：插件配置里没有任何资源站填了「网页搜索地址」（需含 {q} 占位符）")
+            else:
+                pan_cand = os.path.join("/tmp", f"{p['slug']}_pan.json")
+                pan_cmd = ["pan_search.py", p["title"]]
+                for site_name, url in web_urls:
+                    log(f"  网页搜索（{site_name}）")
+                    pan_cmd += ["--page", url]
+                pan_cmd += ["--candidates-out", pan_cand]
+                run_cli_stream(pan_cmd, log, 300)
+                # 保留云盘候选（含提取码），供快照富化（probe 的 ranked 输出不含 pass_code）
+                if os.path.isfile(pan_cand):
+                    try:
+                        shutil.copyfile(pan_cand, os.path.join(bc.SNAPSHOTS_DIR, f"{p['key']}.pan.json"))
+                    except OSError:
+                        pass
 
         log("打分 + 校验 metadata（probe）…")
         probe_cmd = [
@@ -706,13 +678,11 @@ def _run_search_job(jid, p):
         ]
         if want_magnet:
             probe_cmd += ["--candidate-file", p["cand_file"]]
-        if want_magnet and p["allow_pansou"]:
-            probe_cmd += ["--allow-pansou"]
         if want_pan and pan_cand and os.path.isfile(pan_cand):
             probe_cmd += ["--extra-candidates", pan_cand]
-        # 不再传速度实测开关：10s 探针的重复散布 1.16–8.50×（t3-speed.md §0/§2），
-        # 排不动候选，却要固定付 8 条 × 20–23s。metadata 校验仍走 live-check
-        # （不传 --no-live-check 即保持默认开启）。
+        # 速度实测开关已整体删除（模块、参数、这个调用点）：10s 探针的重复散布
+        # 1.16–8.50×（t3-speed.md §0/§2），排不动候选，却要固定付 8 条 × 20–23s。
+        # metadata 可达性仍走 live-check（不传 --no-live-check 即默认开启）。
         #
         # `probe_out` 就是面板读的那份快照文件，而 probe 在「预算用尽 / 超时 /
         # 无交付候选」时**不写**它（只把 PROBE_PARTIAL 打到 stdout）。所以先记下
@@ -751,7 +721,7 @@ def _run_search_job(jid, p):
             "strict_season": bool(p.get("strict_season", True)),
             # 本轮状态写进 context.json（t15/F-T15-4）：否则快照里的
             # probe_partial/probe_round_empty 只活在这一次 job 的内存里，任何从磁盘
-            # 重建快照的路径（/api/snapshot、/api/verify 之后）都会得到
+            # 重建快照的路径（/api/snapshot、/api/submit 之后）都会得到
             # probe_partial=False + 上一轮候选，与 search_status=probe_partial 自相矛盾。
             "probe_partial": bool(partial) or not probe_written,
             "probe_timeout_stage": timeout_stage,
@@ -802,7 +772,7 @@ def _probe_partial(out_text: str) -> tuple:
 def _build_snapshot(key, probe=None, ctx=None):
     """组装快照。本轮状态（partial/timeout/round_empty）与「空轮候选标成上一轮」
     都在 `build_console.build_snapshot` 里处理——它没拿到显式传参时回落到
-    context.json，所以这里每一个调用点（/api/snapshot、/api/verify、search job）
+    context.json，所以这里每一个调用点（/api/snapshot、search job）
     都得到同一结论（t15/F-T15-4）。
     """
     ctx = ctx if ctx is not None else bc.read_context(key)

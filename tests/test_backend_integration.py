@@ -6,9 +6,9 @@
 里，这里只钉“接口对上、接线没断、退出码没变”。
 
 全部离线：网络入口（announce_health / tracker_health / fetch_metadata /
-measure_torrent_speed / public_ip / search_api / torrents_csv_source.search）
-在用例里被替换成打桩或「一被调用就失败」的守卫；不读不写 `backend/state/`，
-池文件一律放临时目录。
+public_ip / search_api / torrents_csv_source.search）在用例里被替换成打桩或
+「一被调用就失败」的守卫；不读不写 `backend/state/`，池文件一律放临时目录。
+aria2c 测速入口已删除，所以这里（以及 probe 侧）没有它的桩。
 
 I4 发现的三条集成缺陷（F1 外部候选被 metadata 关剔除 / F2 合并清掉已知文件清单 /
 F3 严格按季时外部磁力不进候选文件）由 t11 修好后，已在 `KnownGapTests` 里转为**正常
@@ -167,7 +167,6 @@ class IntegrationCase(unittest.TestCase):
         "announce_health": {"seeders": 151, "own_peers": 1, "external_peers": 150},
         "tracker_health": (150, 160),
         "public_ip": "203.0.113.7",
-        "measure_torrent_speed": {},
     }
 
     def probe_network_patchers(self, calls):
@@ -192,7 +191,6 @@ class IntegrationCase(unittest.TestCase):
             mock.patch.object(pm, "announce_health", boom("announce_health")),
             mock.patch.object(pm, "tracker_health", boom("tracker_health")),
             mock.patch.object(pm, "fetch_metadata", boom("fetch_metadata")),
-            mock.patch.object(pm, "measure_torrent_speed", boom("measure_torrent_speed")),
             mock.patch.object(pm, "public_ip", boom("public_ip")),
         ]
 
@@ -214,7 +212,7 @@ class CliContractTests(IntegrationCase):
     def test_search_pool_help(self):
         done = self._help("search_pool.py")
         self.assertEqual(done.returncode, 0, done.stderr)
-        for flag in ("--extra-source", "--page-budget-secs", "--page-workers",
+        for flag in ("--page-budget-secs", "--page-workers",
                      "--no-new-pages", "--page-errors", "--collapse-releases"):
             self.assertIn(flag, done.stdout, flag)
 
@@ -238,7 +236,7 @@ class CliContractTests(IntegrationCase):
 
 
 class OfflineDryRunTests(IntegrationCase):
-    """验收要求的离线干跑：fixtures 候选 + /tmp 池，不带 --speed-probe。"""
+    """验收要求的离线干跑：fixtures 候选 + /tmp 池，全程离线。"""
 
     def _dry_run(self, mock_network=True):
         pool_path = self.fresh_pool()

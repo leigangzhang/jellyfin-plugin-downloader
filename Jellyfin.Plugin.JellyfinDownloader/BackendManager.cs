@@ -2,7 +2,9 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
+using System.Text.Json;
 using System.Threading;
+using Jellyfin.Plugin.JellyfinDownloader.Configuration;
 
 namespace Jellyfin.Plugin.JellyfinDownloader;
 
@@ -152,6 +154,21 @@ public static class BackendManager
             info.Environment["JMD_MEDIA_ROOT"] = MediaPaths.MediaRoot;
             info.Environment["JMD_STAGING_ROOT"] = staging;
 
+            // 资源站清单与 L1 关键字组合也走环境变量。它们的事实源是
+            // backend/source_config.py（默认值、kind 取值、校验都在那边），这里只负责
+            // 序列化；空列表不注入，后端读不到就用内置默认值。
+            var sitesJson = SerializeBtSites(config.BtSites);
+            if (sitesJson.Length > 0)
+            {
+                info.Environment["JMD_BT_SITES"] = sitesJson;
+            }
+
+            var keywordsJson = SerializeKeywords(config.L1Keywords);
+            if (keywordsJson.Length > 0)
+            {
+                info.Environment["JMD_L1_KEYWORDS"] = keywordsJson;
+            }
+
             try
             {
                 _process = Process.Start(info);
@@ -207,6 +224,47 @@ public static class BackendManager
         Thread.Sleep(600);
         var result = Start();
         return (result.Ok, "已重启：" + result.Detail);
+    }
+
+    /// <summary>
+    /// Serializes the configured stations for <c>JMD_BT_SITES</c>. An empty string
+    /// means "do not inject": the backend then uses its built-in defaults.
+    /// </summary>
+    private static string SerializeBtSites(IEnumerable<BtSiteConfig>? sites)
+    {
+        var payload = new List<object>();
+        foreach (var site in sites ?? Enumerable.Empty<BtSiteConfig>())
+        {
+            var baseUrl = (site.BaseUrl ?? string.Empty).Trim();
+            if (baseUrl.Length == 0)
+            {
+                continue;
+            }
+
+            payload.Add(new
+            {
+                name = (site.Name ?? string.Empty).Trim(),
+                kind = (site.Kind ?? string.Empty).Trim().ToLowerInvariant(),
+                base_url = baseUrl,
+                web_search_url = (site.WebSearchUrl ?? string.Empty).Trim(),
+            });
+        }
+
+        return payload.Count == 0 ? string.Empty : JsonSerializer.Serialize(payload);
+    }
+
+    /// <summary>
+    /// Serializes the L1 keyword combinations for <c>JMD_L1_KEYWORDS</c>; an empty
+    /// string means "do not inject" and the backend uses its built-in defaults.
+    /// </summary>
+    private static string SerializeKeywords(IEnumerable<string>? keywords)
+    {
+        var payload = (keywords ?? Enumerable.Empty<string>())
+            .Select(keyword => (keyword ?? string.Empty).Trim())
+            .Where(keyword => keyword.Length > 0)
+            .Distinct()
+            .ToList();
+        return payload.Count == 0 ? string.Empty : JsonSerializer.Serialize(payload);
     }
 
     private static void KillByPort(int port)

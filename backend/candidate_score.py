@@ -14,7 +14,7 @@ This module turns those rules into weights. Every candidate keeps a single
 
     quality     画质      resolution, bitrate vs a resolution-aware target,
                           source tier, codec
-    speed       下载速度  measured throughput, otherwise seeds/peers
+    speed       下载速度  seeds/peers (and an external index's seeder snapshot)
     experience  观看体验  中文字幕、软字幕、容器、压制组、文件结构
     fit         适配成本  体积区间、合集覆盖、多版本惩罚
 
@@ -444,7 +444,8 @@ def _quality_score(candidate, attrs, target_mbps):
 DDHDTV_SOURCE_TOKENS = ("ddhdtv", "高清剧集网")
 DDHDTV_SOURCE_BONUS = 4.0
 
-SPEED_MEASURED_MIN_MBPS = 0.001
+# 没有任何种子信号时的中性速度分；dead-swarm（可达性判决）在 `_speed_score` 里
+# 优先于任何先验返回。
 SPEED_UNMEASURED_NEUTRAL = 0.40
 SPEED_DEAD_SWARM = 0.05
 
@@ -534,91 +535,25 @@ def _seed_signal(candidate, policy):
     )
 
 
-def _seeds_prior(candidate, policy):
-    """速度先验（0-1），同时是速度子分的下限。
-
-    被抽中测速的候选也要走这条曲线做 `max()`，因此「被抽中」不会比同 swarm 的
-    「没被抽中」更差。announce 无实测时由外部快照兜底（见 `_seed_signal`）。
-    """
-    return _seed_signal(candidate, policy)[0]
-
-
-def _usable_measurement(measured):
-    """可用的实测吞吐（MB/s）；0/None/≤0.001 一律视为「未测到」。"""
-    if measured is None:
-        return None
-    value = float(measured)
-    if value <= SPEED_MEASURED_MIN_MBPS:
-        return None
-    return value
-
-
-def _speed_floor(candidate, prior, has_signal):
-    """不测量时这个候选应得的速度分——实测永远不得低于它。
-
-    有任何种子信号（announce 实测或外部快照）时就是先验；毫无信号时是中性 0.40
-    （``unknown`` 分支的取值），否则一条「0.5MB/s」的实测会反过来把无信号候选
-    从 0.40 压到 0.15。
-    """
-    return prior if has_signal else SPEED_UNMEASURED_NEUTRAL
-
-
 def _speed_score(candidate, policy):
-    """速度子分：seeders 先验是下限，短窗口实测只能加分。
+    """速度子分：只剩「多少人正在做种」这一件事。
 
-    分支（`breakdown["speed"]["mode"]`，另给 `score_source` / `seed_source` 说明
-    分数由谁决定）：
-      * ``measured``        —— 有 >0.001MB/s 的实测：取 ``max(不测量时应得的分, 实测曲线)``，
-                               ``score_source`` = ``measured`` / ``seeds-prior`` / ``neutral``。
-      * ``unmeasured``      —— 元数据可解析但窗口内没测到吞吐（含 0/≤0.001 的实测）：
-                               ``max(0.40 中性, 先验)``。
-      * ``dead-swarm``      —— announce/live-check 判定不可达：仍是 0.05，**先验
-                               （含外部快照）在这里被忽略**——可达性判决优先于
-                               「有多少种子」的估计，且这是刻意设计（见文件头部
-                               EXTERNAL_SEEDERS_* 注释里的 `--no-live-check` 说明）。
-      * ``unknown``         —— 既没有 announce 实测也没有外部快照：中性 0.40。
-      * ``seeds`` / ``seeds-external`` —— 没被抽中测速，直接用先验；``seed_source``
-                               区分这条先验来自 announce 实测还是外部索引快照。
+    分支（`breakdown["speed"]["mode"]`，`score_source` 说明分数由谁决定）：
+
+      * ``dead-swarm`` —— announce/live-check 判定不可达：0.05，**先验（含外部快照）
+        在这里被忽略**——可达性判决优先于「有多少种子」的估计（见文件头部
+        EXTERNAL_SEEDERS_* 注释里的 `--no-live-check` 说明）。
+      * ``unknown``    —— 既没有 announce 实测也没有外部快照：中性 0.40。
+      * ``seeds`` / ``seeds-external`` —— 直接用先验；``seed_source`` 区分这条先验
+        来自 announce 实测还是外部索引快照。
+
+    没有「实测吞吐」分支了：aria2c 短窗测速在重复测量间散布 1.16–8.50×，排不动候选，
+    却让每条候选固定付 17.6–24.1s（见 `probe_magnets` 模块头）。所以
+    `measured_speed_mbps` 不再是打分输入，写入它的那条路径也已删除。
     """
-    measured = _usable_measurement(candidate.get("measured_speed_mbps"))
-    seeds = float(candidate.get("seeds") or 0)
-    peers = float(candidate.get("peers") or 0)
     prior, seed_source, signal = _seed_signal(candidate, policy)
-    has_signal = seed_source != "none"
-    floor = _speed_floor(candidate, prior, has_signal)
-    parts = {
-        "seeds_prior": round(prior, 4),
-        "speed_floor": round(floor, 4),
-        "seed_source": seed_source,
-    }
+    parts = {"seeds_prior": round(prior, 4), "seed_source": seed_source}
     parts.update(signal)
-    if measured is None and candidate.get("measured_speed_mbps") is not None:
-        # 探针写了 0/≤0.001：诊断要留下「测过但不算证据」，分数不许被它影响。
-        parts["measured_discarded"] = round(
-            float(candidate.get("measured_speed_mbps") or 0.0), 3
-        )
-
-    if measured is not None:
-        curve = _log_score(measured, policy["speed_reference_mbps"])
-        parts["mode"] = "measured"
-        parts["measured_mbps"] = round(measured, 3)
-        if curve >= floor:
-            parts["score_source"] = "measured"
-            return curve, parts
-        # 实测低于「不测量时应得的分」：只说明「这个窗口不快」，不足以把候选打低。
-        parts["score_source"] = "seeds-prior" if has_signal else "neutral"
-        return floor, parts
-
-    if candidate.get("speed_unmeasured"):
-        # 元数据可解析（种子可达），但短窗口内没测到吞吐。既不判死种，也不能低于
-        # 同 swarm 的未抽中候选——后者正是改进前的逆激励。
-        parts["mode"] = "unmeasured"
-        parts["reason"] = "metadata ok, no throughput in window"
-        score = max(SPEED_UNMEASURED_NEUTRAL, prior)
-        parts["score_source"] = (
-            "seeds-prior" if prior > SPEED_UNMEASURED_NEUTRAL else "neutral"
-        )
-        return score, parts
 
     if candidate.get("dead_swarm"):
         # A live announce showed no peer that is not this machine, so the
@@ -628,7 +563,7 @@ def _speed_score(candidate, policy):
         parts["score_source"] = "dead-swarm"
         return SPEED_DEAD_SWARM, parts
 
-    if not has_signal:
+    if seed_source == "none":
         # Tracker scrape failed or the torrent is brand new: unknown, not dead.
         parts["mode"] = "unknown"
         parts["seeds"] = 0
@@ -637,8 +572,8 @@ def _speed_score(candidate, policy):
         return SPEED_UNMEASURED_NEUTRAL, parts
 
     parts["mode"] = "seeds" if seed_source == "announce" else "seeds-external"
-    parts["seeds"] = int(seeds)
-    parts["peers"] = int(peers)
+    parts["seeds"] = int(float(candidate.get("seeds") or 0))
+    parts["peers"] = int(float(candidate.get("peers") or 0))
     parts["score_source"] = "seeds-prior"
     return prior, parts
 
@@ -747,7 +682,8 @@ def score_candidate(candidate, policy=None):
 
     `candidate` is the enriched probe record: name, videos, nfiles,
     main_video_gb, estimated_bitrate_mbps, seeds, peers and optionally
-    measured_speed_mbps (MB/s), main_video_ext and covered_markers.
+    external_seeders / external_seeders_age_days, main_video_ext and
+    covered_markers.
     """
     policy = normalize_policy(policy)
     attrs = analyze_release(candidate.get("name") or "")
@@ -857,20 +793,17 @@ def format_candidate_line(candidate, index=None):
     """Compact one-line report used by the probe CLI."""
     dimensions = candidate.get("dimensions") or {}
     prefix = f"{index:>2}" if index is not None else "  "
-    speed = candidate.get("measured_speed_mbps")
     if candidate.get("kind") == "pan":
-        speed_text = "   云盘"
-    elif speed is not None:
-        speed_text = f"{speed:5.2f}MB/s"
+        seed_text = "   云盘"
     else:
-        speed_text = f"{candidate.get('seeds', 0):5d}seed"
+        seed_text = f"{candidate.get('seeds', 0):5d}seed"
     break_down = "/".join(
         f"{dimensions.get(name, 0):.0f}"
         for name in ("quality", "speed", "experience", "fit")
     )
     return (
         f"{prefix} {candidate.get('score', 0):6.2f} [{break_down}] "
-        f"{speed_text} "
+        f"{seed_text} "
         f"{candidate.get('resolution', '?'):>7} "
         f"{float(candidate.get('main_video_gb') or 0):5.2f}GB "
         f"{'CHS' if candidate.get('has_chs') else '---'} "

@@ -18,6 +18,7 @@ import contextlib
 import inspect
 import io
 import json
+import os
 import sys
 import threading
 import unittest
@@ -34,6 +35,7 @@ if str(BACKEND) not in sys.path:
 
 import probe_magnets  # noqa: E402
 import search_pool  # noqa: E402
+import source_config  # noqa: E402
 import torrents_csv_source  # noqa: E402
 
 NOW = 1_800_000_000.0  # fixed reference so snapshot ages are deterministic
@@ -153,7 +155,34 @@ def magnet_for(info_hash):
     return f"magnet:?xt=urn:btih:{info_hash}"
 
 
-def run_main_with_fakes(argv, page, extra_entries):
+DIAO_SITE = {"name": "diao.im", "kind": "diao",
+             "base_url": "https://m.diao.im/api/search", "web_search_url": ""}
+
+
+def sites_env(sites):
+    """把站点清单编码成环境变量的形状（`source_config` 是唯一的读者）。"""
+    return json.dumps(sites, ensure_ascii=False)
+
+
+def run_search_main(argv, api, extra_search, env=None):
+    """跑 `main()`：HTTP 边界与第二通道都换成桩，站点清单按 `env` 覆盖。
+
+    两个环境变量**总是**被显式设成某个值（默认空串 = 用内置默认），这样宿主机上
+    碰巧设了它们也不会改变测试行为。
+    """
+    full_env = {source_config.ENV_SITES: "", source_config.ENV_KEYWORDS: ""}
+    full_env.update(env or {})
+    stdout = io.StringIO()
+    with mock.patch.object(sys, "argv", argv), \
+            mock.patch.dict(os.environ, full_env, clear=False), \
+            mock.patch.object(search_pool.urllib.request, "urlopen", api), \
+            mock.patch.object(torrents_csv_source, "search", extra_search), \
+            contextlib.redirect_stdout(stdout):
+        code = search_pool.main()
+    return code, stdout.getvalue()
+
+
+def run_main_with_fakes(argv, page, extra_entries, env=None):
     """Run `main()` with the HTTP boundary and the second channel stubbed.
 
     The L1 side goes through the real `search_api` on purpose:
@@ -162,15 +191,9 @@ def run_main_with_fakes(argv, page, extra_entries):
     the live index instead. One canned page (`page`) answers every offset, and
     `has_more` is false, so each query costs exactly one request.
     """
-    stdout = io.StringIO()
-    api = FakeHttp({}, default=page)
-    with mock.patch.object(sys, "argv", argv), \
-            mock.patch.object(search_pool.urllib.request, "urlopen", api), \
-            mock.patch.object(torrents_csv_source, "search",
-                              side_effect=lambda *a, **k: external_result(extra_entries)), \
-            contextlib.redirect_stdout(stdout):
-        code = search_pool.main()
-    return code, stdout.getvalue()
+    return run_search_main(
+        argv, FakeHttp({}, default=page),
+        lambda *a, **k: external_result(extra_entries), env=env)
 
 
 class SearchApiSignatureTests(unittest.TestCase):
@@ -304,43 +327,54 @@ class PagingGateTests(unittest.TestCase):
 
 
 class QueryLadderTests(unittest.TestCase):
-    """Alias/year precision tiers must come before the blind bare-title tier."""
+    """锚点档（配置的 L1 关键字）排在最前，别名/年份/裸片名精度档排在它之后。"""
 
-    def test_alias_year_leads_the_ladder(self):
+    def test_anchor_tier_leads_the_ladder(self):
         plan = search_pool.build_query_plan(
-            "狂飙", ["The Knockout"], year="2023", collection_hints=["全集"])
-        self.assertEqual(plan[0], {"query": "The Knockout 2023", "tier": "alias-year"})
+            "狂飙", ["The Knockout"], year="2023", collection_hints=["全集"],
+            anchor_keywords=("高清剧集网", "DDHDTV"))
+        # 每个片名 × 每条关键字各一条查询，且都排在别名/年份之前。片名在前、别名在后：
+        # 索引里的名字是本地化片名，第一枪打它命中率最高。
+        self.assertEqual(
+            [step["query"] for step in plan[:4]],
+            ["狂飙 高清剧集网", "狂飙 DDHDTV",
+             "The Knockout 高清剧集网", "The Knockout DDHDTV"])
+        self.assertEqual([step["tier"] for step in plan[:4]], ["anchor"] * 4)
         tiers = [step["tier"] for step in plan]
-        self.assertEqual(tiers[:3], ["alias-year", "alias", "year"])
-        # 发布者档位排在裸片名之前（它比裸片名精确），但仍让位于别名/年份。
-        self.assertIn("publisher", tiers)
-        self.assertLess(tiers.index("alias"), tiers.index("publisher"))
-        self.assertLess(tiers.index("publisher"), tiers.index("title"))
-        self.assertEqual(plan[2]["query"], "狂飙 2023")
+        self.assertLess(tiers.index("anchor"), tiers.index("alias-year"))
+        self.assertEqual(plan[4], {"query": "The Knockout 2023", "tier": "alias-year"})
 
-    def test_publisher_tier_targets_the_source_by_name(self):
-        """发布者档位是搜到 DDHDTV 源的唯一可靠方式。
+    def test_anchor_tier_keeps_the_configured_order(self):
+        plan = search_pool.build_query_plan("Wednesday", anchor_keywords=("A", "B", "C"))
+        self.assertEqual([step["query"] for step in plan[:3]],
+                         ["Wednesday A", "Wednesday B", "Wednesday C"])
 
-        实测（2026-10-13）：该源把《星期三》命名为《周三俱乐部》，所以
-        `Wednesday S01` 一条都搜不到它，而 `Wednesday DDHDTV` 能 17/17 命中。
+    def test_anchor_tier_runs_for_pure_cjk_titles_too(self):
+        """关键字是配置项，没有「中英不混搭」限制：中文片名同样要跑锚点档。
+
+        实测（2026-10-13）：`漫长的季节 DDHDTV` 6/6 命中该发布者，而 `漫长的季节 S01`
+        一条都搜不到它——档位是搜到这家源的可靠方式，与片名的字符集无关。
         """
-        plan = search_pool.build_query_plan("Wednesday", year="2022")
-        queries = [step["query"] for step in plan]
-        self.assertIn("Wednesday DDHDTV", queries)
-        self.assertLess(queries.index("Wednesday DDHDTV"), queries.index("Wednesday"))
+        plan = search_pool.build_query_plan("狂飙", year="2023", anchor_keywords=("DDHDTV",))
+        self.assertEqual(plan[0], {"query": "狂飙 DDHDTV", "tier": "anchor"})
         tiers = [step["tier"] for step in plan]
-        self.assertLess(tiers.index("publisher"), tiers.index("title"))
+        self.assertLess(tiers.index("anchor"), tiers.index("title"))
 
-    def test_publisher_tier_is_skipped_for_pure_cjk_titles(self):
-        """档位 token 是 ASCII，按「中英不混搭」规则不该用在纯中文片名上。"""
-        plan = search_pool.build_query_plan("狂飙", year="2023")
-        self.assertNotIn("狂飙 DDHDTV", [step["query"] for step in plan])
+    def test_anchor_tier_runs_in_strict_mode_as_well(self):
+        """最高优先级 = 两种模式都跑；严格按季的档位排在锚点档之后。
 
-    def test_publisher_tier_is_skipped_in_strict_mode(self):
-        """严格按季只跑 `<name> <hint>` 组合，发布者档位不得混进季内搜索。"""
+        代价写在这里，免得下次有人以为这是意外：锚点档不带季标记，所以严格按季的
+        搜索会把同一部剧的其它季一起带回来（下游没有季标记过滤器）。
+        """
         plan = search_pool.build_query_plan(
-            "Wednesday", collection_hints=["S01"], strict_match=True)
-        self.assertNotIn("publisher", [step["tier"] for step in plan])
+            "Wednesday", collection_hints=["S01"], strict_match=True,
+            anchor_keywords=("DDHDTV",))
+        self.assertEqual([step["tier"] for step in plan], ["anchor", "strict"])
+        self.assertEqual([step["query"] for step in plan], ["Wednesday DDHDTV", "Wednesday S01"])
+
+    def test_no_configured_keyword_means_no_anchor_tier(self):
+        plan = search_pool.build_query_plan("Wednesday", year="2022")
+        self.assertNotIn("anchor", [step["tier"] for step in plan])
 
     def test_without_alias_the_ladder_still_reaches_the_title(self):
         plan = search_pool.build_query_plan("流浪地球2", year="2023")
@@ -360,14 +394,17 @@ class QueryLadderTests(unittest.TestCase):
         self.assertEqual(args.page_budget_secs, search_pool.DEFAULT_PAGE_BUDGET_SECS)
         self.assertEqual(args.page_workers, search_pool.DEFAULT_PAGE_WORKERS)
         self.assertEqual(args.no_new_pages, search_pool.DEFAULT_NO_NEW_PAGES)
-        self.assertEqual(args.extra_source, torrents_csv_source.SOURCE_NAME)
+        self.assertEqual(args.extra_source_reserve_secs,
+                         search_pool.DEFAULT_EXTRA_SOURCE_RESERVE_SECS)
         self.assertEqual(args.page_errors, search_pool.DEFAULT_PAGE_ERRORS)
         self.assertFalse(args.collapse_releases)
 
-    def test_extra_source_can_be_switched_off(self):
-        with mock.patch.object(sys, "argv", ["search_pool.py", "狂飙", "--extra-source", ""]):
-            args = search_pool.parse_args()
-        self.assertEqual(args.extra_source, "")
+    def test_station_list_is_the_only_switch_left(self):
+        """站点由配置决定：`--extra-source` 这类单独开关已经删除，传了就该报错。"""
+        with mock.patch.object(sys, "argv",
+                               ["search_pool.py", "狂飙", "--extra-source", ""]):
+            with self.assertRaises(SystemExit):
+                search_pool.parse_args()
 
 
 class ReleaseKeyTests(unittest.TestCase):
@@ -539,11 +576,13 @@ class MergeAndReportTests(unittest.TestCase):
                          self.entries[0]["seeders_snapshot_age_days"])
         self.assertEqual(enriched["external_sources"], ["torrents-csv"])
 
+    def external_site(self, kind="torrents-csv", base_url="http://x", name="外部站"):
+        return {"name": name, "kind": kind, "base_url": base_url, "web_search_url": ""}
+
     def test_expired_budget_skips_the_second_source(self):
-        args = mock.Mock(extra_source="torrents-csv", extra_source_limit=10,
-                         extra_source_timeout=20, extra_source_base_url="http://x")
+        args = mock.Mock(extra_source_limit=10, extra_source_timeout=20)
         report = search_pool.collect_external_source(
-            args, ["狂飙"], {}, search_pool.Deadline(0.0))
+            args, self.external_site(), ["狂飙"], {}, search_pool.Deadline(0.0))
         self.assertEqual(report["status"], "budget-exhausted")
         self.assertEqual(report["new"], 0)
 
@@ -560,29 +599,30 @@ class MergeAndReportTests(unittest.TestCase):
                     "entries": torrents_csv_source.parse_payload(
                         load_fixture("torrents_csv_search.json")), "elapsed_secs": 3.0}
 
-        args = mock.Mock(extra_source="torrents-csv", extra_source_limit=10,
-                         extra_source_timeout=20, extra_source_base_url="http://x")
+        args = mock.Mock(extra_source_limit=10, extra_source_timeout=20)
         with mock.patch.object(torrents_csv_source, "search", slow):
             report = search_pool.collect_external_source(
-                args, ["狂飙", "The Knockout"], {}, search_pool.Deadline(3.0, clock=clock))
+                args, self.external_site(), ["狂飙", "The Knockout"], {},
+                search_pool.Deadline(3.0, clock=clock))
         self.assertEqual(queried, ["狂飙"])
         self.assertEqual(report["budget_secs"], 3.0)
         self.assertIn("budget exhausted", report["message"])
 
-    def test_unknown_source_is_reported_not_crashed(self):
-        args = mock.Mock(extra_source="nope", extra_source_limit=10,
-                         extra_source_timeout=20, extra_source_base_url="http://x")
-        report = search_pool.collect_external_source(args, ["x"], {}, search_pool.Deadline(10.0))
+    def test_unknown_station_kind_is_reported_not_crashed(self):
+        """配置层会先拦掉未知 kind；这层也守着，免得绕过配置时静默丢站。"""
+        args = mock.Mock(extra_source_limit=10, extra_source_timeout=20)
+        report = search_pool.collect_external_source(
+            args, self.external_site(kind="nope"), ["x"], {}, search_pool.Deadline(10.0))
         self.assertEqual(report["status"], "unknown-source")
+        self.assertEqual(report["kind"], "nope")
 
     def test_failed_channel_leaves_l1_candidates_alone(self):
-        args = mock.Mock(extra_source="torrents-csv", extra_source_limit=10,
-                         extra_source_timeout=5, extra_source_base_url="http://x")
+        args = mock.Mock(extra_source_limit=10, extra_source_timeout=5)
         candidates = {"A" * 40: {"ih": "A" * 40, "name": "from diao", "main_video_gb": 2.0}}
         with mock.patch.object(torrents_csv_source, "search",
                                lambda *a, **k: {"status": 0, "message": "boom", "entries": []}):
             report = search_pool.collect_external_source(
-                args, ["狂飙"], candidates, search_pool.Deadline(10.0))
+                args, self.external_site(), ["狂飙"], candidates, search_pool.Deadline(10.0))
         self.assertEqual(report["status"], 0)
         self.assertEqual(report["new"], 0)
         self.assertEqual(list(candidates), ["A" * 40])
@@ -591,14 +631,8 @@ class MergeAndReportTests(unittest.TestCase):
 class EndToEndOfflineTests(unittest.TestCase):
     """`main()` over both channels with the HTTP boundary replaced."""
 
-    def run_main(self, argv, api, extra_search):
-        stdout = io.StringIO()
-        with mock.patch.object(sys, "argv", argv), \
-                mock.patch.object(search_pool.urllib.request, "urlopen", api), \
-                mock.patch.object(torrents_csv_source, "search", extra_search), \
-                contextlib.redirect_stdout(stdout):
-            code = search_pool.main()
-        return code, stdout.getvalue()
+    def run_main(self, argv, api, extra_search, env=None):
+        return run_search_main(argv, api, extra_search, env=env)
 
     def test_json_output_carries_seeders_and_both_channels(self):
         import tempfile
@@ -629,6 +663,10 @@ class EndToEndOfflineTests(unittest.TestCase):
             self.assertLessEqual(payload["queries"][0]["elapsed_secs"],
                                  search_pool.DEFAULT_PAGE_BUDGET_SECS)
             self.assertEqual(payload["external_sources"][0]["status"], 200)
+            # 站点与关键字来自配置（默认 = 内置的两个站、两条署名关键字）
+            self.assertEqual([site["name"] for site in payload["sites"]],
+                             [site["name"] for site in source_config.DEFAULT_SITES])
+            self.assertEqual(payload["l1_keywords"], list(source_config.DEFAULT_ANCHOR_KEYWORDS))
             self.assertGreater(payload["external_sources"][0]["new"], 0)
             # The second source lives inside the reserved slice of the same
             # budget, so the per-keyword wall clock cannot overshoot the gate.
@@ -656,19 +694,121 @@ class EndToEndOfflineTests(unittest.TestCase):
             self.assertEqual(payload["external_sources"][0]["status"], 0)
             self.assertEqual(payload["external_sources"][0]["new"], 0)
 
-    def test_second_channel_can_be_disabled_and_never_queried(self):
+    def test_station_list_decides_who_is_queried(self):
+        """站点清单是唯一的开关：只配 diao 时，第二通道一次都不许被问。"""
         import tempfile
 
         api = FakeHttp(canned_pages("漫长的季节"))
         calls = []
         with tempfile.TemporaryDirectory() as tmp:
-            code, _ = self.run_main(
-                ["search_pool.py", "漫长的季节", "--no-pool", "--extra-source", "",
+            code, printed = self.run_main(
+                ["search_pool.py", "漫长的季节", "--no-pool",
                  "--json-out", str(Path(tmp) / "out.json"),
                  "--candidates-out", str(Path(tmp) / "out.magnets")],
-                api, lambda *a, **k: calls.append(a) or {"status": 200, "entries": []})
+                api, lambda *a, **k: calls.append(a) or {"status": 200, "entries": []},
+                env={source_config.ENV_SITES: sites_env([DIAO_SITE])})
             self.assertEqual(code, 0)
             self.assertEqual(calls, [])
+            self.assertIn('"sites": [{"name": "diao.im"', printed)
+
+    def test_anchor_keywords_come_from_the_environment(self):
+        """L1 关键字组合是配置：环境变量里的每条都要在查询里出现，且排在最前。"""
+        import tempfile
+
+        api = FakeHttp(canned_pages("漫长的季节"))
+        with tempfile.TemporaryDirectory() as tmp:
+            code, printed = self.run_main(
+                ["search_pool.py", "漫长的季节", "--no-pool",
+                 "--json-out", str(Path(tmp) / "out.json"),
+                 "--candidates-out", str(Path(tmp) / "out.magnets")],
+                api, lambda *a, **k: {"status": 200, "message": "", "entries": []},
+                env={source_config.ENV_SITES: sites_env([DIAO_SITE]),
+                     source_config.ENV_KEYWORDS: json.dumps(["甲发布", "乙发布"])})
+            self.assertEqual(code, 0)
+            self.assertNotIn("SOURCE_CONFIG_ERROR", printed)
+            self.assertIn("漫长的季节 甲发布", printed)
+            self.assertIn("漫长的季节 乙发布", printed)
+            first = next(line for line in printed.splitlines() if line.startswith("  ["))
+            self.assertIn("[anchor   ]", first)
+            self.assertIn("甲发布", first)
+
+    def test_two_stations_do_not_share_the_no_new_pages_counter(self):
+        """「连续两页没有新 hash 就停」是**每个站各自**的判据。
+
+        两个索引经常有重叠，共用一份见过集合会让第二个站的第一页就被判成「没有新
+        东西」，翻页提前结束。这里两个站返回同一份页面：每个站都该按自己的规则走完
+        ——第一页有新 hash、之后连续两页没有 → 3 次请求后停。
+        """
+        import tempfile
+
+        page = diao_payload(
+            [l1_torrent("A" * 40, "Same.Release.mkv",
+                        files=[{"index": 0, "path": "Same.Release.mkv",
+                                "size": 4 * 1024 ** 3}])],
+            has_more=True)
+        api = FakeHttp({}, default=page)
+        sites = [
+            {"name": "A", "kind": "diao", "base_url": "https://a.example/api",
+             "web_search_url": ""},
+            {"name": "B", "kind": "diao", "base_url": "https://b.example/api",
+             "web_search_url": ""},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            code, _ = self.run_main(
+                ["search_pool.py", "漫长的季节", "--no-pool", "--sleep", "0",
+                 "--pages", "4", "--page-workers", "1", "--no-new-pages", "2",
+                 "--max-queries", "1",
+                 "--json-out", str(Path(tmp) / "out.json"),
+                 "--candidates-out", str(Path(tmp) / "out.magnets")],
+                api, lambda *a, **k: {"status": 200, "entries": []},
+                env={source_config.ENV_SITES: sites_env(sites),
+                     source_config.ENV_KEYWORDS: "[]"})
+            self.assertEqual(code, 0)
+        per_host = {}
+        for entry in api.requests:
+            host = urllib.parse.urlparse(entry["url"]).netloc
+            per_host[host] = per_host.get(host, 0) + 1
+        self.assertEqual(per_host, {"a.example": 3, "b.example": 3}, per_host)
+
+    def test_a_non_api_only_station_list_skips_the_ladder(self):
+        """只配非 API 站时不该白跑阶梯；那一个站自己的通道必须照常被问。"""
+        import tempfile
+
+        api = FakeHttp(canned_pages("漫长的季节"))
+        calls = []
+        only_external = [{"name": "idx", "kind": "torrents-csv",
+                          "base_url": "https://idx.example/api", "web_search_url": ""}]
+        with tempfile.TemporaryDirectory() as tmp:
+            code, printed = self.run_main(
+                ["search_pool.py", "漫长的季节", "--no-pool",
+                 "--json-out", str(Path(tmp) / "out.json"),
+                 "--candidates-out", str(Path(tmp) / "out.magnets")],
+                api,
+                lambda *a, **k: calls.append(a) or {
+                    "status": 200, "message": "", "entries": torrents_csv_source.parse_payload(
+                        load_fixture("torrents_csv_search.json"))},
+                env={source_config.ENV_SITES: sites_env(only_external)})
+            self.assertEqual(code, 0)
+            self.assertEqual(len(calls), 1, "非 API 站应当被问恰好一次")
+            self.assertNotIn("SEARCH_ERROR", printed)
+            self.assertNotIn("  [anchor", printed)
+            self.assertIn('"idx"', printed)
+
+    def test_bad_station_config_is_reported_not_silently_defaulted(self):
+        """坏配置必须走可见的失败路径，不许悄悄回落到默认站。"""
+        import tempfile
+
+        api = FakeHttp(canned_pages("漫长的季节"))
+        with tempfile.TemporaryDirectory() as tmp:
+            code, printed = self.run_main(
+                ["search_pool.py", "漫长的季节", "--no-pool",
+                 "--json-out", str(Path(tmp) / "out.json"),
+                 "--candidates-out", str(Path(tmp) / "out.magnets")],
+                api, lambda *a, **k: {"status": 200, "entries": []},
+                env={source_config.ENV_SITES: json.dumps([{"kind": "nope",
+                                                           "base_url": "https://x/y"}])})
+            self.assertEqual(code, 2)
+            self.assertIn("SOURCE_CONFIG_ERROR", printed)
 
     def test_next_step_hint_does_not_recommend_the_retired_speed_probe(self):
         # The trial-run speed probe was rejected by the user and the console no
@@ -689,14 +829,6 @@ class EndToEndOfflineTests(unittest.TestCase):
         self.assertNotIn("--speed-probe", hint)
         self.assertIn("--budget-secs 720", hint)
 
-    def test_no_retired_speed_probe_flag_anywhere_in_the_source(self):
-        # Comments are allowed to name the retired switch (that is how the next
-        # reader learns not to re-add it); code is not allowed to use or
-        # recommend it.
-        source = (BACKEND / "search_pool.py").read_text(encoding="utf-8")
-        code = "\n".join(line.split("#", 1)[0] for line in source.splitlines())
-        self.assertNotIn("--speed-probe", code)
-        self.assertNotIn("speed_probe", code)
 
 
 class ExternalCandidateGateTests(unittest.TestCase):
@@ -894,8 +1026,6 @@ class ExternalCandidateRankingTests(unittest.TestCase):
                 {"seeders": 151, "own_peers": 1, "external_peers": 150})),
             mock.patch.object(probe_magnets, "tracker_health", record("tracker_health", (150, 160))),
             mock.patch.object(probe_magnets, "public_ip", record("public_ip", "203.0.113.7")),
-            mock.patch.object(probe_magnets, "measure_torrent_speed",
-                              record("measure_torrent_speed", {})),
         ]
         stdout = io.StringIO()
         for patcher in patches:
@@ -1012,8 +1142,9 @@ class DependencyTests(unittest.TestCase):
     def test_backend_modules_import_stdlib_only(self):
         allowed = set(sys.stdlib_module_names) | {"media_download_lib",
                                                   "torrents_csv_source",
-                                                  "search_pool"}
-        for name in ("search_pool.py", "torrents_csv_source.py"):
+                                                  "search_pool",
+                                                  "source_config"}
+        for name in ("search_pool.py", "torrents_csv_source.py", "source_config.py"):
             tree = ast.parse((BACKEND / name).read_text(encoding="utf-8"))
             roots = set()
             for node in ast.walk(tree):
