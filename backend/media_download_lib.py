@@ -8,6 +8,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import uuid
 
 ETM_DB = os.path.expanduser(
     "~/Library/Application Support/Thunder/etm3/etm_map.db"
@@ -761,6 +762,62 @@ def probe_torrent_files(info_hash, timeout=25):
             }
         )
     return files
+
+
+def task_magent_paths(task_dir):
+    """任务目录里现存的 `.magent_*.torrent` 列表（迅雷自己放的那个）。"""
+    if not os.path.isdir(task_dir):
+        return []
+    return sorted(
+        os.path.join(task_dir, name)
+        for name in os.listdir(task_dir)
+        if name.startswith(".magent_") and name.endswith(".torrent")
+    )
+
+
+def write_task_magent(task_dir, info_hash, source=None):
+    """把 metainfo 写进任务目录，供迅雷在恢复时读取——**不等迅雷自己写**。
+
+    为什么必须由我们写：迅雷通过 `open magnet:` 建任务时负责把 metadata 落成
+    `.magent_<UUID>.torrent`；实测它有时不落盘（2026-10-13：任务 287/289 的目录是空的），
+    之后点「继续下载」就报「获取种子文件失败，无法继续下载」。既然
+    `probe_torrent_files()` 早就把同一份 metainfo 抓到了 `/tmp/<hash>.torrent`，
+    就没有理由让恢复能力依赖迅雷那个不确定的落盘动作。
+
+    返回 ``{"path", "written", "existed", "bytes"}``；找不到 metainfo 时返回
+    ``{"path": "", "written": False, "error": ...}``。
+    """
+    task_dir = os.path.realpath(task_dir)
+    source = source or f"/tmp/{info_hash.upper()}.torrent"
+    existing = [p for p in task_magent_paths(task_dir) if os.path.getsize(p) > 0]
+    if existing:
+        return {
+            "path": existing[0],
+            "written": False,
+            "existed": True,
+            "bytes": os.path.getsize(existing[0]),
+        }
+    if not os.path.isfile(source) or os.path.getsize(source) <= 0:
+        return {
+            "path": "",
+            "written": False,
+            "existed": False,
+            "error": f"没有可用的 metainfo：{source}",
+        }
+    os.makedirs(task_dir, exist_ok=True)
+    target = os.path.join(
+        task_dir, f".magent_{uuid.uuid4().hex.upper()}.torrent"
+    )
+    shutil.copyfile(source, target)
+    size = os.path.getsize(target)
+    if size <= 0:
+        return {
+            "path": target,
+            "written": False,
+            "existed": False,
+            "error": "写入后文件为空",
+        }
+    return {"path": target, "written": True, "existed": False, "bytes": size}
 
 
 def valid_video_files(files, min_bytes=MIN_VIDEO_BYTES):

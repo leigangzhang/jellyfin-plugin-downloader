@@ -24,6 +24,7 @@ if str(BACKEND) not in sys.path:
 
 import cleanup_download as cd  # noqa: E402
 import media_download_lib as mdl  # noqa: E402
+import search_pool as sp  # noqa: E402
 
 TASK_NAME = "Wednesday (2022) Season 1 S01 1080p"
 MAGENT = ".magent_7ED80D7D-5ABE-4E0A-94FF-2450B106EBE3.torrent"
@@ -130,3 +131,64 @@ class CleanupCliRefusesReferencedTasks(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WriteTaskMagentIsDeterministic(unittest.TestCase):
+    """`.magent` 由我们写入，不等迅雷——迅雷有时不落盘，之后恢复就报「获取种子文件失败」。
+
+    实测（2026-10-13）：任务 287/289 的任务目录是空的，`.magent` 全盘 0 命中，
+    手工按记录路径写回后迅雷即可恢复。所以写入必须是插件的确定性动作。
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="jmd-magent-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.tmp, ignore_errors=True))
+        self.source = self.tmp / "src.torrent"
+        self.source.write_bytes(b"d4:infod4:name4:testee")
+        self.task_dir = self.tmp / "task"
+
+    def test_creates_the_task_dir_and_writes_a_readable_file(self):
+        result = mdl.write_task_magent(str(self.task_dir), "AB" * 20, source=str(self.source))
+        self.assertTrue(result["written"])
+        self.assertTrue(os.path.isfile(result["path"]))
+        self.assertGreater(result["bytes"], 0)
+        self.assertEqual(len(mdl.task_magent_paths(str(self.task_dir))), 1)
+
+    def test_is_idempotent_when_a_usable_torrent_already_exists(self):
+        first = mdl.write_task_magent(str(self.task_dir), "AB" * 20, source=str(self.source))
+        second = mdl.write_task_magent(str(self.task_dir), "AB" * 20, source=str(self.source))
+        self.assertFalse(second["written"])
+        self.assertTrue(second["existed"])
+        self.assertEqual(first["path"], second["path"])
+        self.assertEqual(len(mdl.task_magent_paths(str(self.task_dir))), 1)
+
+    def test_reports_an_error_when_no_metainfo_is_available(self):
+        result = mdl.write_task_magent(
+            str(self.tmp / "other"), "CD" * 20, source=str(self.tmp / "missing.torrent"))
+        self.assertEqual(result["path"], "")
+        self.assertFalse(result["written"])
+        self.assertIn("没有可用的 metainfo", result["error"])
+
+    def test_empty_existing_file_does_not_count_as_usable(self):
+        self.task_dir.mkdir(parents=True)
+        empty = self.task_dir / ".magent_EMPTY.torrent"
+        empty.write_bytes(b"")
+        result = mdl.write_task_magent(str(self.task_dir), "AB" * 20, source=str(self.source))
+        self.assertTrue(result["written"])
+        self.assertGreater(result["bytes"], 0)
+
+
+class PublisherOnlySelection(unittest.TestCase):
+    """单源判据：只看名字（索引不返回发布者字段），与打分侧偏好共用同一组 token。"""
+
+    TITLE = "【高清剧集网发布 www.DDHDTV.com】星期三.第二季[简繁英字幕].Wednesday.S02.2160p"
+
+    def test_matches_both_publisher_tokens(self):
+        self.assertTrue(sp.is_publisher_candidate(self.TITLE))
+        self.assertTrue(sp.is_publisher_candidate("某剧 DDHDTV 1080p"))
+        self.assertTrue(sp.is_publisher_candidate("高清剧集网发布 某剧"))
+
+    def test_rejects_other_publishers(self):
+        self.assertFalse(sp.is_publisher_candidate("Wednesday (2022) S01 1080p BluRay x265"))
+        self.assertFalse(sp.is_publisher_candidate(""))
+        self.assertFalse(sp.is_publisher_candidate(None))

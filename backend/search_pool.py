@@ -96,6 +96,8 @@ DEFAULT_EXTRA_SOURCES = ("torrents-csv",)
 # 所以 `Wednesday S01` 一条都搜不到它，而 `Wednesday DDHDTV` 能。
 # token 只用 ASCII，且该档位按「中英不混搭」规则只在片名含 ASCII 时生效。
 PUBLISHER_QUERY_TOKEN = "DDHDTV"
+# 被偏好的发布者在种子名里的署名（与 candidate_score 的偏好判据同一组）。
+PUBLISHER_NAME_TOKENS = ("ddhdtv", "高清剧集网")
 # 第二阶段源在同一个 wall-clock 预算里预留的切片（秒）；剩不到 3s 就整段跳过。
 EXTRA_SOURCE_MIN_SECS = 3.0
 DEFAULT_EXTRA_SOURCE_RESERVE_SECS = 8.0
@@ -345,6 +347,17 @@ def torrents_csv_to_candidate(entry, query=""):
         "external_seeders_age_days": None if external_age is None else float(external_age),
         "external_sources": list(entry.get("sources") or [torrents_csv_source.SOURCE_NAME]),
     }
+
+
+def is_publisher_candidate(name):
+    """候选名是否来自被偏好的发布者（`高清剧集网` / `DDHDTV`）。
+
+    与 `candidate_score.DDHDTV_SOURCE_TOKENS` 是同一份判据的两个用途：那边给总分加分
+    （优先级），这边用于 `--publisher-only` 收窄候选面（单一来源）。两边都只看名字，
+    因为索引只返回名字，不返回发布者字段。
+    """
+    text = (name or "").lower()
+    return any(token in text for token in PUBLISHER_NAME_TOKENS)
 
 
 def release_resolution(name):
@@ -726,7 +739,11 @@ def save_pool(path, entries, query=""):
 
 
 def collect(args):
-    """Run the query ladder and return (pool, candidates, reports, external_reports)."""
+    """Run the query ladder and return (pool, candidates, reports, external_reports).
+
+    `--publisher-only` 时阶梯只剩发布者档：这是「只用这一家源」的语义，
+    不是「优先用它」——优先靠打分侧的偏好，单源靠这里收窄搜索面。
+    """
     pool = load_pool(args.pool_file)
     candidates = {}
     reports = []
@@ -745,6 +762,18 @@ def collect(args):
         precision_query=args.precision_query,
         strict_match=getattr(args, "strict_match", False),
     )
+    if getattr(args, "publisher_only", False):
+        publisher_steps = [
+            step for step in plan if step.get("tier") == "publisher"
+        ]
+        if not publisher_steps:
+            # 片名不含 ASCII（或标题形态特殊）时 build_query_plan 不会生成发布者档，
+            # 这里补一条显式查询，好让「只用该源」在纯中文片名上同样成立。
+            fallback = f"{args.title} {PUBLISHER_QUERY_TOKEN}".strip()
+            publisher_steps = [
+                {"query": fallback, "tier": "publisher"}
+            ]
+        plan = publisher_steps
     if args.max_queries:
         plan = plan[: args.max_queries]
     request_limit = max(1, min(int(args.limit), MAX_LIMIT))
@@ -979,6 +1008,14 @@ def parse_args():
     parser.add_argument("--limit", type=int, default=MAX_LIMIT, help="每次请求条数，上限 10")
     parser.add_argument("--pages", type=int, default=DEFAULT_PAGES, help="每个关键词最多翻几页（offset 翻页）")
     parser.add_argument(
+        "--publisher-only",
+        action="store_true",
+        help=(
+            "只搜索被偏好的发布者（片名 + DDHDTV 档位），并只保留该源候选；"
+            "用于「只要这一家源」的场景"
+        ),
+    )
+    parser.add_argument(
         "--page-budget-secs",
         type=float,
         default=DEFAULT_PAGE_BUDGET_SECS,
@@ -1160,6 +1197,25 @@ def main():
                 {"groups": len(collapsed), "dropped": sum(len(v) for v in dropped.values())},
                 ensure_ascii=False))
             candidates = collapsed
+
+        if getattr(args, "publisher_only", False):
+            # 单源：只留这一家发布者的候选。其余候选在收集阶段已经被限制成
+            # 「发布者档」返回的内容，这里再按名字收一次口，防止索引把不相关结果
+            # 混进同一个查询里。
+            kept = {
+                ih: item
+                for ih, item in candidates.items()
+                if is_publisher_candidate(item.get("name"))
+            }
+            dropped = len(candidates) - len(kept)
+            print(
+                "PUBLISHER_ONLY "
+                + json.dumps(
+                    {"kept": len(kept), "dropped": dropped},
+                    ensure_ascii=False,
+                )
+            )
+            candidates = kept
 
         usable = [
             item for item in candidates.values() if item.get("main_video_gb")

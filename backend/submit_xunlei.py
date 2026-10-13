@@ -35,6 +35,7 @@ from media_download_lib import (
     task_file_names,
     task_status,
     valid_video_files,
+    write_task_magent,
 )
 
 
@@ -614,6 +615,25 @@ def main():
         return 2
     taskid = task["taskid"]
     patch_download_path(taskid, staging_dir + os.sep)
+    # 不等迅雷自己落盘：把已抓到的 metainfo 写进任务目录，恢复时才有种子可读。
+    # 实测迅雷有时不写（2026-10-13 任务 287/289 的任务目录是空的），之后点
+    # 「继续下载」必报「获取种子文件失败，无法继续下载」。
+    task_dir = os.path.join(staging_dir, task.get("file_name") or "")
+    magent = write_task_magent(task_dir, info_hash)
+    if magent.get("path"):
+        print(
+            "  magent="
+            + json.dumps(
+                {
+                    "path": magent["path"],
+                    "written": magent.get("written"),
+                    "bytes": magent.get("bytes"),
+                },
+                ensure_ascii=False,
+            )
+        )
+    else:
+        print("  WARNING 无法写入任务种子文件：" + str(magent.get("error", "unknown")))
     if defer_selection_to_thunder:
         bt_info = json.loads(task.get("bt_task_info") or "{}")
         selected_indices = []
