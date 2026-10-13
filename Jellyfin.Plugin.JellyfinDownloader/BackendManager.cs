@@ -16,6 +16,12 @@ public static class BackendManager
 {
     private const int DefaultPort = 8123;
 
+    /// <summary>
+    /// 后端每个 JSON 响应里带的自身标识，取值与 <c>backend/console_server.py</c> 的
+    /// <c>SERVICE_ID</c> 必须逐字相同（两边各有守卫盯着）。
+    /// </summary>
+    private const string ServiceMarker = "jellyfin-downloader-backend";
+
     /// <summary>端口自增时最多往后试这么多个（8123→8124→…）。</summary>
     private const int PortScanSpan = 20;
     private static readonly object Gate = new();
@@ -46,14 +52,29 @@ public static class BackendManager
         }
     }
 
-    /// <summary>Probes whether the backend answers.</summary>
+    /// <summary>
+    /// Probes whether <b>our</b> backend answers. 端口上恰好坐着别人的 HTTP 服务时也会
+    /// 返回 4xx/2xx，所以不能只看状态码：后端每个 JSON 响应都带 `service` 字段
+    /// （`backend/console_server.py` 的 `SERVICE_ID`），只认带这个字段的响应。
+    /// 必须读完整响应再解析——那个字段在 JSON 末尾（实测 7.5KB 响应里在偏移 7228），
+    /// 只读前若干字节会认不出自己的后端。
+    /// </summary>
     public static bool Reachable()
     {
         try
         {
-            using var client = new HttpClient { Timeout = TimeSpan.FromMilliseconds(1500) };
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
             using var response = client.GetAsync(BaseUrl + "/api/snapshot?slug=jdlping").GetAwaiter().GetResult();
-            return (int)response.StatusCode < 500;
+            if (!response.IsSuccessStatusCode)
+            {
+                return false;
+            }
+
+            var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+            using var document = JsonDocument.Parse(body);
+            return document.RootElement.TryGetProperty("service", out var service)
+                && service.ValueKind == JsonValueKind.String
+                && string.Equals(service.GetString(), ServiceMarker, StringComparison.Ordinal);
         }
         catch
         {
@@ -134,9 +155,10 @@ public static class BackendManager
                 return (true, "已在运行（插件启动）");
             }
 
-            // 端口自增的前提是「异常退出留下的旧后端」不能占着端口：先按记录的端口
-            // 收掉它。只认插件自己启动过的那个端口，不会去动别人的进程。
-            KillByPort(EffectivePort);
+            // 端口自增的前提是「异常退出留下的旧后端」不能占着端口。这里只收 pidfile
+            // 里记着的那一个进程——端口上如果坐着别人的服务，就走下面的 ResolvePort
+            // 往后取端口，绝不去杀不知道是谁的进程。
+            StopRecordedBackend();
             Thread.Sleep(200);
 
             if (Reachable())
@@ -255,18 +277,105 @@ public static class BackendManager
             : (true, "本就未运行");
     }
 
-    /// <summary>Stops whatever is listening on the backend port and starts a fresh backend.</summary>
+    /// <summary>Stops the backend the plugin owns and starts a fresh one.</summary>
     public static (bool Ok, string Detail) Restart()
     {
-        // 先放掉插件自己那个端口：端口已经被外部进程占用时不去杀它，
-        // Start 会按 8123 起往上找下一个可用端口。
-        var port = EffectivePort;
+        // 只回收插件自己启动过的进程：正常路径由 Stop() 按 pid 收，异常退出留下的
+        // 那些靠 pidfile 认领。**不按端口杀**——端口上坐着的可能是别人的服务。
         Stop();
+        StopRecordedBackend();
         _activePort = null;
-        KillByPort(port);
         Thread.Sleep(600);
         var result = Start();
         return (result.Ok, "已重启：" + result.Detail);
+    }
+
+    /// <summary>
+    /// 收掉后端自己记在 pidfile 里的进程（插件重启/崩溃后留下的孤儿）。
+    /// pidfile 由后端在启动时写入、退出时删除，所以里面的 pid 只可能是这个后端；
+    /// 读不到就直接返回，绝不去猜「谁占着端口」。
+    ///
+    /// 已知的窄边界：后端被 SIGKILL 后 pid 恰好被系统复用给别的进程时，这里可能向
+    /// 那个无关进程发 TERM（pidfile 无随机 token，凭 pid 无法百分之百确认身份）。
+    /// 不为此加机制：插件的启停基本发生在有用户交互时，pid 复用的前提是插件崩溃
+    /// 后有新进程恰好拿到同一个 pid——概率低到不值得再加一层状态。
+    /// </summary>
+    private static void StopRecordedBackend()
+    {
+        var pid = ReadRecordedBackendPid();
+        if (pid is null)
+        {
+            return;
+        }
+
+        TrySignal(pid.Value, "TERM");
+        for (var waited = 0; waited < 1500; waited += 100)
+        {
+            Thread.Sleep(100);
+            if (!ProcessAlive(pid.Value))
+            {
+                return;
+            }
+        }
+
+        TrySignal(pid.Value, "KILL");
+    }
+
+    /// <summary>读后端 pidfile；文件不存在、内容不是 pid、进程已死都返回 null。</summary>
+    private static int? ReadRecordedBackendPid()
+    {
+        try
+        {
+            var script = string.IsNullOrWhiteSpace(Plugin.Instance?.Configuration?.BackendScript)
+                ? BundledScriptPath()
+                : Plugin.Instance!.Configuration.BackendScript;
+            var directory = Path.GetDirectoryName(script);
+            if (string.IsNullOrEmpty(directory))
+            {
+                return null;
+            }
+
+            // 后端数据根默认是脚本同级的 state/（JMD_DATA_DIR 可覆盖，这里只认默认位置：
+            // 环境变量是后端启动参数，插件侧读不到同一个值时宁可不动任何进程）。
+            var pidFile = Path.Combine(directory, "state", "console_server.pid");
+            if (!File.Exists(pidFile))
+            {
+                return null;
+            }
+
+            var text = File.ReadAllText(pidFile).Trim();
+            if (!int.TryParse(text, out var pid) || pid <= 0)
+            {
+                return null;
+            }
+
+            return ProcessAlive(pid) ? pid : null;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    private static bool ProcessAlive(int pid)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            return !process.HasExited;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
     }
 
     /// <summary>配置里写的端口；没配或配得不合法时用默认端口。</summary>
@@ -387,47 +496,6 @@ public static class BackendManager
             .Distinct()
             .ToList();
         return payload.Count == 0 ? string.Empty : JsonSerializer.Serialize(payload);
-    }
-
-    private static void KillByPort(int port)
-    {
-        try
-        {
-            var info = new ProcessStartInfo
-            {
-                FileName = "/usr/sbin/lsof",
-                Arguments = $"-ti tcp:{port}",
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var lsof = Process.Start(info);
-            if (lsof is null)
-            {
-                return;
-            }
-
-            var output = lsof.StandardOutput.ReadToEnd();
-            lsof.WaitForExit(3000);
-            foreach (var line in output.Split('\n'))
-            {
-                if (int.TryParse(line.Trim(), out var pid))
-                {
-                    try
-                    {
-                        Process.GetProcessById(pid).Kill(true);
-                    }
-                    catch
-                    {
-                        // ignore
-                    }
-                }
-            }
-        }
-        catch
-        {
-            // ignore
-        }
     }
 
     /// <summary>Stops the backend on host shutdown (only if the plugin started it).</summary>

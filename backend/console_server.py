@@ -49,6 +49,11 @@ MIME = {
     ".svg": "image/svg+xml",
 }
 
+# 自身标识：插件侧的 BackendManager.Reachable() 靠它区分「我们的后端」与「恰好占着
+# 这个端口的外来 HTTP 服务」。两边的字面量是同一个契约——改一处必须改另一处，
+# tests/test_backend_retired_paths.py 有一条守卫盯着。
+SERVICE_ID = "jellyfin-downloader-backend"
+
 # 单轮时限口径（各阶段单位耗时来自 2026-10-13 实测，单轮总时长是按这些单位耗时推算的；
 # 原始数据见 /tmp/jmd-audit/t3-speed.md、t4-pipeline.md）：
 #   * probe 不再跑速度实测：10s 探针的重复散布 1.16–8.50×，不足以排序，
@@ -259,6 +264,10 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _ok(self, obj):
+        # 每个 JSON 响应都带上自身标识（只加一个 key，不改已有字段）：
+        # 插件侧据此确认「这个端口上坐着的是我们的后端」。
+        if isinstance(obj, dict) and "service" not in obj:
+            obj = {**obj, "service": SERVICE_ID}
         self._send(200, obj)
 
     def _bad(self, msg):
@@ -600,7 +609,9 @@ def _run_search_job(jid, p):
         sources = p.get("sources", "magnet")
         want_magnet = sources in ("magnet", "both")
         want_pan = sources in ("pan", "both")
-        # 本轮 L1 搜索是否真的写出了候选文件；见下面 search_started_at 处的说明。
+        # 本轮 L1 搜索是否真的写出了候选文件。候选文件按轮命名（见 _api_search），
+        # 所以「读到上一轮」已经不可能；这里判的是更基本的一件事：want_magnet 为假、
+        # 或 search_pool 早退（没有磁力入口 / 站点配置不可用）时，它根本不会写出这个文件。
         cand_written = False
 
         if want_magnet:
@@ -649,9 +660,9 @@ def _run_search_job(jid, p):
                 search_cmd += ["--publisher-only"]
             search_started_at = time.time()
             run_cli_stream(search_cmd, log, SEARCH_POOL_TIMEOUT)
-            # 候选文件路径是固定的 /tmp/<slug>.magnets，内容却分「本轮写的」和「上一轮留的」。
-            # 只有本轮真的写出过才把它喂给 probe：否则只配了云盘专用站（或配置坏掉）的那一轮
-            # 会把上一轮的磁力当成本轮结果（probe 那边不再报 CANDIDATE_FILE_ERROR）。
+            # 只有本轮真的写出过才把它喂给 probe：路径虽然按轮唯一，但文件可能压根
+            # 没被写出来（没有磁力入口 / 配置不可用），那时传一个不存在的路径会让 probe
+            # 以 CANDIDATE_FILE_ERROR 整轮退出，连带把云盘候选一起丢掉。
             cand_written = _file_written_since(p["cand_file"], search_started_at)
             if not cand_written:
                 log("本轮没有写出候选磁力文件（没有磁力入口或配置不可用）→ 不拿上一轮的文件喂 probe")

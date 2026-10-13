@@ -196,6 +196,21 @@ public class JellyfinDownloaderController : ControllerBase
 
     private static string SiteKindForUrl(string url, string declaredKind)
     {
+        // 判定不出来的地址保留调用方的声明；两者都没有就沿用改动前的默认 diao。
+        // **保存前一定会先过 ValidateBtSites**：配置页认不出来的地址在那里就被拒了，
+        // 走不到这个兜底；只有手改过 XML 的老站点才靠它兼容。
+        var kind = KindForUrl(url);
+        if (kind.Length > 0)
+        {
+            return kind;
+        }
+
+        return declaredKind.Length > 0 ? declaredKind : "diao";
+    }
+
+    /// <summary>地址 → 适配器类型；认不出来的主机返回空串（由调用方决定拒绝还是兜底）。</summary>
+    private static string KindForUrl(string url)
+    {
         var host = SiteHostName(url);
         if (host is "m.diao.im" or "diao.im")
         {
@@ -207,8 +222,7 @@ public class JellyfinDownloaderController : ControllerBase
             return "torrents-csv";
         }
 
-        // 判定不出来的地址保留调用方的声明（旧 XML / 脚本仍然能用），没有声明就交后端报错。
-        return declaredKind;
+        return string.Empty;
     }
 
     private static string UrlPath(string url)
@@ -597,15 +611,15 @@ public class JellyfinDownloaderController : ControllerBase
                     return label + "：地址必须是 http(s) URL";
                 }
 
-                // 配置页一个站只填一个地址：地址带 {q} 就是云盘搜索页，不带就是磁力接口。
-                if (!address.Contains("{q}", StringComparison.Ordinal))
+                // 配置页一个站只填一个地址：地址带 {q} 就是云盘搜索页，不带就必须是
+                // 认得出来的磁力接口。认不出来的地址要当场拒绝——直接兜成 diao 会让
+                // 一个打不通的地址静默变成「diao 站」，用户只看到「搜了但没结果」。
+                if (!address.Contains("{q}", StringComparison.Ordinal)
+                    && KindForUrl(address).Length == 0
+                    && declaredKind.Length == 0)
                 {
-                    var kind = SiteKindForUrl(address, declaredKind);
-                    if (kind != "diao" && kind != "torrents-csv")
-                    {
-                        return label + "：识别不出这个地址该走哪个入口，请填 diao / "
-                            + "torrents-csv 的接口地址，或带 {q} 占位符的网页搜索地址";
-                    }
+                    return label + "：识别不出这个地址该走哪个入口，请填 m.diao.im / "
+                        + "torrents-csv.com 的接口地址，或带 {q} 占位符的网页搜索地址";
                 }
             }
 

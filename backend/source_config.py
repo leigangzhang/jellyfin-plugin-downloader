@@ -19,6 +19,13 @@
   - ``web_search_url``：云盘入口，**必须含 `{q}` 占位符**（把 `{q}` 换成片名后当资源页
     抓取，从中解析 pan.xunlei.com 分享链接）。它可以和磁力入口并存，**也可以单独存在**
     ——只发云盘资源、没有搜索 API 的站就靠它，此时 ``kind`` 无意义，会被归一化成空串。
+
+配置页只让用户填一个地址
+------------------------
+插件配置页一个站只给一个输入框（完整站点地址），因此 ``classify_site_url`` 是「这个地址
+该走哪个入口」的唯一判定处：配置页用它显示识别结果，``normalise_site`` 在 ``kind`` 缺省
+时用它补类型。显式传 ``kind`` 仍然被接受（旧 XML、脚本调用），但地址本身判定不出入口时
+不再默认当成磁力站，而是显式报错——见下面的「坏配置不静默」。
 * `JMD_L1_KEYWORDS`：JSON 数组（也接受换行/逗号分隔的纯文本），每项是一条
   **查询后缀**，会与片名拼成一条查询，按顺序排在关键词阶梯的最前面。显式给一个
   空数组 = 不要这一档；不设或空串 = 用内置默认。
@@ -85,6 +92,19 @@ MAX_KEYWORD_LEN = 64
 _WHITESPACE_RE = re.compile(r"\s")
 _SCHEME_RE = re.compile(r"^https?://", re.IGNORECASE)
 
+# 配置页只有一个地址输入框，站点类型必须能从地址本身判定出来。判定只看主机名与路径，
+# 不看查询串——`?q={q}` 那种模板的 `{q}` 在 URL 解析后会被百分号编码，匹配不了。
+_DIAO_HOSTS = ("m.diao.im", "diao.im")
+_DIAO_SEARCH_PATH = "/api/search"
+_TORRENTS_CSV_HOSTS = ("torrents-csv.com", "www.torrents-csv.com")
+_TORRENTS_CSV_SEARCH_PATH = "/service/search"
+
+# 归一化后的站点名：以主机名为准（配置页输入框里显示的是完整地址）。
+_HOST_NAMES = {
+    "m.diao.im": "diao.im",
+    "torrents-csv.com": "torrents-csv",
+}
+
 
 def _clean_text(value, limit):
     """压掉空白并截断；非字符串一律当空。"""
@@ -103,12 +123,86 @@ def _normalise_url(value):
     return url, ""
 
 
+def _host_and_path(url):
+    """取主机名与路径；URL 已经过 `_normalise_url`，这里只做形状上的读取。
+
+    按字符串剥掉 scheme 再切，不用 `urlsplit`：只需要主机名与路径两段，字符串切分
+    的语义更直白，也不必处理 `SplitResult` 的各字段默认值。
+    """
+    restored = _SCHEME_RE.sub("", url or "", count=1)
+    host, _, rest = restored.partition("/")
+    path = "/" + rest.split("?", 1)[0] if rest else ""
+    return host.lower(), path
+
+
+def classify_site_url(url):
+    """一个完整站点地址 → (kind, base_url, web_search_url)。
+
+    ``kind`` 为空串表示这个地址不是磁力入口，只当云盘资源页模板用。判定规则：
+
+    1. 带 ``{q}`` 的地址 = 云盘搜索页（同一个地址既不能当磁力接口，也不能两用）。
+    2. 主机是 diao（``m.diao.im`` / ``diao.im``）= diao 磁力站；只填主机时补成默认的
+       ``/api/search``，与内置默认站同一个入口。
+    3. 主机是 ``torrents-csv.com`` = torrents-csv 磁力站；只填主机时补成默认的
+       ``/service/search``。
+    4. 其余地址判定不出入口，返回三个空串，由调用方决定报错还是沿用显式声明的 kind。
+    """
+    host, path = _host_and_path(url)
+    if "{q}" in url:
+        return "", "", url
+    if host in _DIAO_HOSTS:
+        if not path or path == "/":
+            return DIAO_KIND, url.rstrip("/") + _DIAO_SEARCH_PATH, ""
+        return DIAO_KIND, url, ""
+    if host in _TORRENTS_CSV_HOSTS:
+        if not path or path == "/":
+            return TORRENTS_CSV_KIND, url.rstrip("/") + _TORRENTS_CSV_SEARCH_PATH, ""
+        return TORRENTS_CSV_KIND, url, ""
+    return "", "", ""
+
+
+def site_name_for(url, fallback=""):
+    """站点显示名：以主机名为准（``m.diao.im`` 收成 ``diao.im``）。"""
+    host, _ = _host_and_path(url)
+    if host in _HOST_NAMES:
+        return _HOST_NAMES[host]
+    if host:
+        return host
+    return fallback
+
+
+def describe_site(site):
+    """给配置页回显用：补上按地址识别出的 kind 与显示名，不改动已明确的字段。"""
+    if not isinstance(site, dict):
+        return site
+    kind = site.get("kind") or ""
+    base_url = site.get("base_url") or ""
+    web_search_url = site.get("web_search_url") or ""
+    if not kind and base_url:
+        inferred_kind, inferred_base, inferred_web = classify_site_url(base_url)
+        kind = inferred_kind
+        base_url = inferred_base or base_url
+        web_search_url = web_search_url or inferred_web
+    host_name = site_name_for(base_url or web_search_url)
+    return {
+        "name": host_name or site.get("name") or kind or "网页搜索站",
+        "kind": kind,
+        "base_url": base_url,
+        "web_search_url": web_search_url,
+    }
+
+
 def normalise_site(raw):
     """一条站点配置 → (site, error)。字段缺失按规则补，非法就整条拒绝。
 
     一个站至少要有一个入口（接口地址或网页搜索地址）。**只有网页搜索地址的站是合法的**
     ——那是「只发云盘资源、没有搜索 API」的站，也是云盘通道真正常见的入口；它的 `kind`
     没有可解析的响应，归一化成空串，取源侧不会把它当成磁力站。
+
+    配置页只发一个地址（``base_url``）。``kind`` 缺省时按 ``classify_site_url`` 判定；
+    显式给了 ``kind`` 但地址判定不出入口时**保留调用方的声明**（旧 XML 与脚本仍可用）；
+    两者都没有就是一条配不出来的配置，直接报错——静默当成 diao 会让一个打不通的地址
+    看起来像「这个站没有资源」。
     """
     if not isinstance(raw, dict):
         return None, f"每个资源站必须是对象，收到 {type(raw).__name__}"
@@ -122,13 +216,42 @@ def normalise_site(raw):
         return None, f"网页搜索地址必须包含 {{q}} 占位符：{web_search_url!r}"
     if not base_url and not web_search_url:
         return None, "站点至少要填「接口地址」或「网页搜索地址」中的一个"
-    kind = _clean_text(raw.get("kind"), MAX_NAME_LEN).lower()
+
+    declared_kind = _clean_text(raw.get("kind"), MAX_NAME_LEN).lower()
+    inferred_kind, inferred_base, inferred_web = classify_site_url(base_url) if base_url else ("", "", "")
     if base_url:
-        if kind not in SITE_KINDS:
-            return None, f"未知的资源站类型 {kind!r}（支持 {'/'.join(SITE_KINDS)}）"
+        # 有地址就按地址判定入口：带 {q} 的那些变成云盘页（没有磁力入口），认得出的主机
+        # 补上默认接口路径。
+        if inferred_web:
+            base_url = ""
+            web_search_url = web_search_url or inferred_web
+            kind = ""
+        else:
+            base_url = inferred_base or base_url
+            if inferred_kind:
+                kind = inferred_kind
+            elif declared_kind:
+                # 显式声明优先（老 XML / 脚本）：地址认不出来时按声明走，别把已有配置变成
+                # 启动就报错。配置页保存前会先拒掉认不出来的地址，走不到这个分支。
+                kind = declared_kind
+            else:
+                return None, (
+                    f"识别不出这个资源站该走哪个入口：{base_url!r}"
+                    f"（支持 {'/'.join(SITE_KINDS)} 的接口地址，或带 {{q}} 占位符的网页搜索地址）"
+                )
     else:
+        # 没有接口地址：旧形态的云盘专用站。没有响应可解析，kind 归零。
         kind = ""
-    name = _clean_text(raw.get("name"), MAX_NAME_LEN) or kind or "网页搜索站"
+
+    if base_url and kind not in SITE_KINDS:
+        return None, f"未知的资源站类型 {kind!r}（支持 {'/'.join(SITE_KINDS)}）"
+    if not base_url:
+        kind = ""
+
+    name = (_clean_text(raw.get("name"), MAX_NAME_LEN)
+            or site_name_for(base_url or web_search_url)
+            or kind
+            or "网页搜索站")
     return (
         {
             "name": name,
