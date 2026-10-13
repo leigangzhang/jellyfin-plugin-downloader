@@ -16,5 +16,11 @@ backend/state/
 # 插件备份归档（本地快照，不入库）
 backups/
 
+# AgentTeams 团队状态（运行时协作数据，不入库）
+.agent-teams/
+
 # macOS
 .DS_Store
+
+# Marklingo
+.marklingo/
