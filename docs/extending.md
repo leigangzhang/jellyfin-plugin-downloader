@@ -46,4 +46,4 @@ The loss is quiet, which is why the rule is written down: the gates still pass, 
 
 ## How to know it worked
 
-Run the commands in [AGENTS.md](../AGENTS.md#commands): `--self-test` proves every guard can fail, the real scan proves the conventions hold on this tree, each generator's `--check` proves its page is a current projection, and `pair-docs.py --check` proves every pair is complete and in step. Then run `run-evidence.py` so the run is recorded rather than asserted, and read the record before calling the change done.
+Run the commands in [README.md](../README.md#常用命令): `--self-test` proves every guard can fail, the real scan proves the conventions hold on this tree, each generator's `--check` proves its page is a current projection, and `pair-docs.py --check` proves every pair is complete and in step. Then run `run-evidence.py` so the run is recorded rather than asserted, and read the record before calling the change done.

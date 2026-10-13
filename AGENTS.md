@@ -27,9 +27,9 @@
 - 不把 `backend/state/` 或 `backups/` 提交进版本库。
 - 不把机器相关的绝对路径写进 `backend/`（历史上出现过，已清理）。
 
-## Read first
+## 套件入口
 
-- **套件文档总入口：[docs/kit.md](docs/kit.md)**——套件是什么、三个采用分档、以及「去哪找什么」的路由表都在那一页；
+- **[docs/kit.md](docs/kit.md)**——套件是什么、三个采用分档、以及「去哪找什么」的路由表都在那一页；
   各家的归属索引在 [docs/README.md](docs/README.md)。
 - 本仓库用的是 agent-workflow-kit 的**最小档**：十一站的进出口、每站的闸门与反模式在 [dev/README.md](dev/README.md)；
   装了哪几站在 [tools/tiers.json](tools/tiers.json)（发布、演化、退役、否决记录、事故复盘都声明为 `none`，别为它们造文件）。
@@ -37,27 +37,14 @@
   给概念、检查或文档 kind 命名前读 [docs/glossary.md](docs/glossary.md)；把术语讲给没读过套件的人之前读
   [docs/plain-language.md](docs/plain-language.md)；改一份成对文档前读 [docs/i18n.md](docs/i18n.md)；
   动 `.agents/notes/` 前读 [.agents/notes/README.md](.agents/notes/README.md)。
+- 常用命令在 [README.md](README.md#常用命令)：构建/安装/卸载，以及 `change-scope`、`run-evidence`、`check-invariants`、`gen-docs`、`pair-docs`、`unittest` 这些验收命令。
 - 一处事实一个家：规则住在它链接的那份文件里，本文件只写规则与入口。你在意的约定要接进
   [tools/workflow.json](tools/workflow.json) 里一条会变红的检查——写不成检查的规则等于不存在。
 - 闸门本身坏了就停下来说清楚（附上确切的调用），不要用 `--no-verify` 之类绕过去，也不要删掉检查的对象来求绿。
 
-## Commands
-
-```sh
-./build.sh                                        # 构建插件与内嵌的 Web 资源 -> ./out
-./install.sh                                      # 构建 + 停 Jellyfin + 覆盖 + 重启
-./uninstall.sh                                    # 干净卸载（不停服、不重启，带自检）
-python3 tools/change-scope.py --base origin/main  # 本次改动命中哪些改动面、各欠什么证据
-python3 tools/run-evidence.py --base origin/main  # 真的跑那些证据，给出三态判定
-python3 tools/check-invariants.py                 # 可执行约定
-python3 tools/check-invariants.py --self-test     # 证明每条检查都能变红
-python3 tools/gen-docs.py --check                 # docs/check-catalog.md 仍是当前投影
-python3 tools/pair-docs.py --check                # 每对双语文档齐全且同步
-python3 -m unittest discover -s tests             # 套件自己的契约测试
-```
-
 「通过」要说明它凭什么算证据：验收标准每条带编号并点名归属检查，新守卫要有人见过它红
 （[apply-distrust](.agents/skills/apply-distrust/SKILL.md)、[pick-evidence](.agents/skills/pick-evidence/SKILL.md)）。
+
 
 ## 本仓库事实
 

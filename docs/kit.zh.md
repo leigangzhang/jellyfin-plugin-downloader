@@ -47,7 +47,7 @@ rm -rf <your-repo>/dev/postmortem <your-repo>/.agents/notes/{archived,rejected}
 cp -r AGENTS.md CLAUDE.md .agents docs dev tools tests <your-repo>/
 ```
 
-凡是不在 [i18n.md](i18n.zh.md#范围与排除) 排除表里的文档都成对发货：上面的拷贝命令带走的每一份 `dev/README.md` 都同时带来 `dev/README.zh.md` 与 `README.i18n.yaml`。非要只留一种语言时，就删掉另一侧，并在**同一次改动里**注释掉 `i18n` 面那条检查 —— 空语料是红的，而一条没人能满足的检查比没有检查更糟。 `CLAUDE.md` 是指向 `AGENTS.md` 的软链，给读这个文件名的宿主用；你的宿主不读它就删掉。
+凡是不在 [i18n.md](i18n.zh.md#范围与排除) 排除表里的文档都成对发货：上面的拷贝命令带走的每一份 `dev/README.md` 都同时带来 `dev/README.zh.md` 与 `README.i18n.yaml`。非要只留一种语言时，就删掉另一侧，并在**同一次改动里**注释掉 `i18n` 面那条检查 —— 空语料是红的，而一条没人能满足的检查比没有检查更糟。 `CLAUDE.md` 是指向本套件入口页的指针，给读这个文件名的宿主用；你的宿主不读它就删掉。
 
 > **本套件自己不带任何记录。** `.agents/notes/` 里，每个生命周期目录的 `TEMPLATE.md` 就是你要拷的骨架；`dev/evidence/` 下唯一一个文件就是 `TEMPLATE.md`。从更早的版本拷过来的副本里可能还留着那一版的决策历史与运行记录 —— 那些不是你的项目的，删掉它们：
 
@@ -58,7 +58,7 @@ find dev/evidence -mindepth 1 -type f ! -name 'TEMPLATE.md' -delete
 
 > 删完之后每个目录仍留着自己的 `TEMPLATE.md`，所以那几条决策检查不会因为空语料变红。**没装的每一个 stage，都请在 [tools/tiers.json](../tools/tiers.json) 里声明为 `none`** —— 开关会把它变成声明的缺席，只拥有它那个家的检查不再运行（阶梯见[地图](../dev/README.zh.md)）。文件还留着就是红，这正是要点：开关陈述意图，树陈述事实。
 
-然后只改一个文件：把你项目真实的路径与命令填进 [tools/workflow.json](../tools/workflow.json) —— 改动面的 patterns、每条证据命令、以及各条检查的 patterns —— 再用 `python3 tools/run-evidence.py --check` 自检这份配置。最后跑一遍 [AGENTS.md](../AGENTS.md#commands) 里列出的命令，确认它们在你的仓库里真的能跑。
+然后只改一个文件：把你项目真实的路径与命令填进 [tools/workflow.json](../tools/workflow.json) —— 改动面的 patterns、每条证据命令、以及各条检查的 patterns —— 再用 `python3 tools/run-evidence.py --check` 自检这份配置。最后跑一遍 [README.md](../README.md#常用命令) 里列出的命令，确认它们在你的仓库里真的能跑。
 
 > `.agents/skills/` 装了十四个技能，用不上的删掉。但**不要清空 `.agents/skills/`**：`skill-record` 会匹配不到任何文件，从而踩空语料规则。记得把你宿主的技能加载器指向 `.agents/skills/`：`description` 只是一个匹配条件，没人加载的目录就是一篇没人打开的文章。`tests/` 装的是本套件**自己的**契约测试（只用标准库 `unittest`）：它既是 [testing.md](testing.zh.md) 里的 Unit 命令，也是"这套设计真的有一条能跑起来的命令"的证明。
 

@@ -47,7 +47,7 @@ Long-lived tier: everything — the archive, rejected records, and postmortems j
 cp -r AGENTS.md CLAUDE.md .agents docs dev tools tests <your-repo>/
 ```
 
-Every document outside the exclusion table of [i18n.md](i18n.md#scope-and-exclusions) ships as a pair: each copy command brings `dev/README.md` together with its `dev/README.zh.md` and its `README.i18n.yaml`. Keep one language only if you must, delete the other side, and comment out the `i18n` surface check in the same change — an empty corpus is red, and a check nobody can satisfy is worse than no check. `CLAUDE.md` is a symlink to `AGENTS.md`, for a harness that reads that name; delete it if yours does not.
+Every document outside the exclusion table of [i18n.md](i18n.md#scope-and-exclusions) ships as a pair: each copy command brings `dev/README.md` together with its `dev/README.zh.md` and its `README.i18n.yaml`. Keep one language only if you must, delete the other side, and comment out the `i18n` surface check in the same change — an empty corpus is red, and a check nobody can satisfy is worse than no check. `CLAUDE.md` is a pointer to this kit's entry page, for a harness that reads that name; delete it if yours does not.
 
 > **The kit ships no records of its own.** Inside `.agents/notes/`, each lifecycle folder's `TEMPLATE.md` is the skeleton you copy, and under `dev/evidence/` the only file is `TEMPLATE.md`. A copy made from an older revision may still carry that revision's own decision history and its runs — those are not your project's, so delete them:
 
@@ -58,7 +58,7 @@ find dev/evidence -mindepth 1 -type f ! -name 'TEMPLATE.md' -delete
 
 > Every directory keeps its `TEMPLATE.md` afterwards, so the decision checks do not go red on an empty corpus. **For every stage you do not install, declare it `none` in [tools/tiers.json](../tools/tiers.json)** — the switch turns it into a declared absence, and the checks that own nothing but its home stop running ([the map](../dev/README.md) has the ladder). Leave the files there and the gate is red, which is the point: the switch states intent, the tree states fact.
 
-Then edit one file: put your project's real paths and real commands into [tools/workflow.json](../tools/workflow.json) — the surface patterns, each evidence command, and the check patterns — and self-check that configuration with `python3 tools/run-evidence.py --check`. Finally run the commands listed in [AGENTS.md](../AGENTS.md#commands) and confirm they really work in your repository.
+Then edit one file: put your project's real paths and real commands into [tools/workflow.json](../tools/workflow.json) — the surface patterns, each evidence command, and the check patterns — and self-check that configuration with `python3 tools/run-evidence.py --check`. Finally run the commands listed under [README.md](../README.md#常用命令) and confirm they really work in your repository.
 
 > `.agents/skills/` carries fourteen skills; delete the ones you do not use. **Do not empty `.agents/skills/`**, though: `skill-record` matches no file and fails the empty corpus. Point your host's skill loader at `.agents/skills/`: a `description` is only a matching condition, so a directory nothing loads is an article nobody opens. `tests/` holds the kit's **own** contract tests (standard-library `unittest` only): they are both the Unit command in [testing.md](testing.md) and the proof that this design has a command that really runs.
 

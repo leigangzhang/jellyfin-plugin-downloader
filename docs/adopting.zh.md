@@ -23,7 +23,7 @@
 5. 填掉根 `AGENTS.md` 里的那两个占位。
 6. 删掉用不上的技能，别让目录空掉，并把宿主的加载器指向它。
 7. `python3 tools/run-evidence.py --check` —— 解析不了的配置在跑之前就已经是红的。
-8. 跑 [AGENTS.md](../AGENTS.md#commands) 里的每一条命令，确认它在这里真的能跑。
+8. 跑 [README.md](../README.md#常用命令) 里的每一条命令，确认它在这里真的能跑。
 
 ## 不要做的
 

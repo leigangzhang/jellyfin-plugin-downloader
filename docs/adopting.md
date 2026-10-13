@@ -23,7 +23,7 @@ The "30-second start" in [kit.md](kit.md) assumes an empty repository. This page
 5. Fill the two placeholders in the root `AGENTS.md`.
 6. Delete the skills you will not use, leave the directory non-empty, and point your host's loader at it.
 7. `python3 tools/run-evidence.py --check` — a configuration that cannot resolve is red before anything runs.
-8. Run every command in [AGENTS.md](../AGENTS.md#commands) and confirm it really runs here.
+8. Run every command in [README.md](../README.md#常用命令) and confirm it really runs here.
 
 ## What not to do
 

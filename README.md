@@ -230,6 +230,23 @@ Jellyfin 的卸载按钮只删文件，程序集仍在内存里。重启 Jellyfi
 - **后端环境变量**：由插件注入 `JMD_MEDIA_ROOT`（媒体库根）与 `JMD_STAGING_ROOT`（暂存区），脚本读不到时才回落到默认值。
 - **手工验证**：取源打分链已有离线契约测试（`tests/test_backend_scoring.py` 等，跑 `python3 -m unittest discover -s tests`）；下载/验证/归档路径仍靠 `./uninstall.sh --verify-only`、Jellyfin 日志、面板快照三者交叉确认。
 
+### 常用命令
+
+```sh
+./build.sh                                        # 构建插件与内嵌的 Web 资源 -> ./out
+./install.sh                                      # 构建 + 停 Jellyfin + 覆盖 + 重启
+./uninstall.sh                                    # 干净卸载（不停服、不重启，带自检）
+python3 tools/change-scope.py --base origin/main  # 本次改动命中哪些改动面、各欠什么证据
+python3 tools/run-evidence.py --base origin/main  # 真的跑那些证据，给出三态判定
+python3 tools/check-invariants.py                 # 可执行约定
+python3 tools/check-invariants.py --self-test     # 证明每条检查都能变红
+python3 tools/gen-docs.py --check                 # docs/check-catalog.md 仍是当前投影
+python3 tools/pair-docs.py --check                # 每对双语文档齐全且同步
+python3 -m unittest discover -s tests             # 套件自己的契约测试
+```
+
+「通过」要说明它凭什么算证据：验收标准每条带编号并点名归属检查，新守卫要有人见过它红。
+
 ### 发一个新版本
 
 1. 改 `meta.json` 的 `version`（与 `csproj` 里的 `<Version>` 保持一致）；
