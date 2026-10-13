@@ -25,6 +25,7 @@ dropped.
 
 from __future__ import annotations
 
+import argparse
 import math
 import re
 
@@ -369,6 +370,18 @@ def structural_reject(candidate, policy):
     band, subtitles) is scored instead. What remains here would break the
     pipeline or fill the volume: unreadable metadata, a torrent with no usable
     video, or a single video beyond the disk-safety ceiling.
+
+    本模块对「文件清单」的依赖（与 `metadata_at` 的语义边界，见 t9 报告 F6/N7）：
+      * `metadata_at` 由 probe/search_pool 写在**池条目**上，含义只有一个——
+        **该候选的文件清单已被核实**（probe 从 swarm 真解析出 metadata，或索引
+        直接给出 `files`）。它不进候选字典，本模块也不读它。
+      * 本模块读的是那份清单的**投影**：`videos` / `main_video_gb` /
+        `main_video_ext` / `nfiles` / `junk_files`；下面的硬闸就是「投影里没有
+        ≥100MB 的可读视频 → 剔除」。所以「清单被核实」与「清单里有可播内容」
+        是两件事：前者由 `metadata_at` 表达，后者由 `videos` 表达。
+      * `metadata_missing` 是**另一条路径的**逃逸闸（submit 侧的 `--trust-magnet`：
+        提交时用迅雷自己的文件清单），backend 里没有任何生产者；本模块只在两处
+        消费它——这里的提前放行（不过硬闸）与总分 ×0.85（:734）。
     """
     if candidate.get("metadata_missing"):
         # --trust-magnet path: Thunder's own file list is used at submit time.
@@ -413,41 +426,206 @@ def _quality_score(candidate, attrs, target_mbps):
     return score, parts
 
 
-def _speed_score(candidate, policy):
-    measured = candidate.get("measured_speed_mbps")
+# 一次 10s 短窗口实测测不到，不等于这个种子慢：t3-speed.md 实测同一 info hash
+# 相邻两次 10s 探针的吞吐可差 26.3×（87.473 vs 3.327 MB/s），跨 hash 排序
+# ρ=-0.214。所以实测只能作为加分项，任何一次「0 字节 / 低吞吐」都不允许把候选
+# 压到它按 seeders 先验应得的分以下（t1-audit.md R1）。
+SPEED_MEASURED_MIN_MBPS = 0.001
+SPEED_UNMEASURED_NEUTRAL = 0.40
+SPEED_DEAD_SWARM = 0.05
+
+
+# 外部索引快照（第二磁力源 torrents-csv）的种子数折扣（t9 报告 F4 的接口契约）：
+#   * 字段语义（与 backend/search_pool.torrents_csv_to_candidate 对齐）：
+#       seeds / peers               —— announce 实测，只有 probe 能写；
+#       external_seeders            —— 外部索引快照的种子数（int，可能缺失/None）；
+#       external_seeders_age_days   —— 该快照比当前时刻旧多少天（float，可能缺失）。
+#   * 兜底条件：**announce 完全没有读数**（`seeds<=0 and peers<=0`）时才用外部值。
+#     注意这只是「先验」层面的优先级；`dead_swarm`（announce 报 external_peers==0）
+#     是更早的可达性判决：`_speed_score` 在算完之后直接返回 0.05，**外部值被忽略**。
+#     这是刻意设计，不是漏接线——生产控制台不传 `--no-live-check`，默认流程里这类
+#     候选会被 live-check 的 metadata 复核救回（metadata_verified=True → dead_swarm=False）；
+#     只有手工加 `--no-live-check` 的路径会看到「外部 5000 也被判 0.05」（t13 §3 实测）。
+#   * 快照 ≤7 天不打折；每多 1 天衰减 0.02，最低 0.5。
+#   * 折扣后的先验不得低于无信号中性 0.40：一片陈旧快照只说明「信息不可靠」，
+#     不能因此把一个候选判成「种子很慢」。
+EXTERNAL_SEEDERS_FRESH_DAYS = 7.0
+EXTERNAL_SEEDERS_DECAY_PER_DAY = 0.02
+EXTERNAL_SEEDERS_MIN_DISCOUNT = 0.5
+
+
+def _external_seeders_signal(candidate):
+    """外部快照的 (种子数, 年龄天数, 折扣)；缺失/None/非正值一律视为没有信号。"""
+    raw = candidate.get("external_seeders")
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if value <= 0:
+        return None
+    try:
+        age_days = float(candidate.get("external_seeders_age_days") or 0.0)
+    except (TypeError, ValueError):
+        age_days = 0.0
+    if age_days < 0:
+        # 负年龄是坏数据：按「刚刚快照」处理，而不是按未来时间放大折扣。
+        age_days = 0.0
+    over = max(age_days - EXTERNAL_SEEDERS_FRESH_DAYS, 0.0)
+    discount = max(
+        EXTERNAL_SEEDERS_MIN_DISCOUNT,
+        1.0 - EXTERNAL_SEEDERS_DECAY_PER_DAY * over,
+    )
+    return value, age_days, discount
+
+
+def _seed_signal(candidate, policy):
+    """速度先验的 (取值, 来源, 明细)。
+
+    来源优先级：``announce``（seeds/peers 有读数）→ ``external``（外部快照兜底，
+    仅当 announce **完全没有读数**）→ ``none``（无任何信号）。外部兜底值已经过
+    年龄折扣并抬到中性 0.40 之上。
+
+    这里只决定「先验」；``dead_swarm``（不可达判决）在 `_speed_score` 里晚于先验
+    但优先于它返回——见该函数的 dead-swarm 分支说明。
+    """
     seeds = float(candidate.get("seeds") or 0)
     peers = float(candidate.get("peers") or 0)
+    if seeds > 0 or peers > 0:
+        seeds_part = _log_score(seeds, policy["seeds_reference"])
+        peers_part = _log_score(peers, policy["peers_reference"])
+        return (
+            0.8 * seeds_part + 0.2 * peers_part,
+            "announce",
+            {"seeds": int(seeds), "peers": int(peers)},
+        )
+
+    external = _external_seeders_signal(candidate)
+    if external is None:
+        return 0.0, "none", {}
+
+    value, age_days, discount = external
+    curve = _log_score(value, policy["seeds_reference"])
+    prior = max(SPEED_UNMEASURED_NEUTRAL, discount * curve)
+    return (
+        prior,
+        "external",
+        {
+            "external_seeders": int(value),
+            "external_seeders_age_days": round(age_days, 2),
+            "external_seeders_discount": round(discount, 3),
+        },
+    )
+
+
+def _seeds_prior(candidate, policy):
+    """速度先验（0-1），同时是速度子分的下限。
+
+    被抽中测速的候选也要走这条曲线做 `max()`，因此「被抽中」不会比同 swarm 的
+    「没被抽中」更差。announce 无实测时由外部快照兜底（见 `_seed_signal`）。
+    """
+    return _seed_signal(candidate, policy)[0]
+
+
+def _usable_measurement(measured):
+    """可用的实测吞吐（MB/s）；0/None/≤0.001 一律视为「未测到」。"""
+    if measured is None:
+        return None
+    value = float(measured)
+    if value <= SPEED_MEASURED_MIN_MBPS:
+        return None
+    return value
+
+
+def _speed_floor(candidate, prior, has_signal):
+    """不测量时这个候选应得的速度分——实测永远不得低于它。
+
+    有任何种子信号（announce 实测或外部快照）时就是先验；毫无信号时是中性 0.40
+    （``unknown`` 分支的取值），否则一条「0.5MB/s」的实测会反过来把无信号候选
+    从 0.40 压到 0.15。
+    """
+    return prior if has_signal else SPEED_UNMEASURED_NEUTRAL
+
+
+def _speed_score(candidate, policy):
+    """速度子分：seeders 先验是下限，短窗口实测只能加分。
+
+    分支（`breakdown["speed"]["mode"]`，另给 `score_source` / `seed_source` 说明
+    分数由谁决定）：
+      * ``measured``        —— 有 >0.001MB/s 的实测：取 ``max(不测量时应得的分, 实测曲线)``，
+                               ``score_source`` = ``measured`` / ``seeds-prior`` / ``neutral``。
+      * ``unmeasured``      —— 元数据可解析但窗口内没测到吞吐（含 0/≤0.001 的实测）：
+                               ``max(0.40 中性, 先验)``。
+      * ``dead-swarm``      —— announce/live-check 判定不可达：仍是 0.05，**先验
+                               （含外部快照）在这里被忽略**——可达性判决优先于
+                               「有多少种子」的估计，且这是刻意设计（见文件头部
+                               EXTERNAL_SEEDERS_* 注释里的 `--no-live-check` 说明）。
+      * ``unknown``         —— 既没有 announce 实测也没有外部快照：中性 0.40。
+      * ``seeds`` / ``seeds-external`` —— 没被抽中测速，直接用先验；``seed_source``
+                               区分这条先验来自 announce 实测还是外部索引快照。
+    """
+    measured = _usable_measurement(candidate.get("measured_speed_mbps"))
+    seeds = float(candidate.get("seeds") or 0)
+    peers = float(candidate.get("peers") or 0)
+    prior, seed_source, signal = _seed_signal(candidate, policy)
+    has_signal = seed_source != "none"
+    floor = _speed_floor(candidate, prior, has_signal)
+    parts = {
+        "seeds_prior": round(prior, 4),
+        "speed_floor": round(floor, 4),
+        "seed_source": seed_source,
+    }
+    parts.update(signal)
+    if measured is None and candidate.get("measured_speed_mbps") is not None:
+        # 探针写了 0/≤0.001：诊断要留下「测过但不算证据」，分数不许被它影响。
+        parts["measured_discarded"] = round(
+            float(candidate.get("measured_speed_mbps") or 0.0), 3
+        )
 
     if measured is not None:
-        if measured <= 0.001:
-            return 0.02, {"mode": "measured", "measured_mbps": 0.0}
-        score = _log_score(measured, policy["speed_reference_mbps"])
-        return score, {
-            "mode": "measured",
-            "measured_mbps": round(float(measured), 3),
-        }
+        curve = _log_score(measured, policy["speed_reference_mbps"])
+        parts["mode"] = "measured"
+        parts["measured_mbps"] = round(measured, 3)
+        if curve >= floor:
+            parts["score_source"] = "measured"
+            return curve, parts
+        # 实测低于「不测量时应得的分」：只说明「这个窗口不快」，不足以把候选打低。
+        parts["score_source"] = "seeds-prior" if has_signal else "neutral"
+        return floor, parts
 
     if candidate.get("speed_unmeasured"):
-        # 元数据可解析（种子可达），但短窗口内没测到吞吐：按「未知」中性给分，
-        # 既不判死种也不按种子数估算（后者对迅雷可用、aria2 拉不动的种子会失真）。
-        return 0.40, {"mode": "unmeasured", "reason": "metadata ok, no throughput in window"}
+        # 元数据可解析（种子可达），但短窗口内没测到吞吐。既不判死种，也不能低于
+        # 同 swarm 的未抽中候选——后者正是改进前的逆激励。
+        parts["mode"] = "unmeasured"
+        parts["reason"] = "metadata ok, no throughput in window"
+        score = max(SPEED_UNMEASURED_NEUTRAL, prior)
+        parts["score_source"] = (
+            "seeds-prior" if prior > SPEED_UNMEASURED_NEUTRAL else "neutral"
+        )
+        return score, parts
 
     if candidate.get("dead_swarm"):
         # A live announce showed no peer that is not this machine, so the
         # torrent cannot even produce metadata, let alone download.
-        return 0.05, {"mode": "dead-swarm", "external_peers": 0}
+        parts["mode"] = "dead-swarm"
+        parts["external_peers"] = 0
+        parts["score_source"] = "dead-swarm"
+        return SPEED_DEAD_SWARM, parts
 
-    if seeds <= 0 and peers <= 0:
+    if not has_signal:
         # Tracker scrape failed or the torrent is brand new: unknown, not dead.
-        return 0.40, {"mode": "unknown", "seeds": 0, "peers": 0}
+        parts["mode"] = "unknown"
+        parts["seeds"] = 0
+        parts["peers"] = 0
+        parts["score_source"] = "neutral"
+        return SPEED_UNMEASURED_NEUTRAL, parts
 
-    seeds_part = _log_score(seeds, policy["seeds_reference"])
-    peers_part = _log_score(peers, policy["peers_reference"])
-    return 0.8 * seeds_part + 0.2 * peers_part, {
-        "mode": "seeds",
-        "seeds": int(seeds),
-        "peers": int(peers),
-    }
+    parts["mode"] = "seeds" if seed_source == "announce" else "seeds-external"
+    parts["seeds"] = int(seeds)
+    parts["peers"] = int(peers)
+    parts["score_source"] = "seeds-prior"
+    return prior, parts
 
 
 def _experience_score(candidate, attrs, policy):
@@ -673,3 +851,60 @@ def format_candidate_line(candidate, index=None):
         f"{'CHS' if candidate.get('has_chs') else '---'} "
         f"{str(candidate.get('name') or '')[:58]}"
     )
+
+
+def build_cli_parser():
+    """这个模块的 `--help` 入口（它本身是库，没有独立的打分 CLI）。
+
+    改动前 `python3 backend/candidate_score.py --help` 是空过（stdout 0 字节、
+    退出码 0），验收口径拿不到任何说明（t9 报告 F7）。这里把它变成可读描述：
+    说明维度、阈值与对外接口，`--show-weights` 顺带打印默认口径供人工核对。
+    """
+    parser = argparse.ArgumentParser(
+        prog="candidate_score.py",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "候选打分库：把四个维度合成一个 0-100 分。\n"
+            f"  画质 quality {DEFAULT_WEIGHTS['quality']:.2f}"
+            f"｜速度 speed {DEFAULT_WEIGHTS['speed']:.2f}"
+            f"｜观看体验 experience {DEFAULT_WEIGHTS['experience']:.2f}"
+            f"｜适配成本 fit {DEFAULT_WEIGHTS['fit']:.2f}\n"
+            "本文件是库，由 probe_magnets.py / console_server.py 导入使用，\n"
+            "没有独立的打分 CLI；--help 只说明这层契约。"
+        ),
+        epilog=(
+            "对外接口：normalize_policy / score_candidate / apply_score / "
+            "rank_candidates / structural_reject / score_band / "
+            "format_candidate_line"
+        ),
+    )
+    parser.add_argument(
+        "--show-weights",
+        action="store_true",
+        help="打印默认四维权重与分数阈值后退出（离线，便于核对口径）",
+    )
+    return parser
+
+
+def parse_args(argv=None):
+    return build_cli_parser().parse_args(argv)
+
+
+def main(argv=None):
+    args = parse_args(argv)
+    if args.show_weights:
+        print(
+            "默认权重: "
+            + " | ".join(f"{name} {value:.2f}" for name, value in DEFAULT_WEIGHTS.items())
+        )
+        print(
+            f"默认阈值: min_score {DEFAULT_MIN_SCORE:g}；"
+            f"band ≥75 优秀 / ≥60 良好 / ≥{DEFAULT_MIN_SCORE:g} 可接受"
+        )
+        return 0
+    build_cli_parser().print_help()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

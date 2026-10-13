@@ -43,12 +43,13 @@ The class set above is closed and adopted. This one is open and this project's o
 
 | Module | What it covers |
 |---|---|
-| `adoption` | Copying the kit in: what arrives, and what must not. |
+| `adoption` | Copying the kit in: what arrives, what must not. |
 | `docs` | The standing documents — kinds, placement, budgets, publication. |
 | `gates` | The check engine, the checks, the evidence they read. |
 | `i18n` | Paired documents: what pairs, and how the sides stay in step. |
 | `intent` | A goal becoming proposals — how many, of which class, judged by what. |
 | `lifecycle` | The eleven stations, the tier ladder, the version states. |
+| `ranking` | Finding candidates, scoring them, and deciding which one to take: the pool, the signals, the order. |
 | `records` | The records — rules, layout, taxonomy, titles, retirement. |
 | `testing` | Test infrastructure, the tiers, the flake policy. |
 | `trust` | The stance an agent takes toward its own signals. |

@@ -49,9 +49,30 @@ MIME = {
     ".svg": "image/svg+xml",
 }
 
-SEARCH_TIMEOUT = 1800  # probe（含 metadata 抓取 + 速度实测）可能很慢
+# 单轮时限口径（各阶段单位耗时来自 2026-10-13 实测，单轮总时长是按这些单位耗时推算的；
+# 原始数据见 /tmp/jmd-audit/t3-speed.md、t4-pipeline.md）：
+#   * probe 不再跑速度实测：10s 探针的重复散布 1.16–8.50×，不足以排序，
+#     而它的固定成本是 8 条 × 20–23s ≈ 160–184s（t3-speed.md §0/§2）。
+#   * 剩下的 probe 阶段：健康度 announce 0.5–0.9s/条（死 tracker 已剔除，最坏 24s 降到 3s）、
+#     metadata 命中池缓存 0s / 未命中 6.2–8.4s（失败 26.6s，4 并发）、live-check 已复用本轮
+#     metadata 时间戳，不再对同一 hash 抓第二次。
+#   * 一轮 probe 的耗时是**推算**（T4 的单位耗时 × 阶段次数，去探针后），不是本机实测：
+#     典型 ≈ 60–160s，最坏（metadata 全失败）≈ 300s。真实网络下的预算行为尚未跑过
+#     （见 t10/N4）；要把它升级成「实测」，得真跑一轮并把墙钟记进注释。
+# 所以 1800s 折算下来是 5–6 倍余量；收到 900s，并把 probe 自己的软预算压在其下，让它在被杀之前
+# 自己收工、把 partial 结果落盘（而不是整轮白跑）。
+SEARCH_TIMEOUT = 900
+PROBE_BUDGET_SECS = 720  # < SEARCH_TIMEOUT - 搜索/云盘阶段/进程收尾的余量
 SEARCH_POOL_TIMEOUT = 600
 VERIFY_TIMEOUT = 60
+
+# L1 搜索阶梯的墙钟上界（t10/N3 要求 ≤450s，且要小于 SEARCH_POOL_TIMEOUT 才有余量）：
+#   --max-queries 12 × --page-budget-secs 36 = 432s ≤ 450s；按 search_pool 的实际口径
+#   （它会把 8s 的外部渠道预留从每个关键词预算里扣掉）只有 12 × 28s + 8s ≈ 344s。
+#   两个值都必须显式传：不传 --page-budget-secs 会落到 search_pool 的默认 45s，
+#   12 × 45 = 540s 就贴着 600s 上限了（这正是 N3 记的那条余量不足）。
+L1_MAX_QUERIES = 12
+L1_KEYWORD_BUDGET_SECS = 36
 
 
 def _track(proc):
@@ -336,7 +357,7 @@ class Handler(BaseHTTPRequestHandler):
         key = bc.snapshot_key(slug, season)
         if not bc.valid_slug(key):
             return self._bad("invalid slug")
-        return self._ok(bc.build_snapshot(key))
+        return self._ok(_build_snapshot(key))
 
     # ---- search -----------------------------------------------------------
     def _api_search(self, body):
@@ -430,7 +451,7 @@ class Handler(BaseHTTPRequestHandler):
             "bytes": res.get("bytes", 0),
             "error": res.get("error", ""),
         }
-        return self._ok({"verify": verify, "snapshot": bc.build_snapshot(slug)})
+        return self._ok({"verify": verify, "snapshot": _build_snapshot(slug)})
 
     # ---- submit / watch / cleanup ----------------------------------------
     def _api_submit(self, body):
@@ -642,8 +663,13 @@ def _run_search_job(jid, p):
                     # 严格按季：跳过基础片名/年份/平台档位，只用季关键词，
                     # 避免基础片名把整部剧（其它季 + 同名片）都带进来
                     search_cmd += ["--strict-match"]
-                # 跑满阶梯：默认 --enough 12 会让基础片名查询提前收工
-                search_cmd += ["--enough", "40", "--max-queries", "12"]
+                # 跑满阶梯：默认 --enough 12 会让基础片名查询提前收工。
+                # 上界见 L1_MAX_QUERIES / L1_KEYWORD_BUDGET_SECS 的注释（≤450s）。
+                search_cmd += [
+                    "--enough", "40",
+                    "--max-queries", str(L1_MAX_QUERIES),
+                    "--page-budget-secs", str(L1_KEYWORD_BUDGET_SECS),
+                ]
             run_cli_stream(search_cmd, log, SEARCH_POOL_TIMEOUT)
 
         pan_cand = ""
@@ -661,13 +687,14 @@ def _run_search_job(jid, p):
                 except OSError:
                     pass
 
-        log("打分 + 实测速度（probe）…")
+        log("打分 + 校验 metadata（probe）…")
         probe_cmd = [
             "probe_magnets.py", p["title"],
             "--kind", p["probe_kind"],
             "--duration-minutes", str(p["duration"]),
             "--pool-file", p["pool_file"],
             "--json-out", p["probe_out"],
+            "--budget-secs", str(PROBE_BUDGET_SECS),
         ]
         if want_magnet:
             probe_cmd += ["--candidate-file", p["cand_file"]]
@@ -675,19 +702,37 @@ def _run_search_job(jid, p):
             probe_cmd += ["--allow-pansou"]
         if want_pan and pan_cand and os.path.isfile(pan_cand):
             probe_cmd += ["--extra-candidates", pan_cand]
-        probe_cmd += ["--speed-probe", "--speed-top", "8"]
+        # 不再传速度实测开关：10s 探针的重复散布 1.16–8.50×（t3-speed.md §0/§2），
+        # 排不动候选，却要固定付 8 条 × 20–23s。metadata 校验仍走 live-check
+        # （不传 --no-live-check 即保持默认开启）。
+        #
+        # `probe_out` 就是面板读的那份快照文件，而 probe 在「预算用尽 / 超时 /
+        # 无交付候选」时**不写**它（只把 PROBE_PARTIAL 打到 stdout）。所以先记下
+        # 本轮开始时刻，用「文件是不是本轮写过的」决定要不要 save_probe：只看
+        # os.path.isfile 会把上一轮的旧结果当成本轮结果回写、还刷新 mtime（t10/N2）。
+        probe_started_at = time.time()
         rc, lines = run_cli_stream(probe_cmd, log, SEARCH_TIMEOUT)
 
+        out_text = "\n".join(lines)
         probe = {}
-        if os.path.isfile(p["probe_out"]):
+        probe_written = _file_written_since(p["probe_out"], probe_started_at)
+        if probe_written:
             try:
                 with open(p["probe_out"], encoding="utf-8") as fh:
                     probe = json.load(fh)
             except (OSError, json.JSONDecodeError):
                 probe = {}
-        bc.save_probe(p["key"], probe)
+            bc.save_probe(p["key"], probe)
+        else:
+            # 本轮没有产出：不覆盖、不刷新上一份快照（历史留档），本轮的结果由
+            # 快照里的 probe_round_empty / partial 字段表达，而不是拿旧候选冒充。
+            log("本轮 probe 未写出新结果（超时/预算/无候选）→ 保留上一份快照")
+        partial, timeout_stage = _probe_partial(out_text)
+        # probe 自己写 JSON 的那条路径把 partial/timeout_stage 落在文件里，优先信它；
+        # 没写文件的那条路径只能从 stdout 的 PROBE_PARTIAL 读（见 _probe_partial）。
+        partial = bool(probe.get("partial")) or partial
+        timeout_stage = str(probe.get("timeout_stage") or timeout_stage)
 
-        out_text = "\n".join(lines)
         search_status = _search_status(out_text, probe, rc)
         ctx = {
             "title": p["title"], "kind": p["kind"], "year": p["year"],
@@ -696,14 +741,64 @@ def _run_search_job(jid, p):
             "exists": exists, "search_status": search_status, "sources": p.get("sources"),
             "original_title": p.get("original_title", ""),
             "strict_season": bool(p.get("strict_season", True)),
+            # 本轮状态写进 context.json（t15/F-T15-4）：否则快照里的
+            # probe_partial/probe_round_empty 只活在这一次 job 的内存里，任何从磁盘
+            # 重建快照的路径（/api/snapshot、/api/verify 之后）都会得到
+            # probe_partial=False + 上一轮候选，与 search_status=probe_partial 自相矛盾。
+            "probe_partial": bool(partial) or not probe_written,
+            "probe_timeout_stage": timeout_stage,
+            "probe_round_empty": not probe_written,
         }
         bc.save_context(p["key"], ctx)
-        snapshot = bc.build_snapshot(p["key"], probe=probe, ctx=ctx)
+        snapshot = _build_snapshot(p["key"], probe=probe, ctx=ctx)
         log(f"完成：{len(snapshot['candidates'])} 个候选（状态 {search_status}）")
         _job_finish(jid, snapshot=snapshot, slug=p["slug"], search_status=search_status)
     except Exception as exc:  # noqa: BLE001
         log(f"搜索异常：{exc}")
         _job_finish(jid, error=str(exc))
+
+
+def _file_written_since(path: str, since: float, slack: float = 1.0) -> bool:
+    """这份文件是不是在 `since` 之后被写过的。
+
+    用 mtime 而不是「文件存在」来判「本轮写过没有」，是为了区分「本轮真产出了
+    结果」与「这里躺着的还是上一轮的文件」。`slack` 给粗粒度文件系统时间戳留
+    一点余量；上一轮与本轮至少隔一次搜索（分钟级），不会被容差吃掉。
+    """
+    try:
+        return os.path.getmtime(path) >= since - slack
+    except OSError:
+        return False
+
+
+def _probe_partial(out_text: str) -> tuple:
+    """从 probe 的 stdout 里取 `PROBE_PARTIAL {...}` → (partial, timeout_stage)。
+
+    probe 在预算耗尽时把原因打到 stdout（JSON 那份只在有交付候选时写），
+    所以控制台必须从日志里读它，才能把「本轮早退」透给面板（t10/N1）。
+    """
+    prefix = "PROBE_PARTIAL"
+    for line in out_text.splitlines():
+        if line.startswith(prefix):
+            payload = line[len(prefix):].strip()
+            try:
+                data = json.loads(payload) if payload else {}
+            except json.JSONDecodeError:
+                data = {}
+            if not isinstance(data, dict):
+                data = {}
+            return True, str(data.get("timeout_stage") or "")
+    return False, ""
+
+
+def _build_snapshot(key, probe=None, ctx=None):
+    """组装快照。本轮状态（partial/timeout/round_empty）与「空轮候选标成上一轮」
+    都在 `build_console.build_snapshot` 里处理——它没拿到显式传参时回落到
+    context.json，所以这里每一个调用点（/api/snapshot、/api/verify、search job）
+    都得到同一结论（t15/F-T15-4）。
+    """
+    ctx = ctx if ctx is not None else bc.read_context(key)
+    return bc.build_snapshot(key, probe=probe, ctx=ctx)
 
 
 def _parse_exists(out: str) -> dict:
@@ -723,14 +818,19 @@ def _search_status(out: str, probe: dict, rc: int) -> str:
     if probe.get("best_dead_swarm"):
         return "best_dead_swarm"
     for token in (
-        "SWARM_DEAD", "METADATA_FAILED", "NO_ELIGIBLE_RESOURCE",
+        "SWARM_DEAD", "METADATA_FAILED", "PROBE_PARTIAL", "NO_ELIGIBLE_RESOURCE",
         "NO_CANDIDATES", "UNSUPPORTED_THUNDER_DIRECT_LINK",
         "BEST_BELOW_MIN_SCORE", "BEST_DEAD_SWARM",
     ):
         if token in out:
+            if token == "PROBE_PARTIAL" and (probe.get("ranked") or probe.get("best")):
+                # 有交付候选的一轮：状态按交付结果报（ok/below/…），「本轮早退」
+                # 由快照的 probe_partial 字段单独表达，不顶掉交付状态。
+                continue
             return {
                 "SWARM_DEAD": "swarm_dead",
                 "METADATA_FAILED": "metadata_failed",
+                "PROBE_PARTIAL": "probe_partial",
                 "NO_ELIGIBLE_RESOURCE": "no_eligible_resource",
                 "NO_CANDIDATES": "no_candidates",
                 "UNSUPPORTED_THUNDER_DIRECT_LINK": "unsupported",

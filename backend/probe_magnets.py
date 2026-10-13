@@ -18,6 +18,7 @@ are weighted preferences inside the score.
 import argparse
 import base64
 import concurrent.futures
+import copy
 import datetime as dt
 import hashlib
 import json
@@ -26,6 +27,7 @@ import re
 import socket
 import struct
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -48,23 +50,125 @@ from speed_probe import measure_torrent_speed
 PANSOU_API = os.environ.get(
     "PANSOU_API", "http://127.0.0.1:64056/api/search"
 )
+
+# Tracker 列表只保留本机实测可达的项（2026-10-13 实测，守卫在 tests/test_backend_probe.py）：
+#
+#   tracker.opentrackr.org:1337   announce ✓0.56s / scrape ✓0.71s（85B，含真实种子数）
+#   bt1.archive.org:6969          announce ✓0.49s / scrape ✗（HTTP 200 但返回空的 files 字典）
+#   tracker2.dler.org:80          announce ✓0.68s / scrape ✓0.73s（82B）
+#
+# 已剔除（留着只会把每条候选的最坏等待从 0.5s 拉到 8s）：
+#   explodie.org:6969             8.00s 超时
+#   tracker.openbittorrent.com:80 HTTP 403（TCP 通，announce 被拒）
+#   tracker.torrent.eu.org:451    连接被拒
 HTTP_TRACKERS = [
     "http://tracker.opentrackr.org:1337/scrape",
-    "http://explodie.org:6969/scrape",
-    "http://tracker.openbittorrent.com:80/scrape",
-    "http://tracker.torrent.eu.org:451/scrape",
+    "http://tracker2.dler.org:80/scrape",
 ]
 ANNOUNCE_TRACKERS = [
     "http://tracker.opentrackr.org:1337/announce",
-    "http://explodie.org:6969/announce",
-    "http://tracker.openbittorrent.com:80/announce",
-    "http://tracker.torrent.eu.org:451/announce",
+    "http://bt1.archive.org:6969/announce",
+    "http://tracker2.dler.org:80/announce",
 ]
+
+# DHT 是 metadata 的实际来源：同一份实测里，只用上面这几个 HTTP tracker 而把
+# DHT 关掉时，30s 内连 metadata 都拿不到（announce 有 peer 也没用）。所以
+# fetch_metadata 显式带上 --enable-dht=true —— 这条路径上不许关 DHT。
+ARIA2_DHT_FLAG = "--enable-dht=true"
+
+ANNOUNCE_TIMEOUT_SECONDS = 8
+SCRAPE_TIMEOUT_SECONDS = 5
+# 剩余预算低于这个值就不再发起新的网络调用：一个注定超时的请求只会把
+# 「软预算」变成「硬超时」，还不如直接把阶段标记成 timed out。
+# 各阶段的最小预算按实测单条耗时定（见 t3/t4 记录）：
+#   health    announce/scrape 实测 0.5–0.9s
+#   metadata  成功 6.19–8.44s（失败 26.6s），低于 5s 基本是白跑
+#   speed     单条探针实测 17.6–24.1s（metadata 12s + warmup 3s + 窗口 10s），
+#             下限取 25s，保证不会「开了头就超预算」
+MIN_NETWORK_BUDGET_SECONDS = 0.5
+MIN_HEALTH_BUDGET_SECONDS = 1.0
+MIN_METADATA_BUDGET_SECONDS = 5.0
+MIN_SPEED_BUDGET_SECONDS = 25.0
 
 METADATA_TTL_SECONDS = 7 * 24 * 3600
 HEALTH_TTL_SECONDS = 3600
 SPEED_TTL_SECONDS = 6 * 3600
 MIN_VIDEO_BYTES = 100 * 1024 ** 2
+
+# 池子会被 metadata 阶段的 worker 线程写入，同时主线程要逐条落盘；没有锁的话
+# json.dump 可能撞上 dict 变更（RuntimeError: dictionary changed size）。
+_POOL_LOCK = threading.Lock()
+
+
+class SoftBudget:
+    """整轮 probe 的挂钟软预算。
+
+    `--budget-secs 0`（默认）表示不限。一旦超出预算：
+      * 各阶段不再发起**新的**网络调用（已缓存的候选照常走完，因为它们不花钱）；
+      * 阶段名记进 `expired_stages`，第一个超时的阶段写进 `timeout_stage`；
+      * 调用方把 partial/timeout_stage 落进 probe JSON（池子照常逐条落盘），
+        而不是整轮白跑。
+
+    预算只管住「新工作」，不打断已经在跑的 fetch：所以取超时值时要把它
+    clamp 到剩余预算（见 fetch_metadata 的 deadline 参数），否则「软」预算
+    会退化成「每条最多 timeout+10s」的硬超时。
+    """
+
+    def __init__(self, total_seconds, clock=time.monotonic):
+        self._clock = clock
+        self.total_seconds = float(total_seconds or 0)
+        self.started_at = clock()
+        self.expired_stages = []
+        self.timeout_stage = ""
+
+    @property
+    def enabled(self):
+        return self.total_seconds > 0
+
+    @property
+    def deadline(self):
+        return self.started_at + self.total_seconds
+
+    def remaining(self):
+        if not self.enabled:
+            return float("inf")
+        return max(self.deadline - self._clock(), 0.0)
+
+    def out_of_time(self, stage, need=MIN_NETWORK_BUDGET_SECONDS):
+        """True when fewer than `need` seconds remain for starting `stage` work.
+
+        记下第一个「不够跑」的阶段，这样即使预算没归零也能报告 timeout_stage：
+        剩 3s 还去开一个 20s 的速度探针，本身就是注定超时。
+        """
+        if not self.enabled:
+            return False
+        if self.remaining() >= need:
+            return False
+        if not self.timeout_stage:
+            self.timeout_stage = stage
+        if stage not in self.expired_stages:
+            self.expired_stages.append(stage)
+        return True
+
+    def clamp_timeout(self, wanted):
+        """Per-call timeout never longer than the remaining budget."""
+        if not self.enabled:
+            return wanted
+        return max(min(float(wanted), self.remaining()), 0.0)
+
+
+class StageTimers:
+    """Per-stage wall clock, so `partial` claims are checkable instead of asserted."""
+
+    def __init__(self):
+        self.seconds = {}
+
+    def start(self):
+        return time.monotonic()
+
+    def done(self, name, started):
+        self.seconds[name] = round(time.monotonic() - started, 3)
+        return self.seconds[name]
 
 
 def bdecode(data, idx=0):
@@ -132,7 +236,7 @@ def parse_candidate(value):
     return None
 
 
-def scrape_tracker(tracker_url, info_hash_bytes):
+def scrape_tracker(tracker_url, info_hash_bytes, timeout=SCRAPE_TIMEOUT_SECONDS):
     separator = "&" if "?" in tracker_url else "?"
     url = (
         f"{tracker_url}{separator}info_hash="
@@ -143,7 +247,7 @@ def scrape_tracker(tracker_url, info_hash_bytes):
             url,
             headers={"User-Agent": "qBittorrent/4.6"},
         )
-        raw = urllib.request.urlopen(request, timeout=5).read()
+        raw = urllib.request.urlopen(request, timeout=timeout).read()
         decoded, _ = bdecode(raw)
         for info in decoded.get(b"files", {}).values():
             return (
@@ -155,14 +259,18 @@ def scrape_tracker(tracker_url, info_hash_bytes):
     return None
 
 
-def tracker_health(info_hash):
-    """Return (seeds, peers) from the first tracker that answers."""
+def tracker_health(info_hash, timeout=SCRAPE_TIMEOUT_SECONDS):
+    """Return (seeds, peers) from the first tracker that answers.
+
+    `timeout` is per tracker, not for the whole loop: the caller clamps it to the
+    remaining soft budget so a dead tracker cannot eat the round.
+    """
     try:
         info_hash_bytes = bytes.fromhex(info_hash)
     except ValueError:
         return 0, 0
     for tracker in HTTP_TRACKERS:
-        result = scrape_tracker(tracker, info_hash_bytes)
+        result = scrape_tracker(tracker, info_hash_bytes, timeout)
         if result:
             return result
     return 0, 0
@@ -194,13 +302,18 @@ def public_ip(timeout=5):
     return ip
 
 
-def announce_health(info_hash, own_ips=(), timeout=8):
+def announce_health(info_hash, own_ips=(), timeout=ANNOUNCE_TIMEOUT_SECONDS):
     """Real swarm health from an HTTP announce, excluding our own announces.
 
     A scrape only reports a cached number, and once this machine announces the
     tracker also counts *our* client (it shows up under the local public IP,
     and under the VPN exit IP when the tunnel is up). Announce instead, look at
     the actual peer list, and drop any peer that is us.
+
+    `event=stopped` is deliberately not sent: leaving a peer entry behind is
+    harmless here (nothing listens on 6881), while a second announce per
+    candidate would cost another 0.5-0.9s on the hot path this round is trying
+    to shorten.
     """
     try:
         info_hash_bytes = bytes.fromhex(info_hash)
@@ -289,8 +402,13 @@ def parse_show_files(output):
     return files
 
 
-def fetch_metadata(info_hash, timeout):
-    """Fetch torrent metadata through aria2c and summarize the file list."""
+def fetch_metadata(info_hash, timeout, deadline=None):
+    """Fetch torrent metadata through aria2c and summarize the file list.
+
+    `deadline` is an absolute time.monotonic() value (the soft budget's end).
+    The subprocess hard-kill slack is clamped to it, so a stuck aria2c cannot
+    outlive the round's budget by the usual `timeout + 10` seconds.
+    """
     magnet = f"magnet:?xt=urn:btih:{info_hash}"
     for tracker in ANNOUNCE_TRACKERS:
         magnet += f"&tr={urllib.parse.quote(tracker, safe='')}"
@@ -301,10 +419,15 @@ def fetch_metadata(info_hash, timeout):
     except FileNotFoundError:
         pass
 
+    hard_timeout = timeout + 10
+    if deadline is not None:
+        hard_timeout = max(min(hard_timeout, deadline - time.monotonic()), 1.0)
+
     try:
         subprocess.run(
             [
                 "aria2c",
+                ARIA2_DHT_FLAG,
                 "--bt-metadata-only=true",
                 "--bt-save-metadata=true",
                 "--seed-time=0",
@@ -317,7 +440,7 @@ def fetch_metadata(info_hash, timeout):
                 magnet,
             ],
             capture_output=True,
-            timeout=timeout + 10,
+            timeout=hard_timeout,
             check=False,
         )
         if not os.path.exists(out):
@@ -399,46 +522,77 @@ def load_pool(path):
     return {}
 
 
-def save_pool(path, entries, query=""):
+def write_json_atomic(path, payload, skip_label="JSON_WRITE_SKIPPED"):
+    """Write JSON through a temp file + os.replace.
+
+    The console reads `--json-out` right after the probe process ends, and the
+    process may also be killed mid-round; a direct write can leave a truncated
+    file that json.load turns into "no candidates". Rename is atomic on POSIX,
+    so a reader either sees the previous file or the complete new one.
+    """
     if not path:
         return
-    payload = {
-        "version": 1,
-        "query": query,
-        "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-        "entries": entries,
-    }
+    directory = os.path.dirname(os.path.abspath(path))
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        os.makedirs(directory, exist_ok=True)
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, ensure_ascii=False, indent=2)
         os.replace(tmp, path)
     except OSError as exc:
-        # A read-only pool directory must not stop a download.
-        print(f"POOL_WRITE_SKIPPED {exc}")
+        # A read-only pool/json directory must not stop a download.
+        print(f"{skip_label} {exc}")
+
+
+def save_pool(path, entries, query=""):
+    if not path:
+        return
+    with _POOL_LOCK:
+        # Snapshot under the lock: worker threads keep enriching the pool while
+        # the main thread lands each finished candidate.
+        snapshot = copy.deepcopy(entries)
+    payload = {
+        "version": 1,
+        "query": query,
+        "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "entries": snapshot,
+    }
+    write_json_atomic(path, payload, skip_label="POOL_WRITE_SKIPPED")
 
 
 def pool_metadata(pool, info_hash, now):
+    """池缓存的 metadata；「有戳但清单里没有可用视频」视为未命中。
+
+    判据与写入侧共用 `metadata_has_usable_video()`（N7 的单点定义）：`metadata_at`
+    代表「文件清单已核实」，所以一份 `videos: []` / `main_video_gb <= 0` 的条目
+    本来就不该带着这枚章。万一它还在（修复前写出的池文件、或别的写入者，
+    t15/F-T15-2 实测真实池里曾有 66 条），这里也必须当未命中——否则这一轮会直接
+    以「没有可读视频」把候选剔掉，连一次 metadata 抓取都不做（返回 None 后由
+    enrich 真的去 swarm 抓）。
+    """
     entry = pool.get(info_hash) or {}
     stamp = float(entry.get("metadata_at") or 0)
-    if stamp and now - stamp <= METADATA_TTL_SECONDS and entry.get("name"):
-        return {
-            "name": entry.get("name"),
-            "size_gb": entry.get("size_gb", 0.0),
-            "nfiles": entry.get("nfiles", 0),
-            "videos": entry.get("videos") or [],
-            "main_video_gb": entry.get("main_video_gb", 0.0),
-            "main_video_ext": entry.get("main_video_ext", ""),
-            "junk_files": entry.get("junk_files", 0),
-        }
-    return None
+    if not stamp or now - stamp > METADATA_TTL_SECONDS or not entry.get("name"):
+        return None
+    metadata = {
+        "name": entry.get("name"),
+        "size_gb": entry.get("size_gb", 0.0),
+        "nfiles": entry.get("nfiles", 0),
+        "videos": entry.get("videos") or [],
+        "main_video_gb": entry.get("main_video_gb", 0.0),
+        "main_video_ext": entry.get("main_video_ext", ""),
+        "junk_files": entry.get("junk_files", 0),
+    }
+    if not metadata_has_usable_video(metadata):
+        return None
+    return metadata
 
 
 def update_pool_entry(pool, info_hash, **fields):
-    entry = pool.setdefault(info_hash, {})
-    entry.update(fields)
-    return entry
+    with _POOL_LOCK:
+        entry = pool.setdefault(info_hash, {})
+        entry.update(fields)
+        return entry
 
 
 def build_policy(args, duration_seconds):
@@ -553,12 +707,43 @@ def dedupe(extracted):
     return order, sources
 
 
-def enrich(info_hash, timeout, duration_seconds, pool, now, refresh_meta):
+def metadata_has_usable_video(metadata):
+    """这份 metadata 的文件清单里有没有可交付的视频。
+
+    `metadata_at` 只描述一件事：**这份候选的文件清单已由 metadata 抓取核实**
+    （与 `search_pool.py` 开头的字段契约是同一定义）。清单里没有 ≥100MB 的视频
+    时候选不可交付，此时盖章会让 `pool_metadata` 在 7 天 TTL 内一直命中，
+    下一轮连抓都不抓就直接判 "no readable video file >=100MB in torrent
+    metadata"（t10/F1 的读取侧缺口）。所以写入规则与 `search_pool` 对齐：
+    没有可用视频就不写 `metadata_at`。
+    """
+    videos = metadata.get("videos") or []
+    if not videos:
+        return False
+    return float(metadata.get("main_video_gb") or 0) > 0
+
+
+def enrich(info_hash, timeout, duration_seconds, pool, now, refresh_meta, deadline=None):
+    """Metadata for one candidate: pool cache first, network only if allowed.
+
+    A cache hit costs nothing and always goes through, even past the budget —
+    that is what keeps the partial result useful. Only the network fetch is
+    gated, and it receives the budget deadline so aria2c cannot outlive it.
+
+    抓到 metadata 后只在 `metadata_has_usable_video()` 成立时写 `metadata_at`
+    （字段契约见该函数）；清单里没有可用视频的候选照写其余字段，但不盖缓存戳，
+    于是下一轮会重抓而不是被缓存成「已核实」。
+    """
     metadata = None if refresh_meta else pool_metadata(pool, info_hash, now)
     if metadata is None:
-        metadata = fetch_metadata(info_hash, timeout)
+        if deadline is not None and time.monotonic() >= deadline:
+            return None
+        metadata = fetch_metadata(info_hash, timeout, deadline=deadline)
         if metadata:
-            update_pool_entry(pool, info_hash, metadata_at=now, **metadata)
+            fields = dict(metadata)
+            if metadata_has_usable_video(metadata):
+                fields["metadata_at"] = now
+            update_pool_entry(pool, info_hash, **fields)
     if not metadata:
         return None
     enriched = dict(metadata)
@@ -572,11 +757,12 @@ def enrich(info_hash, timeout, duration_seconds, pool, now, refresh_meta):
 
 
 def _save_progress(pool_path, pool, query=""):
-    """每测完一条就落盘一次。
+    """每完成一条候选就落盘一次（metadata 阶段与速度实测阶段都调用）。
 
-    速度实测是整轮里最慢的一段（串行、每条最多 ~25s）。原来只在全流程末尾
-    存池子，搜索中途被杀（后端重启、超时）就把几分钟的实测结果全丢了；
-    现在逐条落盘，`measured_at` 有 6 小时 TTL，下次直接复用。
+    原来只在全流程末尾存池子：搜索中途被杀（后端重启、超时、预算耗尽）就把
+    已经付过网络代价的 metadata / 实测速度全丢了。现在逐条落盘（原子写，
+    控制台不会读到半写 JSON），`metadata_at` 有 7 天 TTL、`measured_at` 有 6
+    小时 TTL，下次直接复用。
     """
     if not pool_path:
         return
@@ -586,8 +772,13 @@ def _save_progress(pool_path, pool, query=""):
         print(f"  (进度落盘失败：{exc})", flush=True)
 
 
-def measure_speeds(ranked, pool, now, args, pool_path=""):
-    """Probe real throughput for the current leaders and fold it into the pool."""
+def measure_speeds(ranked, pool, now, args, pool_path="", budget=None):
+    """Probe real throughput for the current leaders and fold it into the pool.
+
+    `budget` (SoftBudget) stops the loop before starting a new probe once the
+    round is out of time; each probe already measured ~20s, so starting one
+    more cannot be afforded.
+    """
     targets = [
         item
         for item in ranked
@@ -602,6 +793,12 @@ def measure_speeds(ranked, pool, now, args, pool_path=""):
         return
     print(f"\nMeasuring real download speed for {len(targets)} candidates...")
     for index, candidate in enumerate(targets, start=1):
+        if budget is not None and budget.out_of_time("speed", MIN_SPEED_BUDGET_SECONDS):
+            print(
+                f"  [{index}/{len(targets)}] 软预算已用尽，跳过剩余测速"
+                f"（timeout_stage={budget.timeout_stage}）"
+            )
+            break
         measured = measure_torrent_speed(
             candidate["ih"],
             seconds=args.speed_seconds,
@@ -670,15 +867,30 @@ def is_fresh(pool, info_hash, field, ttl, now):
     return bool(stamp) and now - stamp <= ttl
 
 
-def verify_live(ranked, pool, now, args):
+def verify_live(ranked, pool, now, args, round_started_at=0.0, budget=None):
     """Prove the leaders can actually produce torrent metadata right now.
 
     Metadata that came from a search index says nothing about whether the
     swarm still exists: a pack with index metadata and no seeders scores well
     and then fails in Thunder with "种子解析失败". Fetching metadata from the
     swarm is the only honest check, so the leaders get one before submission.
+
+    但**同一轮里刚抓到的 metadata 就是这次 live 证明**：enrich 阶段已经从
+    swarm 取到并写了 `metadata_at=now`，再抓一次只是把同样的网络代价付第二遍
+    （T1 实测头部候选每轮至少 2 次 aria2c metadata 抓取）。所以只要
+    `metadata_at >= round_started_at`，就直接认定可达并写 `probe_ok_at`，
+    不再调用 fetch_metadata。
+
+    两个时间戳是两件事，定义只此一处（与 `search_pool.py` 的字段契约一致）：
+    `metadata_at` = **这份候选的文件清单已核实（且含可用视频）**；
+    `probe_ok_at` = **本轮证明过这个 hash 当前能产出 metadata**。写入规则见
+    `metadata_has_usable_video()`：清单里没有可用视频时不写 `metadata_at`
+    （所以「裸名字」的候选不会被缓存成已核实，也不会在这里被当作 live 证明）。
+
+    `budget`（SoftBudget）用尽时不再发起新的 metadata 抓取。
     """
     checked = 0
+    reused = 0
     for candidate in ranked:
         if checked >= max(args.live_check_top, 1):
             break
@@ -690,12 +902,33 @@ def verify_live(ranked, pool, now, args):
         if is_fresh(pool, info_hash, "probe_ok_at", args.live_check_ttl, now):
             candidate["metadata_verified"] = True
             continue
+        fetched_this_round = is_fresh(
+            pool, info_hash, "metadata_at", max(now - round_started_at, 0), now
+        ) if round_started_at else False
+        if fetched_this_round:
+            # 本轮 enrich 刚证明过可达，不再重复抓取。
+            candidate["metadata_verified"] = True
+            candidate["dead_swarm"] = False
+            reused += 1
+            update_pool_entry(pool, info_hash, probe_ok_at=now)
+            continue
+        if budget is not None and budget.out_of_time("live-check", MIN_METADATA_BUDGET_SECONDS):
+            print(
+                f"  软预算已用尽，跳过剩余 live-check"
+                f"（timeout_stage={budget.timeout_stage}）"
+            )
+            break
         checked += 1
-        metadata = fetch_metadata(info_hash, args.timeout)
+        deadline = budget.deadline if budget is not None and budget.enabled else None
+        metadata = fetch_metadata(info_hash, args.timeout, deadline=deadline)
         if metadata:
             candidate["metadata_verified"] = True
             candidate["dead_swarm"] = False
-            update_pool_entry(pool, info_hash, probe_ok_at=now)
+            fields = {"probe_ok_at": now}
+            if metadata_has_usable_video(metadata):
+                # 只有「清单里有可用视频」才盖章；否则下一轮应重抓（N7 单点定义）。
+                fields["metadata_at"] = now
+            update_pool_entry(pool, info_hash, **fields)
             print(f"  实测可解析元数据: {str(candidate.get('name'))[:56]}")
         else:
             candidate["metadata_verified"] = False
@@ -716,6 +949,7 @@ def verify_live(ranked, pool, now, args):
                     f"  无法解析元数据（迅雷同样会失败）: "
                     f"{str(candidate.get('name'))[:56]}"
                 )
+    return {"checked": checked, "reused_from_enrich": reused}
 
 
 def load_extra_candidates(path, policy):
@@ -855,6 +1089,17 @@ def parse_args():
         help="How many leading candidates to verify against the live swarm",
     )
     parser.add_argument("--live-check-ttl", type=int, default=3600)
+    parser.add_argument(
+        "--budget-secs",
+        type=float,
+        default=0.0,
+        help=(
+            "Soft wall-clock budget for the whole probe round (0 = unlimited). "
+            "Once exceeded, stages stop starting new network work, cached "
+            "candidates still finish, and the pool + JSON are landed with "
+            "partial/timeout_stage set."
+        ),
+    )
     parser.add_argument("--speed-seconds", type=int, default=10)
     parser.add_argument("--speed-warmup", type=int, default=3)
     parser.add_argument(
@@ -887,6 +1132,21 @@ def parse_args():
 
 def main():
     args = parse_args()
+    round_started_at = time.time()
+    budget = SoftBudget(args.budget_secs)
+    timers = StageTimers()
+    completed = {"health": 0, "metadata": 0, "live_check": 0, "speed": 0}
+    if budget.enabled:
+        print(
+            "软预算: "
+            + json.dumps(
+                {
+                    "budget_secs": budget.total_seconds,
+                    "note": "超出后各阶段不再发起新网络调用；已缓存的候选照常完成",
+                },
+                ensure_ascii=False,
+            )
+        )
     duration_seconds = args.duration_seconds
     if not duration_seconds:
         if args.duration_minutes:
@@ -959,7 +1219,19 @@ def main():
     )
 
     resources = []
-    own_ips = [public_ip()]
+    # 本机公网 IP 只在真的要 announce 时才查（它是一次 ≤5s 的 HTTP 调用，
+    # 而健康度全部命中缓存时根本用不到）。预算不够就不查，让 announce 自己去失败。
+    own_ips_cache = []
+
+    def own_ips():
+        if not own_ips_cache:
+            if budget.out_of_time("health", MIN_HEALTH_BUDGET_SECONDS):
+                return []
+            own_ips_cache.append(public_ip())
+        return own_ips_cache
+
+    health_started = timers.start()
+    health_timed_out = False
     for info_hash in order:
         entry = pool.get(info_hash) or {}
         seeds, peers = 0, 0
@@ -969,8 +1241,18 @@ def main():
             seeds = int(entry.get("seeds") or 0)
             peers = int(entry.get("peers") or 0)
             external_peers = entry.get("external_peers")
+            completed["health"] += 1
+        elif budget.out_of_time("health", MIN_HEALTH_BUDGET_SECONDS):
+            # 预算用尽：保留池里的旧值（可能为 0/None），不再发起 announce/scrape。
+            health_timed_out = True
+            seeds = int(entry.get("seeds") or 0)
+            peers = int(entry.get("peers") or 0)
+            external_peers = entry.get("external_peers")
+            health_method = health_method or "cached"
         else:
-            health = announce_health(info_hash, own_ips)
+            health = announce_health(
+                info_hash, own_ips(), timeout=budget.clamp_timeout(ANNOUNCE_TIMEOUT_SECONDS)
+            )
             if health:
                 # The tracker counts our own client too (once under the local
                 # public IP, once under the VPN exit); those are not seeders.
@@ -978,9 +1260,14 @@ def main():
                 peers = health["external_peers"]
                 external_peers = health["external_peers"]
                 health_method = "announce"
-            else:
-                seeds, peers = tracker_health(info_hash)
+            elif budget.remaining() >= MIN_NETWORK_BUDGET_SECONDS:
+                seeds, peers = tracker_health(
+                    info_hash, timeout=budget.clamp_timeout(SCRAPE_TIMEOUT_SECONDS)
+                )
                 health_method = "scrape"
+            else:
+                health_method = "budget-exhausted"
+            completed["health"] += 1
             update_pool_entry(
                 pool,
                 info_hash,
@@ -999,6 +1286,16 @@ def main():
             "external_peers": external_peers,
             "dead_swarm": external_peers == 0,
         }
+        # 外部索引快照（第二磁力源 torrents-csv）的种子数：probe 只负责把池里的
+        # 事实带进候选字典，打分侧在 announce 没有实测时才拿它兜底（契约见
+        # candidate_score._external_seeders_signal）。缺字段就**不写**这两个键：
+        # 这正是「缺失 = 与没有外部信号时逐位相同」的那条契约。
+        external_seeders = entry.get("external_seeders")
+        if external_seeders is not None:
+            resource["external_seeders"] = external_seeders
+            external_age = entry.get("external_seeders_age_days")
+            if external_age is not None:
+                resource["external_seeders_age_days"] = external_age
         if is_fresh(pool, info_hash, "measured_at", SPEED_TTL_SECONDS, now):
             resource["measured_speed_mbps"] = float(
                 entry.get("measured_speed_mbps") or 0.0
@@ -1013,6 +1310,9 @@ def main():
             f"  {info_hash[:16]}... seeds={seeds:4d} peers={peers:4d}"
             f" [{health_method or 'cached'}]{warning}"
         )
+    if health_timed_out:
+        print("  健康度阶段软预算用尽：剩余候选沿用池里的旧健康度")
+    timers.done("health", health_started)
 
     print(
         f"\nFetching metadata for {len(resources)} candidates "
@@ -1020,6 +1320,24 @@ def main():
     )
     enriched = []
     rejected = []
+    metadata_started = timers.start()
+    metadata_deadline = budget.deadline if budget.enabled else None
+    pending = []
+    skipped_for_budget = []
+    for resource in resources:
+        if budget.remaining() < MIN_METADATA_BUDGET_SECONDS:
+            # 预算不够跑一次 metadata 抓取：已缓存的候选照常提交（不花网络时间，
+            # enrich 只在需要联网时才看 deadline），未缓存的跳过并记账。
+            if not pool_metadata(pool, resource["ih"], now):
+                budget.out_of_time("metadata", MIN_METADATA_BUDGET_SECONDS)
+                skipped_for_budget.append(resource["ih"])
+                continue
+        pending.append(resource)
+    if skipped_for_budget:
+        print(
+            f"  软预算用尽：{len(skipped_for_budget)} 个未缓存候选跳过 metadata 抓取"
+            f"（timeout_stage={budget.timeout_stage}）"
+        )
     with concurrent.futures.ThreadPoolExecutor(
         max_workers=max(args.workers, 1)
     ) as executor:
@@ -1032,10 +1350,12 @@ def main():
                 pool,
                 now,
                 args.refresh_metadata,
+                metadata_deadline,
             ): resource
-            for resource in resources
+            for resource in pending
         }
-        for completed, future in enumerate(
+        total = len(pending)
+        for done, future in enumerate(
             concurrent.futures.as_completed(future_map), start=1
         ):
             resource = future_map[future]
@@ -1044,20 +1364,27 @@ def main():
             except Exception as exc:  # noqa: BLE001 - report, never crash the pool
                 metadata = None
                 resource["probe_error"] = str(exc)
+            # 每条一落盘：这一轮的 metadata 是付过网络代价的，不能等到末尾。
+            _save_progress(pool_path, pool, args.query)
             if not metadata:
                 reason = "metadata unavailable (no seeder or tracker response)"
+                probe_error = str(resource.get("probe_error") or "")
                 rejected.append(
                     {
                         "ih": resource["ih"],
                         "name": "",
                         "reason": reason,
+                        # F5：worker 里冒出来的真实异常不吞掉——reason 仍是分类用的
+                        # 固定文案（退出码 7/8 的判定依赖它），异常另开一个字段。
+                        "error": probe_error,
                     }
                 )
                 print(
-                    f"  [{completed}/{len(resources)}] SKIP {resource['ih'][:16]}... "
-                    f"{reason}"
+                    f"  [{done}/{total}] SKIP {resource['ih'][:16]}... "
+                    f"{reason}{(' :: ' + probe_error) if probe_error else ''}"
                 )
                 continue
+            completed["metadata"] += 1
             resource.update(metadata)
             reason = structural_reject(resource, policy)
             if reason:
@@ -1069,17 +1396,18 @@ def main():
                     }
                 )
                 print(
-                    f"  [{completed}/{len(resources)}] SKIP "
+                    f"  [{done}/{total}] SKIP "
                     f"{resource['main_video_gb']:6.2f}GB "
                     f"{str(resource.get('name'))[:50]} :: {reason}"
                 )
                 continue
             enriched.append(resource)
             print(
-                f"  [{completed}/{len(resources)}] KEEP "
+                f"  [{done}/{total}] KEEP "
                 f"{resource['main_video_gb']:6.2f}GB "
                 f"{str(resource.get('name'))[:60]}"
             )
+    timers.done("metadata", metadata_started)
 
     extras = load_extra_candidates(args.extra_candidates, policy)
     if not enriched and extras:
@@ -1087,6 +1415,24 @@ def main():
         extras = []
     if not enriched:
         save_pool(pool_path, pool, args.query)
+        # 这一轮没有产出可交付候选：池子已经落盘（partial 状态在里面），但
+        # --json-out 保持不写 —— 控制台据此保留上一份快照，退出码语义不变。
+        if budget.timeout_stage or skipped_for_budget:
+            print(
+                "PROBE_PARTIAL "
+                + json.dumps(
+                    {
+                        "timeout_stage": budget.timeout_stage,
+                        "expired_stages": budget.expired_stages,
+                        "budget_secs": budget.total_seconds,
+                        "skipped_uncached_metadata": len(skipped_for_budget),
+                        "elapsed_seconds": round(time.time() - round_started_at, 2),
+                        "completed": completed,
+                        "note": "预算用尽且没有可交付候选；池已落盘，未写 --json-out",
+                    },
+                    ensure_ascii=False,
+                )
+            )
         if rejected and all(
             item["reason"].startswith("metadata unavailable") for item in rejected
         ):
@@ -1138,21 +1484,54 @@ def main():
 
     ranked = rank_candidates(enriched, policy)
 
+    live_summary = {"checked": 0, "reused_from_enrich": 0}
     if args.live_check and any(item.get("ih") for item in ranked):
         print("\n校验头部候选能否真正解析元数据（迅雷的“种子解析失败”就出在这一步）...")
-        verify_live(ranked, pool, now, args)
+        live_started = timers.start()
+        live_summary = verify_live(
+            ranked, pool, now, args, round_started_at=round_started_at, budget=budget
+        )
+        timers.done("live_check", live_started)
+        completed["live_check"] = live_summary["checked"]
         ranked = rank_candidates(enriched, policy)
 
     if args.speed_probe:
-        measure_speeds(ranked, pool, now, args, pool_path=pool_path)
+        speed_started = timers.start()
+        measure_speeds(ranked, pool, now, args, pool_path=pool_path, budget=budget)
+        timers.done("speed", speed_started)
         ranked = rank_candidates(enriched, policy)
 
     save_pool(pool_path, pool, args.query)
+
+    timeout_stage = budget.timeout_stage
+    partial = bool(timeout_stage or skipped_for_budget)
+    if partial:
+        print(
+            "PROBE_PARTIAL "
+            + json.dumps(
+                {
+                    "timeout_stage": timeout_stage,
+                    "expired_stages": budget.expired_stages,
+                    "budget_secs": budget.total_seconds,
+                    "skipped_uncached_metadata": len(skipped_for_budget),
+                    "elapsed_seconds": round(time.time() - round_started_at, 2),
+                    "completed": completed,
+                },
+                ensure_ascii=False,
+            )
+        )
 
     best = ranked[0]
     output = {
         "query": args.query,
         "kind": args.kind,
+        "partial": partial,
+        "timeout_stage": timeout_stage,
+        "expired_stages": budget.expired_stages,
+        "budget_secs": budget.total_seconds,
+        "completed": completed,
+        "stage_seconds": timers.seconds,
+        "live_check": live_summary,
         "policy": {
             key: value
             for key, value in policy.items()
@@ -1217,8 +1596,7 @@ def main():
             "ih": best.get("ih") or best.get("id"),
             "name": best.get("name", ""),
         }
-        with open(args.json_out, "w", encoding="utf-8") as handle:
-            json.dump(output, handle, ensure_ascii=False, indent=2)
+        write_json_atomic(args.json_out, output)
         print(
             "BEST_BELOW_MIN_SCORE "
             + json.dumps(
@@ -1249,8 +1627,7 @@ def main():
             "reason": "metadata 不可达（dead-swarm），迅雷提交同样会种子解析失败",
             "next_step": "降级到下一级候选来源重新获取资源（L2 浏览器发现 magnet+云盘 / L3 Pansou 搜索 magnet+云盘）",
         }
-        with open(args.json_out, "w", encoding="utf-8") as handle:
-            json.dump(output, handle, ensure_ascii=False, indent=2)
+        write_json_atomic(args.json_out, output)
         print(
             "BEST_DEAD_SWARM "
             + json.dumps(
@@ -1269,8 +1646,7 @@ def main():
 
     output["best"] = output["ranked"][0]
     output["magnet"] = output["ranked"][0]["magnet"]
-    with open(args.json_out, "w", encoding="utf-8") as handle:
-        json.dump(output, handle, ensure_ascii=False, indent=2)
+    write_json_atomic(args.json_out, output)
 
     print("\nBEST_RESULT_JSON " + args.json_out)
     print(

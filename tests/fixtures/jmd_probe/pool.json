@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "query": "fixture",
+  "updated_at": "2026-01-01T00:00:00+00:00",
+  "_fixture_note": "夹具池的 metadata_at / health_at 使用远期哨兵值（2100-01-01）＝「永远新鲜」，这样按记录的命令直接跑 probe 也不会联网；需要冷池的用例自行把时间戳改写成 0/相对 now（N5，t10）。",
+  "entries": {
+    "1111111111111111111111111111111111111111": {
+      "name": "Fixture.Movie.Alpha.2024.1080p.WEB-DL.x264-TEST.mkv",
+      "size_gb": 7.5,
+      "nfiles": 1,
+      "videos": [
+        {
+          "index": 0,
+          "path": "Fixture.Movie.Alpha.2024.1080p.WEB-DL.x264-TEST.mkv",
+          "name": "Fixture.Movie.Alpha.2024.1080p.WEB-DL.x264-TEST.mkv",
+          "size": 8053063680
+        }
+      ],
+      "main_video_gb": 7.5,
+      "main_video_ext": ".mkv",
+      "junk_files": 0,
+      "junk_bytes": 0,
+      "metadata_at": 4102444800,
+      "health_at": 4102444800,
+      "seeds": 120,
+      "peers": 200,
+      "external_peers": 200,
+      "health_method": "announce"
+    },
+    "2222222222222222222222222222222222222222": {
+      "name": "Fixture.Movie.Beta.2023.2160p.WEB-DL.H265-TEST.mkv",
+      "size_gb": 12.0,
+      "nfiles": 1,
+      "videos": [
+        {
+          "index": 0,
+          "path": "Fixture.Movie.Beta.2023.2160p.WEB-DL.H265-TEST.mkv",
+          "name": "Fixture.Movie.Beta.2023.2160p.WEB-DL.H265-TEST.mkv",
+          "size": 12884901888
+        }
+      ],
+      "main_video_gb": 12.0,
+      "main_video_ext": ".mkv",
+      "junk_files": 0,
+      "junk_bytes": 0,
+      "metadata_at": 4102444800,
+      "health_at": 4102444800,
+      "seeds": 120,
+      "peers": 200,
+      "external_peers": 200,
+      "health_method": "announce"
+    },
+    "3333333333333333333333333333333333333333": {
+      "name": "Fixture.Movie.Gamma.2022.720p.HDTV.x264-TEST.mkv",
+      "size_gb": 2.5,
+      "nfiles": 1,
+      "videos": [
+        {
+          "index": 0,
+          "path": "Fixture.Movie.Gamma.2022.720p.HDTV.x264-TEST.mkv",
+          "name": "Fixture.Movie.Gamma.2022.720p.HDTV.x264-TEST.mkv",
+          "size": 2684354560
+        }
+      ],
+      "main_video_gb": 2.5,
+      "main_video_ext": ".mkv",
+      "junk_files": 0,
+      "junk_bytes": 0,
+      "metadata_at": 4102444800,
+      "health_at": 4102444800,
+      "seeds": 120,
+      "peers": 200,
+      "external_peers": 200,
+      "health_method": "announce"
+    }
+  }
+}

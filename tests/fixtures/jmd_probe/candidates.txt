@@ -1,0 +1,4 @@
+# 合成的离线夹具：假 info hash + 假 pool，任何真实种子都与之无关
+magnet:?xt=urn:btih:1111111111111111111111111111111111111111&dn=fixture
+magnet:?xt=urn:btih:2222222222222222222222222222222222222222&dn=fixture
+magnet:?xt=urn:btih:3333333333333333333333333333333333333333&dn=fixture

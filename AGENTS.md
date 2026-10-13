@@ -99,8 +99,8 @@ python3 -m unittest discover -s tests             # 套件自己的契约测试
   `./uninstall.sh` 加 `--verify-only` 可给确定结论。
 - **日志反复出现拉图标失败**：本地插件仓库拉图标失败，纯外观问题，不影响功能。
 - **面板提示后端未运行**：看配置页的 Python 解释器与端口；端口被占用时换个端口，插件会自动重启后端。
-- **没有自动化测试**：目前靠 `./uninstall.sh` 的自检、Jellyfin 日志、面板快照三者交叉确认。
-  （这是当前事实，不是推荐做法。）
+- **测试覆盖是分层的**：取源打分链有离线契约测试（`tests/test_backend_scoring.py`、`tests/test_backend_sources.py`、`tests/test_backend_probe.py`，跑 `python3 -m unittest discover -s tests`）；下载/验证/归档路径仍靠 `./uninstall.sh` 的自检、Jellyfin 日志、面板快照三者交叉确认。
+  （补齐下载/验证路径的自动化测试仍是推荐做法。）
 
 ## 发版
 

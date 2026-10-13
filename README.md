@@ -228,7 +228,7 @@ Jellyfin 的卸载按钮只删文件，程序集仍在内存里。重启 Jellyfi
 - **打分**：四维权重在 `backend/candidate_score.py` 的 `DEFAULT_WEIGHTS`；改完只需重装后端（`install.sh` 会带上 `backend/`）。
 - **后端边界**：`backend/` 是随插件走的自包含副本，数据根固定为 `backend/state/`（可用 `JMD_DATA_DIR` 覆盖），与作者本机的下载 skill 完全隔离，互不读写。
 - **后端环境变量**：由插件注入 `JMD_MEDIA_ROOT`（媒体库根）与 `JMD_STAGING_ROOT`（暂存区），脚本读不到时才回落到默认值。
-- **手工验证**：目前没有自动化测试，靠 `./uninstall.sh --verify-only`、Jellyfin 日志、面板快照三者交叉确认。
+- **手工验证**：取源打分链已有离线契约测试（`tests/test_backend_scoring.py` 等，跑 `python3 -m unittest discover -s tests`）；下载/验证/归档路径仍靠 `./uninstall.sh --verify-only`、Jellyfin 日志、面板快照三者交叉确认。
 
 ### 发一个新版本
 

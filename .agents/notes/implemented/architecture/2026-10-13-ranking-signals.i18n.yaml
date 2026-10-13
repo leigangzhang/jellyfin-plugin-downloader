@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-10-13-ranking-signals.md (docs/i18n.md): per heading section, a hash
+# of its English and Chinese blocks outside fenced code blocks.
+# After editing either side, bring the other along and re-record with:
+#   python3 tools/pair-docs.py --write .agents/notes/implemented/architecture/2026-10-13-ranking-signals.md
+/decision-ranking-signals-external-seeders-carry-the-speed-signal-a-measurement-only-adds:
+  en: 7428370b87114b12
+  zh: 62e26b8fbe4d2a41
+/decision-ranking-signals-external-seeders-carry-the-speed-signal-a-measurement-only-adds/problem:
+  en: 6a0962a23864f528
+  zh: 9339b4314d41d203
+/decision-ranking-signals-external-seeders-carry-the-speed-signal-a-measurement-only-adds/decision:
+  en: c35d7252eb8e8674
+  zh: 3ec1c466b6c79d5d
+/decision-ranking-signals-external-seeders-carry-the-speed-signal-a-measurement-only-adds/alternatives-considered:
+  en: cc442bb8fee5d764
+  zh: 3a9ec3de61a8384a
+/decision-ranking-signals-external-seeders-carry-the-speed-signal-a-measurement-only-adds/consequences:
+  en: 3ef38e3cfa9c86f5
+  zh: 937e3a8afb681219
+/decision-ranking-signals-external-seeders-carry-the-speed-signal-a-measurement-only-adds/testing:
+  en: 13c16d4dc848c83b
+  zh: 6969fc23d4271bab

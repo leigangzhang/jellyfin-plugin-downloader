@@ -461,9 +461,39 @@ def rescore_entry(probe: dict, key: str, measured_speed_mbps: float) -> dict | N
     return None
 
 
-def build_snapshot(slug: str, probe: dict | None = None, ctx: dict | None = None) -> dict:
+def build_snapshot(
+    slug: str,
+    probe: dict | None = None,
+    ctx: dict | None = None,
+    probe_partial: bool | None = None,
+    probe_timeout_stage: str | None = None,
+    probe_round_empty: bool | None = None,
+) -> dict:
+    """把 probe JSON + context 组装成面板快照。
+
+    本轮状态（`probe_partial` / `probe_timeout_stage` / `probe_round_empty`）有两处来源，
+    显式传参优先，没传就回落到 `context.json`：
+
+    * 显式传参 = 那一轮 search job 在内存里遇到的状态（`_run_search_job` 传的是本轮
+      刚从 probe stdout / JSON 读到的值）；
+    * `context.json` = 同一份状态在磁盘上的留档，`save_context` 与快照同轮写入
+      （t15/F-T15-4）。
+
+    这样 `build_snapshot(slug)` 从磁盘重建时不会出现「`probe_partial=False` 却配着
+    上一轮 candidates + `search_status=probe_partial`」的自相矛盾；空轮时磁盘上那份
+    候选是上一轮的，一律打 `previous_round=True`，面板不会把它当成刚搜到的结果。
+    """
     probe = probe if probe is not None else read_probe(slug)
     ctx = ctx if ctx is not None else read_context(slug)
+    partial = (
+        bool(ctx.get("probe_partial")) if probe_partial is None else bool(probe_partial)
+    ) or bool(probe.get("partial"))
+    timeout_stage = probe.get("timeout_stage") or (
+        ctx.get("probe_timeout_stage") if probe_timeout_stage is None else probe_timeout_stage
+    ) or ""
+    round_empty = (
+        bool(ctx.get("probe_round_empty")) if probe_round_empty is None else bool(probe_round_empty)
+    )
     marks = read_marks(slug)
     ranked = probe.get("ranked") or []
     pan_codes = read_pan_map(slug)
@@ -487,6 +517,12 @@ def build_snapshot(slug: str, probe: dict | None = None, ctx: dict | None = None
             cand["covers_episode"] = covers_episode(cand, season_number, episode_number)
             cand["single_episode"] = single_episode_match(cand, season_number, episode_number)
         candidates.append(cand)
+
+    if round_empty:
+        # 空轮：磁盘上这份 ranked 是上一轮的（本轮没写出 probe 结果），标出来，
+        # 别让它冒充本轮搜到的候选。
+        for candidate in candidates:
+            candidate["previous_round"] = True
 
     try:
         active = active_download_snapshot()
@@ -515,6 +551,10 @@ def build_snapshot(slug: str, probe: dict | None = None, ctx: dict | None = None
         "min_score": probe.get("min_score"),
         "pool_file": probe.get("pool_file") or "",
         "search_status": ctx.get("search_status", ""),
+        "probe_partial": partial or round_empty,
+        "probe_timeout_stage": timeout_stage,
+        "probe_expired_stages": probe.get("expired_stages") or [],
+        "probe_round_empty": round_empty,
         "tasks": list_thunder_tasks(),
         "watches": list_watches(),
         "active": active,

@@ -1,0 +1,49 @@
+{
+  "exit_code": 0,
+  "ranked": [
+    {
+      "rank": 1,
+      "ih": "1111111111111111111111111111111111111111",
+      "score": 90.83,
+      "band": "优秀",
+      "dimensions": {
+        "quality": 91.39,
+        "speed": 100.0,
+        "experience": 76.0,
+        "fit": 100.0
+      },
+      "seeds": 120,
+      "main_video_gb": 7.5
+    },
+    {
+      "rank": 2,
+      "ih": "2222222222222222222222222222222222222222",
+      "score": 85.36,
+      "band": "优秀",
+      "dimensions": {
+        "quality": 90.34,
+        "speed": 100.0,
+        "experience": 76.0,
+        "fit": 57.4
+      },
+      "seeds": 120,
+      "main_video_gb": 12.0
+    },
+    {
+      "rank": 3,
+      "ih": "3333333333333333333333333333333333333333",
+      "score": 74.49,
+      "band": "良好",
+      "dimensions": {
+        "quality": 65.2,
+        "speed": 100.0,
+        "experience": 76.0,
+        "fit": 38.05
+      },
+      "seeds": 120,
+      "main_video_gb": 2.5
+    }
+  ],
+  "best_ih": "1111111111111111111111111111111111111111",
+  "rejected": []
+}

@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-10-13-testing-suite-isolation.md (docs/i18n.md): per heading section, a hash
+# of its English and Chinese blocks outside fenced code blocks.
+# After editing either side, bring the other along and re-record with:
+#   python3 tools/pair-docs.py --write .agents/notes/implemented/testing/2026-10-13-testing-suite-isolation.md
+/decision-test-suite-isolation-stub-the-http-boundary-and-make-the-stub-prove-it-was-called:
+  en: 9f3f3cbb2498eb7c
+  zh: 65f3b5a34d250db9
+/decision-test-suite-isolation-stub-the-http-boundary-and-make-the-stub-prove-it-was-called/problem:
+  en: 09be16663a82a7fc
+  zh: 8b92c88f5ea07545
+/decision-test-suite-isolation-stub-the-http-boundary-and-make-the-stub-prove-it-was-called/decision:
+  en: 0e52a198aaff4920
+  zh: 5bdbdbfb562eb22c
+/decision-test-suite-isolation-stub-the-http-boundary-and-make-the-stub-prove-it-was-called/alternatives-considered:
+  en: e6678648c4935c65
+  zh: b5dbd2df4e5443d7
+/decision-test-suite-isolation-stub-the-http-boundary-and-make-the-stub-prove-it-was-called/consequences:
+  en: af91887d4f07915f
+  zh: 5e4fbe9d25bad386
+/decision-test-suite-isolation-stub-the-http-boundary-and-make-the-stub-prove-it-was-called/testing:
+  en: 2d99e1336df51c8c
+  zh: 4ee6786f0f62420a

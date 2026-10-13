@@ -1,0 +1,178 @@
+{
+  "note": "速度子分级 golden：与 backend/candidate_score.py 的 _speed_score 契约同步；由 tests/test_backend_scoring.py 逐条断言（speed 为 0-100 的子分）。",
+  "policy": {
+    "kind": "movie",
+    "duration_seconds": 7200
+  },
+  "cases": [
+    {
+      "id": "uncounted-strong-swarm",
+      "why": "有强 swarm 但没被抽中测速：直接用种子先验",
+      "candidate": {
+        "seeds": 141,
+        "peers": 200
+      },
+      "expect": {
+        "speed": 100.0,
+        "mode": "seeds",
+        "score_source": "seeds-prior"
+      }
+    },
+    {
+      "id": "counted-window-zero",
+      "why": "被抽中、窗口内 0 字节：必须不低于同 swarm 的未抽中候选",
+      "candidate": {
+        "seeds": 141,
+        "peers": 200,
+        "measured_speed_mbps": 0.0,
+        "speed_unmeasured": true
+      },
+      "expect": {
+        "speed": 100.0,
+        "mode": "unmeasured",
+        "score_source": "seeds-prior"
+      }
+    },
+    {
+      "id": "counted-zero-no-flag",
+      "why": "只写了 measured=0.0、没带 speed_unmeasured：仍按未测到处理",
+      "candidate": {
+        "seeds": 141,
+        "peers": 200,
+        "measured_speed_mbps": 0.0
+      },
+      "expect": {
+        "speed": 100.0,
+        "mode": "seeds",
+        "score_source": "seeds-prior"
+      }
+    },
+    {
+      "id": "counted-huge",
+      "why": "实测极大值：实测曲线封顶 1.0，采纳实测",
+      "candidate": {
+        "seeds": 141,
+        "peers": 200,
+        "measured_speed_mbps": 1000000.0
+      },
+      "expect": {
+        "speed": 100.0,
+        "mode": "measured",
+        "score_source": "measured"
+      }
+    },
+    {
+      "id": "counted-slow-weak-swarm",
+      "why": "弱 swarm 实测 3.5MB/s：实测高于先验，采纳实测（加分）",
+      "candidate": {
+        "seeds": 8,
+        "peers": 10,
+        "measured_speed_mbps": 3.5,
+        "speed_unmeasured": true
+      },
+      "expect": {
+        "speed": 54.25,
+        "mode": "measured",
+        "score_source": "measured"
+      }
+    },
+    {
+      "id": "counted-slow-strong-swarm",
+      "why": "强 swarm 实测 3.5MB/s：实测低于先验，分数保持先验（不减分）",
+      "candidate": {
+        "seeds": 141,
+        "peers": 200,
+        "measured_speed_mbps": 3.5,
+        "speed_unmeasured": true
+      },
+      "expect": {
+        "speed": 100.0,
+        "mode": "measured",
+        "score_source": "seeds-prior"
+      }
+    },
+    {
+      "id": "weak-swarm-uncounted",
+      "why": "1 个种子的未抽中候选：先验只有 0.14",
+      "candidate": {
+        "seeds": 1,
+        "peers": 0
+      },
+      "expect": {
+        "speed": 11.56,
+        "mode": "seeds",
+        "score_source": "seeds-prior"
+      }
+    },
+    {
+      "id": "weak-swarm-counted-zero",
+      "why": "1 个种子的被抽中候选：取中性 0.40 下限，不低于未抽中",
+      "candidate": {
+        "seeds": 1,
+        "peers": 0,
+        "measured_speed_mbps": 0.0,
+        "speed_unmeasured": true
+      },
+      "expect": {
+        "speed": 40.0,
+        "mode": "unmeasured",
+        "score_source": "neutral"
+      }
+    },
+    {
+      "id": "no-signal-uncounted",
+      "why": "完全没有 swarm 数据：中性 0.40",
+      "candidate": {
+        "seeds": 0,
+        "peers": 0
+      },
+      "expect": {
+        "speed": 40.0,
+        "mode": "unknown",
+        "score_source": "neutral"
+      }
+    },
+    {
+      "id": "no-signal-measured-slow",
+      "why": "无 swarm 数据 + 实测 0.5MB/s：不得低于中性 0.40",
+      "candidate": {
+        "seeds": 0,
+        "peers": 0,
+        "measured_speed_mbps": 0.5
+      },
+      "expect": {
+        "speed": 40.0,
+        "mode": "measured",
+        "score_source": "neutral"
+      }
+    },
+    {
+      "id": "no-signal-measured-fast",
+      "why": "无 swarm 数据 + 实测 15MB/s：实测封顶，采纳实测",
+      "candidate": {
+        "seeds": 0,
+        "peers": 0,
+        "measured_speed_mbps": 15.0
+      },
+      "expect": {
+        "speed": 100.0,
+        "mode": "measured",
+        "score_source": "measured"
+      }
+    },
+    {
+      "id": "dead-swarm",
+      "why": "announce 判定不可达：仍是 0.05",
+      "candidate": {
+        "seeds": 141,
+        "peers": 200,
+        "dead_swarm": true
+      },
+      "expect": {
+        "speed": 5.0,
+        "mode": "dead-swarm",
+        "score_source": "dead-swarm"
+      }
+    }
+  ]
+}
