@@ -562,7 +562,13 @@ def query_tasks_for_dir(download_dir, active_only=False):
 
 
 def prune_orphan_residue(download_dir, dry_run=True, protected_dirs=None):
-    """Remove inactive Thunder artifacts and empty release directories."""
+    """Remove Thunder artifacts that **no task references**, plus empty release dirs.
+
+    "Orphan" means no row in Thunder's task database points at it — not "the task is
+    idle". A paused or failed task (state=4) is a task the user still wants, and its
+    `.magent_<UUID>.torrent` is what resume needs; treating it as residue destroyed one
+    download set on 2026-10-13 (see the guard below).
+    """
     target = os.path.realpath(download_dir)
     if not os.path.isdir(target):
         return {"files": [], "dirs": [], "bytes": 0, "protected": []}
@@ -573,13 +579,25 @@ def prune_orphan_residue(download_dir, dry_run=True, protected_dirs=None):
     protected.update(
         os.path.realpath(path) for path in (protected_dirs or [])
     )
-    for row in query_tasks_for_dir(target, active_only=True):
+    for row in query_tasks_for_dir(target, active_only=False):
         param = json.loads(row.get("create_param") or "{}")
         info_hash = (param.get("info_hash") or "").upper()
         names = task_file_names(row)
-        protected.update(
-            find_release_dirs(target, info_hash, names) if info_hash else []
-        )
+        if info_hash:
+            protected.update(find_release_dirs(target, info_hash, names))
+        # 保护范围：**任何**仍被迅雷 DB 引用的任务目录，不论 state。
+        #
+        # 这里原先是 `active_only=True`，它把 state 不在 (0,1,2) 的任务排除在保护之外——
+        # 而迅雷的 state=4 是「失败/暂停」，正是使用者还想要、还会点「继续下载」的任务。
+        # 2026-10-13 现场：三个 state=4 的任务被当成残留，其专属目录连同
+        # `.magent_<UUID>.torrent` 一起被 os.remove 永久删除（不进废纸篓），
+        # 之后恢复下载即报「获取种子文件失败，无法继续下载」，数据无法找回。
+        # 结论：任务只要还在 DB 里，它脚下的目录就不是残留——「不活动」不等于「不要了」。
+        task_name = param.get("file_name") or ""
+        if task_name:
+            task_dir = os.path.realpath(os.path.join(target, task_name))
+            if path_is_within(task_dir, target):
+                protected.add(task_dir)
 
     def protected_path(path):
         real = os.path.realpath(path)

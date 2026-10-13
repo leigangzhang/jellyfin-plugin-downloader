@@ -41,9 +41,14 @@ def main():
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
+        "--allow-task-deletion",
         "--force",
+        dest="allow_task_deletion",
         action="store_true",
-        help="Allow cleanup when the task appears complete",
+        help=(
+            "Explicitly allow deleting a task that still exists in Thunder's database "
+            "(default: refuse, whatever its state — a paused/failed task is still wanted)"
+        ),
     )
     args = parser.parse_args()
 
@@ -99,15 +104,27 @@ def main():
         task = rows[0] if rows else None
         if task:
             status = task_status(task)
-            if (
-                status["state"] in (3, 4)
-                and status["pct"] > 99.5
-                and not args.force
-            ):
+            # 任何仍存在于迅雷 DB 里的任务都不再自动清理——不论 state。
+            #
+            # 原先的条件是 `state in (3,4) and pct > 99.5 and not force`：
+            # 只有「已完成/失败**且**进度 >99.5%」才拒删，于是 state=4（失败/暂停）
+            # 且进度很低的任务正好落在漏洞里被删掉——2026-10-13 三个任务即如此，
+            # 其 `.magent_<UUID>.torrent` 与目录被永久删除，恢复下载报「获取种子文件失败」。
+            # 新口径：任务还在 DB 里就是「还要的」，清理必须显式绕过
+            # （--allow-task-deletion），否则一律拒删。
+            if not args.allow_task_deletion:
                 print(
-                    "REFUSING_TO_DELETE_COMPLETE_TASK "
+                    "REFUSING_TO_DELETE_REFERENCED_TASK "
                     + json.dumps(
-                        {"taskid": status["taskid"], "progress": status["pct"]},
+                        {
+                            "taskid": status["taskid"],
+                            "state": status["state"],
+                            "progress": status["pct"],
+                            "reason": (
+                                "task still exists in the Thunder database; "
+                                "pass --allow-task-deletion to remove it anyway"
+                            ),
+                        },
                         ensure_ascii=False,
                     )
                 )
