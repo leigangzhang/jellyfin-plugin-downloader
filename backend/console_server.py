@@ -390,6 +390,10 @@ class Handler(BaseHTTPRequestHandler):
         if not valid_target_dir(final_dir):
             return self._bad("final_dir must be inside staging or Media")
 
+        # 候选文件按**本轮**命名：同名标题连开两轮（同一季重搜、或不同季但同一个 slug）
+        # 不会互相读到对方的候选。原来固定 `/tmp/<slug>.magnets`，只能靠 mtime 判断
+        # 「是不是本轮写的」，而两个写者并发时那条判定就失效了（复核第二轮 F3）。
+        jid = _new_job()
         params = {
             "title": title, "kind": kind, "slug": slug, "duration": duration,
             "year": year, "alt_title": alt_title, "season": season, "episode": episode,
@@ -400,12 +404,11 @@ class Handler(BaseHTTPRequestHandler):
             "category": bc.KIND_TO_CATEGORY[kind],
             "probe_kind": bc.PROBE_KIND[kind],
             "pool_file": os.path.join(bc.POOL_DIR, f"{slug}.json"),
-            "cand_file": os.path.join("/tmp", f"{slug}.magnets"),
+            "cand_file": os.path.join("/tmp", f"{slug}.{jid}.magnets"),
             # 季级命名空间：各季结果分开存，互不覆盖
             "key": bc.snapshot_key(slug, season),
         }
         params["probe_out"] = os.path.join(bc.SNAPSHOTS_DIR, f"{params['key']}.probe.json")
-        jid = _new_job()
         threading.Thread(target=_run_search_job, args=(jid, params), daemon=True).start()
         return self._ok({"job_id": jid, "slug": slug, "done": False})
 

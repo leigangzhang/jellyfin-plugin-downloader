@@ -121,6 +121,11 @@ XML 里没有这几个键，仍然照常工作：清单缺席 = 用后端内置�
   不再把**上一轮**的 `/tmp/<slug>.magnets` 喂给 probe（`CloudChannelWiringTests` 两个方向都钉）；
   那个文件不存在时 probe 也不再在读 `--extra-candidates` 之前退出（`MissingCandidateFileTests`），
   云盘候选因此在磁力侧出问题时仍然存活。
+- [B12] `tests` —— 季号识别只有一个家。这次把正则、中文数字表与中文数字解析从
+  `build_console`（它自己有一份 `SEASON_CODE_RE` / `SEASON_CN_RE` / `SEASON_EN_RE` /
+  `_cn_number`）搬进 `search_pool`，与发行名解析放在一处；`build_console` 现在只负责排序
+  后交给面板。`SeasonRecognitionHasOneHome` 在一批名字上比对两个调用方，并在那些名字
+  重新出现在 `build_console` 时变红——把第二份贴回去见过它红。
 - [B11] `tests` —— 严格按季收口的两个错误方向都钉住了：`SeasonDetectionTests` 覆盖三种显式
   写法与中文数字（`cn_number`），`StrictSeasonFilterTests` 钉住「`Sxx` 与『第二季』的别的季
   要被丢掉」以及「没有季标记的候选（整包、裸片名、第11集）必须留着」。两个方向都见过红：

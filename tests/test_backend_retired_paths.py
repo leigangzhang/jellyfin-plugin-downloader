@@ -6,8 +6,14 @@ Subject: `backend/` 的模块表面与 `backend/source_config.py` 的配置契�
 入口（`--magnet` / `--info-hash`）、aria2c 短窗测速。删除需要一个会变红的检查——否则
 一个 flag 被重新加回来、一个模块被复活、一个读侧字段又被读起来，没有东西会失败。
 
-判定走 AST：**符号、关键字参数名、当作常量出现的 CLI flag 与字典键**。注释和 docstring
-允许点名这些通道（那是写给下一个读者的「别再把它加回来」），所以不按整段文本匹配。
+判定走 AST：**符号、关键字参数名、import 的模块名、当作常量出现的 CLI flag 与字典键**。
+注释和 docstring 允许点名这些通道（那是写给下一个读者的「别再把它加回来」），所以不按整段
+文本匹配。
+
+**它是烟雾报警器，不是证明器**：能静态折出来的写法（字面量、`"a" + "b"`、f-string 前缀、
+`import` 的模块名）都会红；而 `"".join([...])`、`%` 格式化、`bytes` 解码、先拼进变量再传、
+以及换一个全新名字复活同一条路——这些它抓不到（复核第二轮 F5 实测）。所以它挡的是
+「原样/近样复活」，不是「故意绕过」。
 
 夹具与网络都无关：这里只读仓库里的源文件。
 """
@@ -143,6 +149,19 @@ class RetiredPathsTests(unittest.TestCase):
                     name = node.attr
                 elif isinstance(node, ast.keyword):
                     name = node.arg
+                elif isinstance(node, ast.Import):
+                    # `import speed_probe` / `import speed_probe as sp`：别名换不掉模块名
+                    for module in node.names:
+                        root = module.name.split(".")[0]
+                        if root in RETIRED_SYMBOLS:
+                            offenders.append(
+                                f"{path.name}:{node.lineno} import 了退役模块 {root!r}")
+                    continue
+                elif isinstance(node, ast.ImportFrom):
+                    root = (node.module or "").split(".")[0]
+                    if root in RETIRED_SYMBOLS:
+                        offenders.append(
+                            f"{path.name}:{node.lineno} 从退役模块 {root!r} 导入")
                 if name in RETIRED_SYMBOLS:
                     offenders.append(f"{path.name}:{node.lineno} 符号 {name}")
                 if isinstance(node, ast.Constant) and isinstance(node.value, str):
@@ -260,6 +279,35 @@ class CloudChannelWiringTests(unittest.TestCase):
             # 片名必须编码进 {q}，不能原样塞中文
             self.assertNotIn("{q}", url)
             self.assertNotIn("漫长的季节", url)
+
+    def test_each_round_gets_its_own_candidate_file(self):
+        """候选文件按轮命名：同名标题连开两轮不会互相读到对方的候选。
+
+        复核第二轮 F3：固定 `/tmp/<slug>.magnets` 时只能靠 mtime 判断「是不是本轮写的」，
+        而两个写者并发（同一季重搜、或不同季但同一个 slug）时那条判定就失效了。
+        """
+        captured = []
+        bodies = [
+            {"title": "漫长的季节", "kind": "episode", "sources": "magnet",
+             "final_dir": self.tmp},
+            {"title": "漫长的季节", "kind": "episode", "sources": "magnet",
+             "final_dir": self.tmp},
+        ]
+        fake_self = mock.Mock()
+        with mock.patch.object(self.cs, "_run_search_job",
+                               lambda jid, params: captured.append(params)), \
+                mock.patch.object(self.cs, "valid_target_dir", lambda _path: True), \
+                mock.patch.object(self.cs.Handler, "_ok", lambda _self, obj: obj):
+            for body in bodies:
+                self.cs.Handler._api_search(fake_self, dict(body))
+
+        self.assertEqual(len(captured), 2)
+        paths = [params["cand_file"] for params in captured]
+        self.assertNotEqual(paths[0], paths[1],
+                            "两轮用了同一个候选文件路径，并发时会互相串候选")
+        for path in paths:
+            self.assertIn("漫长的季节", path)
+            self.assertTrue(path.endswith(".magnets"), path)
 
     def test_a_stale_candidate_file_is_not_fed_to_the_probe(self):
         """候选文件路径固定、内容分轮次：本轮没写就不能喂给 probe。

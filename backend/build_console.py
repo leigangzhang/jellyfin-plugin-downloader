@@ -28,6 +28,8 @@ MAIN_SCRIPTS = os.path.abspath(os.environ.get("JMD_MAIN_SCRIPTS") or HERE)
 if MAIN_SCRIPTS not in sys.path:
     sys.path.insert(0, MAIN_SCRIPTS)
 
+import search_pool  # noqa: E402  （季号识别与发行名解析的唯一事实源）
+
 from media_download_lib import (  # noqa: E402
     DATA_ROOT,
     MEDIA_ROOT,
@@ -75,13 +77,9 @@ IH_RE = re.compile(r"^[0-9A-Fa-f]{40}$")
 # 允许「.」以便季级命名空间（王冠.s01），但仍拒绝路径穿越（".."）
 SAFE_SLUG_RE = re.compile(r"^[0-9A-Za-z\u4e00-\u9fff][0-9A-Za-z\u4e00-\u9fff\-\.]*$")
 EPISODE_RE = re.compile(r"(?:S(\d{1,2}))?[\s._-]*E(?:P)?(\d{1,3})|第\s*(\d{1,3})\s*集", re.IGNORECASE)
-SEASON_CODE_RE = re.compile(r"(?:^|[^0-9A-Za-z])S(\d{1,2})(?!\d)", re.IGNORECASE)
-SEASON_CN_RE = re.compile(r"第\s*([0-9一二三四五六七八九十]{1,3})\s*季")
-SEASON_EN_RE = re.compile(r"[Ss]eason\s*(\d{1,2})", re.IGNORECASE)
-CN_DIGITS = {
-    "一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
-    "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
-}
+# 季号识别只有一份实现，在 `search_pool`（与 `MARKER_PATTERN` 等发行名解析同一处）；
+# 原来这里另有一份 `SEASON_CODE_RE/SEASON_CN_RE/SEASON_EN_RE/_cn_number`，两处一旦漂移，
+# 面板的「该季」筛选（用下面的 `candidate_seasons`）与后端收口就会给出不同结论。
 CN_NUMERALS = {1: "一", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六", 7: "七", 8: "八", 9: "九", 10: "十"}
 
 
@@ -215,21 +213,6 @@ def read_pan_map(slug: str) -> dict:
     return mapping
 
 
-def _cn_number(token: str) -> int:
-    if token.isdigit():
-        return int(token)
-    if token == "十":
-        return 10
-    if token.startswith("十"):
-        return 10 + CN_DIGITS.get(token[1:], 0)
-    if token.endswith("十"):
-        return CN_DIGITS.get(token[:-1], 0) * 10
-    if "十" in token:
-        head, _, tail = token.partition("十")
-        return CN_DIGITS.get(head, 0) * 10 + CN_DIGITS.get(tail, 0)
-    return CN_DIGITS.get(token, 0)
-
-
 def _candidate_blob(candidate: dict) -> str:
     texts = [str(candidate.get("name") or "")]
     for video in candidate.get("videos") or []:
@@ -287,22 +270,12 @@ def title_matches(candidate: dict, title: str, original_title: str = ""):
 
 
 def candidate_seasons(candidate: dict) -> list:
-    """从候选名/文件清单里推出它覆盖的季号；空列表 = 整剧/未知。"""
-    texts = [str(candidate.get("name") or "")]
-    for video in candidate.get("videos") or []:
-        if isinstance(video, dict):
-            texts.append(str(video.get("name") or video.get("path") or ""))
-    blob = " ".join(texts)
-    seasons = set()
-    for match in SEASON_CODE_RE.finditer(blob):
-        seasons.add(int(match.group(1)))
-    for match in SEASON_CN_RE.finditer(blob):
-        number = _cn_number(match.group(1))
-        if number:
-            seasons.add(number)
-    for match in SEASON_EN_RE.finditer(blob):
-        seasons.add(int(match.group(1)))
-    return sorted(seasons)
+    """从候选名/文件清单里推出它覆盖的季号（升序列表）；空列表 = 整剧/未知。
+
+    识别实现只有一份，在 `search_pool.candidate_seasons`（那边返回集合）；面板的
+    「该季」折叠与后端的严格按季收口因此看的是同一份结论。
+    """
+    return sorted(search_pool.candidate_seasons(candidate))
 
 
 def episode_markers(candidate: dict) -> list:

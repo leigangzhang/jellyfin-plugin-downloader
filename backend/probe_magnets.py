@@ -673,8 +673,8 @@ def gather_candidates(args):
             + json.dumps(
                 {
                     "count": len(skipped),
+                    # 只报数，不把用户文件里的行抄进日志（可能含本机路径）
                     "reason": "既不是磁力也不是 40 位 info hash 的行会被跳过",
-                    "examples": [line[:60] for line in skipped[:3]],
                 },
                 ensure_ascii=False,
             )
@@ -835,6 +835,9 @@ def verify_live(ranked, pool, now, args, round_started_at=0.0, budget=None):
                 # announce 仍能看到外部 peer：本次拿不到元数据可能只是超时/抖动，
                 # 不足以判定死种（实测这类种子在迅雷里能正常下载）。
                 candidate["dead_swarm"] = False
+                # `probe_failed_at` / 池里的 `dead_swarm` 都只写不读：打分侧按本轮的
+                # `external_peers` 重算可达性，这里写的是**留档**（事后看池子能知道
+                # 这一轮为什么没交付），不是给某个读侧吃的。别把它们当死代码删掉。
                 update_pool_entry(pool, info_hash, probe_failed_at=now, dead_swarm=False)
                 print(
                     f"  本次未解析出元数据，但 announce 仍有 {external} 个外部 peer"
@@ -1056,7 +1059,6 @@ def main():
                 "或 --extra-candidates（pan_pool 的云盘候选）"
             )
             return 4
-        print("没有磁力候选，仅对云盘/额外候选打分")
 
     order, sources = dedupe(extracted)
     now = time.time()
@@ -1257,6 +1259,9 @@ def main():
 
     extras = load_extra_candidates(args.extra_candidates, policy)
     if not enriched and extras:
+        # 这句要等到云盘候选真的读进来了再说：原来它在读之前就打印，两个文件都读不到时
+        # 会声称「仅对云盘候选打分」，而实际零候选（复核第二轮 F7）。
+        print(f"没有磁力候选，仅对 {len(extras)} 个云盘/非磁力候选打分")
         enriched = extras
         extras = []
     if not enriched:

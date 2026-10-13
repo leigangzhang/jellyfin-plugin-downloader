@@ -151,6 +151,13 @@ that is a known gap, not a contract.
   `/tmp/<slug>.magnets` to the probe (`CloudChannelWiringTests` pins both directions), and
   the probe no longer aborts before reading `--extra-candidates` when that file is missing
   (`MissingCandidateFileTests`), so cloud candidates survive a magnet-side failure.
+- [B12] `tests` — season recognition has exactly one home. The consolidation moved the
+  regexes, the numeral table and the Chinese-number parser out of `build_console` (which had
+  its own `SEASON_CODE_RE` / `SEASON_CN_RE` / `SEASON_EN_RE` / `_cn_number`) into
+  `search_pool`, next to the release-name parsing they belong to; `build_console` now only
+  sorts the result for the panel. `SeasonRecognitionHasOneHome` compares both callers over a
+  name corpus and fails if any of those names reappears in `build_console` — watched red by
+  pasting a second copy back.
 - [B11] `tests` — the strict-season filter is pinned in both error directions:
   `SeasonDetectionTests` covers the three explicit forms and the numerals
   (`cn_number`), `StrictSeasonFilterTests` drops another season for `Sxx` and for `第二季`,

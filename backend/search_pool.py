@@ -859,6 +859,22 @@ def collect(args, sites=None, keywords=None):
         # 多落几次盘。非 API 站自己的循环在下面。
         plan = []
 
+    # 严格按季的收口放在**落盘路径上**，不是最后一步：`land_progress` 每完成一个关键词
+    # 就写一次盘，被杀（控制台 600s 硬杀、rc=124）时那份文件照样会被交出去。只有在每次
+    # 落盘前收口，「中途被杀的那一轮」也已经是收口后的结果（复核第二轮 F2）。
+    strict_season = (
+        int(getattr(args, "season", 0) or 0)
+        if getattr(args, "strict_match", False) else 0
+    )
+    season_dropped = []
+
+    def drop_other_seasons():
+        nonlocal candidates
+        if not strict_season:
+            return
+        candidates, dropped = strict_season_filter(candidates, strict_season)
+        season_dropped.extend(dropped)
+
     try:
         for step in plan:
             query = step["query"]
@@ -918,7 +934,8 @@ def collect(args, sites=None, keywords=None):
                     f"{deadline.elapsed():.1f}s"
                 )
             # N3：每完成一个关键词（含它在每个站上的那次查询）就把已完成的部分原子
-            # 落盘（池 + 候选磁力）。
+            # 落盘（池 + 候选磁力）。落盘前先做严格按季的收口。
+            drop_other_seasons()
             land_progress(args, pool, candidates, reports, now=now)
             usable = [
                 item for item in candidates.values() if item.get("main_video_gb")
@@ -930,6 +947,7 @@ def collect(args, sites=None, keywords=None):
             if args.sleep:
                 time.sleep(args.sleep)
 
+        drop_other_seasons()
         for site in extra_sites:
             names = [name for name in [args.title, *(args.alt_title or [])] if name]
             external_reports.append(
@@ -939,6 +957,19 @@ def collect(args, sites=None, keywords=None):
             )
         for report in external_reports:
             print("EXTRA_SOURCE " + json.dumps(report, ensure_ascii=False))
+        if season_dropped:
+            print(
+                "STRICT_SEASON_FILTER "
+                + json.dumps(
+                    {
+                        "season": strict_season,
+                        "kept": len(candidates),
+                        "dropped": len(season_dropped),
+                        "examples": season_dropped[:5],
+                    },
+                    ensure_ascii=False,
+                )
+            )
     finally:
         # 手动中断（KeyboardInterrupt）/异常路径也兜一次：pager 已经返回的那几个
         # 关键词的候选不能因为后面被杀而丢掉。正常路径这里等同再写一次同样内容。
@@ -1390,23 +1421,6 @@ def main():
                 {"groups": len(collapsed), "dropped": sum(len(v) for v in dropped.values())},
                 ensure_ascii=False))
             candidates = collapsed
-
-        if getattr(args, "strict_match", False) and getattr(args, "season", 0):
-            kept, dropped = strict_season_filter(candidates, args.season)
-            if dropped:
-                print(
-                    "STRICT_SEASON_FILTER "
-                    + json.dumps(
-                        {
-                            "season": int(args.season),
-                            "kept": len(kept),
-                            "dropped": len(dropped),
-                            "examples": dropped[:5],
-                        },
-                        ensure_ascii=False,
-                    )
-                )
-            candidates = kept
 
         if getattr(args, "publisher_only", False):
             # 单源：只留配置里那家发布者的候选。候选在收集阶段已经只剩锚点档返回的
