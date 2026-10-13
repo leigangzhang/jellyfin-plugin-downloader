@@ -1,14 +1,14 @@
 {
   "category": "General",
-  "changelog": "1.0.0.2：候选池扩大约 4×（翻页改由 has_more 驱动，不再每词只取 2 页）、新增第二磁力源并把外部做种者数接进打分、测速不再降分（实测只能加分）、取源更快（软预算 + 逐条落盘，单轮被杀不再整段丢失）。",
+  "changelog": "1.0.0.3：文档与入口整理（CLAUDE.md 改为套件入口指针、AGENTS.md 的 Read first/Commands 两段移出并把命令并入 README、9 处指向旧锚点的链接改指 README）。取源链功能与 1.0.0.2 相同。",
   "description": "在电影/剧集/单集详情页提供「获取资源」入口（仅管理员）。",
   "guid": "b7f3e2a1-6c4d-4e9b-9a21-7d5c8e1f0a33",
   "name": "Jellyfin Downloader",
   "overview": "详情页「获取资源」：搜索源、打分，列出 ≥60 分候选。",
   "owner": "ray",
   "targetAbi": "10.11.11.0",
-  "timestamp": "2026-10-13T08:00:00.0000000Z",
-  "version": "1.0.0.2",
+  "timestamp": "2026-10-13T09:00:00.0000000Z",
+  "version": "1.0.0.3",
   "status": "Active",
   "autoUpdate": false,
   "assemblies": []

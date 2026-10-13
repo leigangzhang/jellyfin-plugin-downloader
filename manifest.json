@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/leigangzhang/jellyfin-plugin-downloader/main/icon.png",
     "versions": [
       {
+        "version": "1.0.0.3",
+        "changelog": "文档与入口整理（CLAUDE.md 改为套件入口指针、AGENTS.md 的 Read first/Commands 两段移出并把命令并入 README、9 处指向旧锚点的链接改指 README）。取源链功能与 1.0.0.2 相同。",
+        "targetAbi": "10.11.11.0",
+        "sourceUrl": "https://github.com/leigangzhang/jellyfin-plugin-downloader/releases/download/v1.0.0.3/JellyfinDownloader_1.0.0.3.zip",
+        "checksum": "fc586fcb32f94b2548fb9bf46880b7f4",
+        "timestamp": "2026-10-13T09:00:00.0000000Z"
+      },
+      {
         "version": "1.0.0.2",
         "changelog": "候选池扩大约 4×（翻页改由 has_more 驱动，不再每词只取 2 页）、新增第二磁力源并把外部做种者数接进打分、测速不再降分（实测只能加分）、取源更快（软预算 + 逐条落盘，单轮被杀不再整段丢失）。",
         "targetAbi": "10.11.11.0",
