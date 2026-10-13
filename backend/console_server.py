@@ -597,6 +597,8 @@ def _run_search_job(jid, p):
         sources = p.get("sources", "magnet")
         want_magnet = sources in ("magnet", "both")
         want_pan = sources in ("pan", "both")
+        # 本轮 L1 搜索是否真的写出了候选文件；见下面 search_started_at 处的说明。
+        cand_written = False
 
         if want_magnet:
             sites, _ = source_config.load_sites()
@@ -642,7 +644,14 @@ def _run_search_job(jid, p):
                 ]
             if p.get("publisher_only"):
                 search_cmd += ["--publisher-only"]
+            search_started_at = time.time()
             run_cli_stream(search_cmd, log, SEARCH_POOL_TIMEOUT)
+            # 候选文件路径是固定的 /tmp/<slug>.magnets，内容却分「本轮写的」和「上一轮留的」。
+            # 只有本轮真的写出过才把它喂给 probe：否则只配了云盘专用站（或配置坏掉）的那一轮
+            # 会把上一轮的磁力当成本轮结果（probe 那边不再报 CANDIDATE_FILE_ERROR）。
+            cand_written = _file_written_since(p["cand_file"], search_started_at)
+            if not cand_written:
+                log("本轮没有写出候选磁力文件（没有磁力入口或配置不可用）→ 不拿上一轮的文件喂 probe")
 
         pan_cand = ""
         if want_pan:
@@ -676,7 +685,7 @@ def _run_search_job(jid, p):
             "--json-out", p["probe_out"],
             "--budget-secs", str(PROBE_BUDGET_SECS),
         ]
-        if want_magnet:
+        if want_magnet and cand_written:
             probe_cmd += ["--candidate-file", p["cand_file"]]
         if want_pan and pan_cand and os.path.isfile(pan_cand):
             probe_cmd += ["--extra-candidates", pan_cand]
@@ -797,8 +806,7 @@ def _search_status(out: str, probe: dict, rc: int) -> str:
         return "best_dead_swarm"
     for token in (
         "SWARM_DEAD", "METADATA_FAILED", "PROBE_PARTIAL", "NO_ELIGIBLE_RESOURCE",
-        "NO_CANDIDATES", "UNSUPPORTED_THUNDER_DIRECT_LINK",
-        "BEST_BELOW_MIN_SCORE", "BEST_DEAD_SWARM",
+        "NO_CANDIDATES", "BEST_BELOW_MIN_SCORE", "BEST_DEAD_SWARM",
     ):
         if token in out:
             if token == "PROBE_PARTIAL" and (probe.get("ranked") or probe.get("best")):
@@ -811,7 +819,6 @@ def _search_status(out: str, probe: dict, rc: int) -> str:
                 "PROBE_PARTIAL": "probe_partial",
                 "NO_ELIGIBLE_RESOURCE": "no_eligible_resource",
                 "NO_CANDIDATES": "no_candidates",
-                "UNSUPPORTED_THUNDER_DIRECT_LINK": "unsupported",
                 "BEST_BELOW_MIN_SCORE": "best_below_min_score",
                 "BEST_DEAD_SWARM": "best_dead_swarm",
             }[token]

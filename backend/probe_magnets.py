@@ -657,10 +657,28 @@ def gather_candidates(args):
             return None
 
     extracted = []
+    skipped = []
     for index, candidate in enumerate(direct):
         info_hash = parse_candidate(candidate)
         if info_hash:
             extracted.append((f"direct#{index}", info_hash))
+        else:
+            skipped.append(candidate)
+
+    # 解析不出来的行要报数：删掉 `--magnet`（thunder:// 直链的唯一入口）之后，直链不再
+    # 有专属提示，静默丢掉会让「文件里有几行但一条候选都没有」变得不可解释。
+    if skipped:
+        print(
+            "CANDIDATE_LINES_SKIPPED "
+            + json.dumps(
+                {
+                    "count": len(skipped),
+                    "reason": "既不是磁力也不是 40 位 info hash 的行会被跳过",
+                    "examples": [line[:60] for line in skipped[:3]],
+                },
+                ensure_ascii=False,
+            )
+        )
     return extracted
 
 
@@ -727,12 +745,12 @@ def enrich(info_hash, timeout, duration_seconds, pool, now, refresh_meta, deadli
 
 
 def _save_progress(pool_path, pool, query=""):
-    """每完成一条候选就落盘一次（metadata 阶段与速度实测阶段都调用）。
+    """每完成一条候选就落盘一次（健康度与 metadata 两个阶段都调用）。
 
-    原来只在全流程末尾存池子：搜索中途被杀（后端重启、超时、预算耗尽）就把
-    已经付过网络代价的 metadata / 实测速度全丢了。现在逐条落盘（原子写，
-    控制台不会读到半写 JSON），`metadata_at` 有 7 天 TTL、`measured_at` 有 6
-    小时 TTL，下次直接复用。
+    原来只在全流程末尾存池子：搜索中途被杀（后端重启、超时、预算耗尽）就把已经付过
+    网络代价的 metadata 全丢了。现在逐条落盘（原子写，控制台不会读到半写 JSON），
+    `metadata_at` 有 7 天 TTL、`health_at` 有 1 小时 TTL，下次直接复用。
+    （`measured_at` 的 6 小时 TTL 随 aria2c 测速一起删除，这里不再提它。）
     """
     if not pool_path:
         return
@@ -1024,7 +1042,13 @@ def main():
 
     extracted = gather_candidates(args)
     if extracted is None:
-        return 2
+        # 候选文件读不到（路径写错、或本轮控制台根本没写出它）。若还给了云盘候选，
+        # 就不该整轮退出：**云盘候选是独立的一条通道**，磁力侧读不到文件不该把它一起丢掉
+        # （rc=2 会让面板什么都看不到，且 --extra-candidates 连读都没读到）。
+        if not args.extra_candidates:
+            return 2
+        print("CANDIDATE_FILE_MISSING 继续对 --extra-candidates 打分")
+        extracted = []
     if not extracted:
         if not args.extra_candidates:
             print(

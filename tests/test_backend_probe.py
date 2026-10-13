@@ -376,6 +376,63 @@ class RegressionTests(ProbeCase):
         self.assertEqual((probe.get("best") or {}).get("ih"), golden["best_ih"])
 
 
+class MissingCandidateFileTests(ProbeCase):
+    """候选文件读不到、但给了云盘候选时不该整轮退出（复核报告 F1）。
+
+    控制台只有在**本轮真的写出过**候选文件时才传 `--candidate-file`（见
+    `CloudChannelWiringTests`），但直接调用/旧脚本仍可能指到一个不存在的路径。
+    那时 `--extra-candidates` 里的云盘候选是独立的一条通道，不能被一起丢掉：
+    rc=2 会让面板什么都看不到，而且 `--extra-candidates` 连读都没读到。
+    """
+
+    def write_extras(self):
+        path = os.path.join(self.tmp, "pan.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(
+                [
+                    {
+                        "id": "pan-1",
+                        "kind": "pan",
+                        "name": "Cloud.Only.2024.1080p.WEB-DL.x265.CHS.mkv",
+                        "share_url": "https://pan.xunlei.com/s/abcdefghijklmnopqrst?pwd=abcd",
+                        "main_video_gb": 2.0,
+                        "size_gb": 2.1,
+                        "videos": [
+                            {"index": 0, "path": "c.mkv", "name": "c.mkv",
+                             "size": 2 * 1024 ** 3}
+                        ],
+                    }
+                ],
+                handle,
+                ensure_ascii=False,
+            )
+        return path
+
+    def test_cloud_candidates_survive_a_missing_candidate_file(self):
+        extras = self.write_extras()
+        missing = os.path.join(self.tmp, "does-not-exist.magnets")
+        for patcher in offline_network_guard(self):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+        rc, out_path, stdout = self.run_probe(
+            self.pool_file(),
+            extra_args=(
+                # 同名参数后者胜出：这里把 run_probe 的默认候选文件覆盖成不存在的路径
+                "--candidate-file", missing,
+                "--extra-candidates", extras,
+                "--no-live-check",
+            ),
+        )
+        self.assertNotEqual(rc, 2, f"候选文件读不到就把整轮退掉了：{stdout[-300:]}")
+        self.assertIn("CANDIDATE_FILE_MISSING", stdout)
+        self.assertIn("合并 1 个云盘/非磁力候选", stdout)
+        with open(out_path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+        self.assertTrue(payload.get("ranked"), payload)
+        self.assertIn("pan-1", [item.get("ih") for item in payload["ranked"]])
+
+
 class ConsoleWiringTests(unittest.TestCase):
     """console_server 侧的接线，用源码断言（导入它会拉起整个控制台栈）。"""
 
@@ -398,14 +455,20 @@ class ConsoleWiringTests(unittest.TestCase):
         self.assertLess(namespace["PROBE_BUDGET_SECS"], namespace["SEARCH_TIMEOUT"])
 
     def test_exit_code_mapping_tokens_are_unchanged(self):
-        """0/4/5/7/8 的语义由这些 token 与 _search_status 决定，不能被改动带走。"""
+        """0/4/5/7/8 的语义由这些 token 与 _search_status 决定，不能被改动带走。
+
+        `UNSUPPORTED_THUNDER_DIRECT_LINK` 已从这份清单里去掉：它的唯一生产者是
+        `probe_magnets --magnet`（连同 rc=3 一起删除），控制台里再留这条映射就是死代码，
+        而它映射的正是本用例没列的 rc=3。解析不出 info hash 的行现在由
+        `CANDIDATE_LINES_SKIPPED` 报数，不再静默（复核报告 F6）。
+        """
         for token in (
             "SWARM_DEAD", "METADATA_FAILED", "NO_ELIGIBLE_RESOURCE",
-            "NO_CANDIDATES", "UNSUPPORTED_THUNDER_DIRECT_LINK",
-            "BEST_BELOW_MIN_SCORE", "BEST_DEAD_SWARM",
+            "NO_CANDIDATES", "BEST_BELOW_MIN_SCORE", "BEST_DEAD_SWARM",
         ):
             self.assertIn(token, self.source, token)
         self.assertIn('return "best_dead_swarm"', self.source)
+        self.assertNotIn("UNSUPPORTED_THUNDER_DIRECT_LINK", self.source)
 
     def test_probe_still_exposes_the_same_exit_codes(self):
         probe_source = (BACKEND / "probe_magnets.py").read_text(encoding="utf-8")

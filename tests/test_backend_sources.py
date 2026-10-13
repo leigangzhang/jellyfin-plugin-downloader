@@ -407,6 +407,61 @@ class QueryLadderTests(unittest.TestCase):
                 search_pool.parse_args()
 
 
+class StrictSeasonFilterTests(unittest.TestCase):
+    """严格按季的收口：锚点档带回来的「别的季」必须在这一层被丢掉（复核报告 F4）。
+
+    锚点档（`片名 + 发布者署名`）不带季标记，会把同一部剧的其它季一起带回来——这是它换来
+    召回的代价。898bcf8 的 strict 分支会在发布者档之前 return，所以那时不存在这个泄漏；
+    现在锚点档也在 strict 下运行，就必须有显式季标记的收口，否则「严格按季」（默认开）
+    等于失效。确定不了季号的候选（整包 / 裸片名 / 第N集）留着，不猜。
+    """
+
+    FILES = [{"index": 0, "path": "a.mkv", "size": 4 * 1024 ** 3}]
+
+    def payload(self):
+        return diao_payload(
+            [
+                l1_torrent("A" * 40, "【高清剧集网发布 www.DDHDTV.com】周三俱乐部[全12集]"
+                                     ".Wednesday.Club.S01.1080p", files=list(self.FILES)),
+                l1_torrent("B" * 40, "【高清剧集网发布 www.DDHDTV.com】星期三.第二季[第01-03集]"
+                                     ".Wednesday.S02.2160p", files=list(self.FILES)),
+                l1_torrent("C" * 40, "周三俱乐部[全12集][简繁英字幕].1080p",
+                           files=list(self.FILES)),
+            ],
+            has_more=False,
+        )
+
+    def run_search(self, extra):
+        import tempfile
+
+        page = self.payload()
+        with tempfile.TemporaryDirectory() as tmp:
+            json_out = Path(tmp) / "out.json"
+            code, printed = run_main_with_fakes(
+                ["search_pool.py", "周三俱乐部", "--no-pool", "--sleep", "0",
+                 "--season", "1", "--collection-hint", "第1季",
+                 "--json-out", str(json_out),
+                 "--candidates-out", str(Path(tmp) / "c.magnets"),
+                 *extra],
+                page, [],
+            )
+            self.assertEqual(code, 0, printed)
+            payload = json.loads(json_out.read_text(encoding="utf-8"))
+            hashes = {item["ih"] for item in payload["candidates"]}
+        return hashes, printed
+
+    def test_strict_mode_drops_the_other_season_and_keeps_the_silent_ones(self):
+        hashes, printed = self.run_search(["--strict-match"])
+        self.assertIn("STRICT_SEASON_FILTER", printed)
+        self.assertNotIn("B" * 40, hashes, "明确标了 S02 的候选不该出现在按 S01 的搜索里")
+        self.assertIn("A" * 40, hashes, "S01 的候选必须留着")
+        self.assertIn("C" * 40, hashes, "没标季号的候选留着，不猜")
+
+    def test_without_strict_mode_nothing_is_dropped(self):
+        hashes, _ = self.run_search([])
+        self.assertIn("B" * 40, hashes, "非严格模式不做季过滤")
+
+
 class ReleaseKeyTests(unittest.TestCase):
     """The de-dupe dimension on top of the info hash."""
 

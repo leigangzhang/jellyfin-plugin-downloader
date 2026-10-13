@@ -983,6 +983,55 @@ def candidate_markers(candidate, season=1):
     }
 
 
+# 裸季标记（`S02`、`第二季` 里的 S 写法）：只用来判断「这条候选明确属于哪一季」。
+SEASON_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])S(\d{1,2})(?![Ee0-9])", re.IGNORECASE)
+
+
+def candidate_seasons(candidate):
+    """这条候选的名字/文件名里**明确**出现的季号集合；空集 = 它没表态。
+
+    只看显式的 `SxxEyy` 与裸 `Sxx`，不做任何假设：`全集`、`第11集` 这种不带季号的名字
+    返回空集，由调用方决定怎么处理（严格按季时留着，不猜）。
+    """
+    texts = [candidate.get("name") or ""]
+    texts.extend(
+        (entry.get("path") or entry.get("name") or "")
+        for entry in candidate.get("videos") or []
+    )
+    blob = " ".join(texts)
+    seasons = {int(match.group(1)) for match in MARKER_PATTERN.finditer(blob)}
+    if not seasons:
+        seasons = {int(match.group(1)) for match in SEASON_TOKEN_RE.finditer(blob)}
+    return seasons
+
+
+def strict_season_filter(candidates, season):
+    """严格按季：丢掉「明确属于别的季」的候选，返回 (kept, dropped)。
+
+    锚点档（`片名 + 发布者署名`）不带季标记，会把同一部剧的其它季一起带回来——这是它换来
+    召回的代价。没有这道收口，「严格按季」这个默认打开的开关就等于失效（复核报告 F4：
+    锚点档在 strict 分支之前生成，下游也没有季标记过滤）。判定只认显式季标记：能确定季号
+    且不含目标季的丢掉；确定不了季号的（整包、裸片名、第N集）留着，**不猜**。
+    """
+    if not season:
+        return dict(candidates), []
+    kept = {}
+    dropped = []
+    for info_hash, item in candidates.items():
+        seasons = candidate_seasons(item)
+        if seasons and int(season) not in seasons:
+            dropped.append(
+                {
+                    "ih": info_hash,
+                    "seasons": sorted(seasons),
+                    "name": (item.get("name") or "")[:70],
+                }
+            )
+            continue
+        kept[info_hash] = item
+    return kept, dropped
+
+
 def write_episode_files(directory, candidates, season=1):
     """Split candidates into `<dir>/S01E15.magnets` files for series_queue."""
     if not directory:
@@ -1309,6 +1358,23 @@ def main():
                 {"groups": len(collapsed), "dropped": sum(len(v) for v in dropped.values())},
                 ensure_ascii=False))
             candidates = collapsed
+
+        if getattr(args, "strict_match", False) and getattr(args, "season", 0):
+            kept, dropped = strict_season_filter(candidates, args.season)
+            if dropped:
+                print(
+                    "STRICT_SEASON_FILTER "
+                    + json.dumps(
+                        {
+                            "season": int(args.season),
+                            "kept": len(kept),
+                            "dropped": len(dropped),
+                            "examples": dropped[:5],
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            candidates = kept
 
         if getattr(args, "publisher_only", False):
             # 单源：只留配置里那家发布者的候选。候选在收集阶段已经只剩锚点档返回的

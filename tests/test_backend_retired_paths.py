@@ -20,6 +20,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -31,6 +32,9 @@ if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 import source_config  # noqa: E402
+
+# f-string 的字面前缀至少这么长才算「疑似拼出来的开关」：太短（"--"、"_"）会误伤。
+FRAGMENT_MIN_LEN = 8
 
 # 退役的符号：任何名字（Name / Attribute / 关键字参数）都不许再出现。
 RETIRED_SYMBOLS = frozenset({
@@ -73,6 +77,47 @@ RETIRED_CONSTANTS = frozenset({
 })
 
 
+NEEDLES = RETIRED_SYMBOLS | RETIRED_CONSTANTS
+
+
+def _literal_offences(module_name, lineno, value):
+    """这个字符串字面量本身就是退役通道的名字吗。
+
+    `getattr(obj, "measured_speed_mbps")` / `data["--pansou"]` 里它不会作为 Name 或
+    Attribute 出现，只看节点类型抓不到，所以要单独比一次字符串。
+    """
+    if value in NEEDLES:
+        return [f"{module_name}:{lineno} 字面量 {value!r}"]
+    return []
+
+
+def _prefix_offences(module_name, lineno, literal):
+    """f-string 的字面前缀是不是某个退役开关的开头（`f"--speed-{name}"`）。
+
+    只做前缀判定，不做包含判定：`"allow_pan"`（合法的云盘开关）包含在
+    `allow_pansou` 里但不是它的前缀，不该红。
+    """
+    if len(literal) < FRAGMENT_MIN_LEN:
+        return []
+    for token in NEEDLES:
+        if token.startswith(literal):
+            return [f"{module_name}:{lineno} f-string 拼出来的开关前缀 {literal!r}"
+                    f"（疑似 {token!r}）"]
+    return []
+
+
+def _fold_strings(node):
+    """把 `"a" + "b"` 折成 `"ab"`；折不动（含变量）返回 None。"""
+    if (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+        return node.value
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left = _fold_strings(node.left)
+        right = _fold_strings(node.right)
+        if left is not None and right is not None:
+            return left + right
+    return None
+
+
 def backend_modules():
     return sorted(path for path in BACKEND.glob("*.py"))
 
@@ -101,8 +146,19 @@ class RetiredPathsTests(unittest.TestCase):
                 if name in RETIRED_SYMBOLS:
                     offenders.append(f"{path.name}:{node.lineno} 符号 {name}")
                 if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                    if node.value in RETIRED_CONSTANTS:
-                        offenders.append(f"{path.name}:{node.lineno} 常量 {node.value!r}")
+                    offenders.extend(_literal_offences(path.name, node.lineno, node.value))
+                elif isinstance(node, ast.JoinedStr):
+                    # f-string：只看字面部分（`f"--speed-{name}"` 的字面部分是 `--speed-`）。
+                    # `{"a" + "b"}` 这类占位表达式由下面的 BinOp 规则单独处理。
+                    literal = "".join(
+                        part.value for part in node.values
+                        if isinstance(part, ast.Constant) and isinstance(part.value, str)
+                    )
+                    offenders.extend(_prefix_offences(path.name, node.lineno, literal))
+                elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+                    folded = _fold_strings(node)
+                    if folded is not None:
+                        offenders.extend(_literal_offences(path.name, node.lineno, folded))
         self.assertEqual(offenders, [], "已退役的通道又出现在 backend 里：" + "; ".join(offenders))
 
     def test_console_has_no_manual_verify_endpoint(self):
@@ -121,8 +177,12 @@ class CloudChannelWiringTests(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="jmd-cloud-wiring-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
 
-    def run_round(self, sites):
-        """跑一轮搜索任务，返回 (所有 CLI argv, job)。"""
+    def run_round(self, sites, write_candidates=False):
+        """跑一轮搜索任务，返回 (所有 CLI argv, job)。
+
+        `write_candidates=True` 时记录器会在 search_pool 那一步真的写出候选文件，
+        用来区分「本轮写的」与「上一轮留在同一个路径上的」。
+        """
         calls = []
         snapshots = os.path.join(self.tmp, "snapshots")
         marks = os.path.join(self.tmp, "marks")
@@ -145,6 +205,9 @@ class CloudChannelWiringTests(unittest.TestCase):
 
         def record_stream(argv, on_line=None, timeout=600):
             calls.append(list(argv))
+            if write_candidates and argv and argv[0] == "search_pool.py":
+                Path(os.path.join(self.tmp, "cands.magnets")).write_text(
+                    "magnet:?xt=urn:btih:" + "A" * 40 + "\n", encoding="utf-8")
             return 0, []
 
         patches = [
@@ -173,6 +236,10 @@ class CloudChannelWiringTests(unittest.TestCase):
     def pan_calls(self, calls):
         return [argv for argv in calls if argv and argv[0] == "pan_search.py"]
 
+    def probe_argv(self, calls):
+        return next((argv for argv in calls
+                     if argv and argv[0] == "probe_magnets.py"), [])
+
     def test_every_station_with_a_web_page_contributes_one_page_argument(self):
         sites = [
             dict(source_config.DEFAULT_SITES[0],
@@ -194,6 +261,34 @@ class CloudChannelWiringTests(unittest.TestCase):
             self.assertNotIn("{q}", url)
             self.assertNotIn("漫长的季节", url)
 
+    def test_a_stale_candidate_file_is_not_fed_to_the_probe(self):
+        """候选文件路径固定、内容分轮次：本轮没写就不能喂给 probe。
+
+        只配云盘专用站（或配置坏掉）时 search_pool 会早退、不写候选文件，而
+        /tmp/<slug>.magnets 还留着上一轮的内容——照旧传 `--candidate-file` 会把上一轮的
+        磁力当成本轮结果（复核报告 F1/F2）。
+        """
+        stale = Path(self.tmp) / "cands.magnets"
+        stale.write_text("magnet:?xt=urn:btih:" + "B" * 40 + "\n", encoding="utf-8")
+        past = time.time() - 120
+        os.utime(stale, (past, past))
+
+        calls, job = self.run_round([dict(source_config.DEFAULT_SITES[0])])
+        self.assertEqual(job.get("error"), "", job.get("error"))
+        argv = self.probe_argv(calls)
+        self.assertTrue(argv, "probe 应该被调用")
+        self.assertNotIn("--candidate-file", argv,
+                         "上一轮的候选文件不该被当成本轮结果喂给 probe")
+        lines = job.get("lines") or []
+        self.assertTrue(any("不拿上一轮的文件喂 probe" in line for line in lines), lines)
+
+    def test_a_candidate_file_written_this_round_is_fed_to_the_probe(self):
+        calls, job = self.run_round([dict(source_config.DEFAULT_SITES[0])],
+                                    write_candidates=True)
+        self.assertEqual(job.get("error"), "", job.get("error"))
+        argv = self.probe_argv(calls)
+        self.assertIn("--candidate-file", argv)
+
     def test_no_configured_web_page_means_no_pan_search_call(self):
         calls, job = self.run_round([dict(source_config.DEFAULT_SITES[0])])
         self.assertEqual(job.get("error"), "", job.get("error"))
@@ -202,6 +297,41 @@ class CloudChannelWiringTests(unittest.TestCase):
         lines = job.get("lines") or []
         self.assertTrue(any("云盘通道没有入口" in line for line in lines),
                         f"应当明说没有入口，而不是静默返回空：{lines}")
+
+
+class RetiredFragmentGuardTests(unittest.TestCase):
+    """守卫自身的负向对照：拼出来的名字要能红，合法同名不同词不能红。
+
+    复核报告 F10：原来的扫描只比 `ast.Constant`，`getattr(o, "measured_speed_" + "mbps")`、
+    `data["measured_speed_" + "mbps"]`、`f"--speed-{name}"` 都能绕过去。
+    """
+
+    def test_concatenated_and_f_string_names_are_flagged(self):
+        for literal in ("measured_speed_mbps", "speed_probe_error", "--pansou"):
+            with self.subTest(literal=literal):
+                self.assertTrue(_literal_offences("m.py", 1, literal))
+        for prefix in ("--speed-", "measured_speed_"):
+            with self.subTest(prefix=prefix):
+                self.assertTrue(_prefix_offences("m.py", 1, prefix))
+        for expression in ('"measured_speed_" + "mbps"', '"--speed-" + name'):
+            with self.subTest(expression=expression):
+                folded = _fold_strings(ast.parse(expression, mode="eval").body)
+                self.assertTrue(
+                    folded is None or _literal_offences("m.py", 1, folded)
+                    or _prefix_offences("m.py", 1, folded),
+                    f"{expression} 既折不出退役名字也不算疑似前缀",
+                )
+
+    def test_legitimate_names_sharing_a_stem_are_not_flagged(self):
+        # allow_pan（还在用的云盘开关）包含在 allow_pansou 里但不是它的前缀；
+        # speed_mbps（迅雷取回任务的速度键）与退役的 measured_speed_mbps 同词根。
+        for literal in ("allow_pan", "speed_mbps", "speed"):
+            with self.subTest(literal=literal):
+                self.assertEqual(_literal_offences("m.py", 1, literal), [])
+        # `--extra-source-limit` 是**还在用**的开关（退役的只有 `--extra-source`
+        # 与 `--extra-source-base-url`）；前者比退役的更长，不是它们的前缀，不该红。
+        self.assertEqual(_prefix_offences("m.py", 1, "--extra-source-limit"), [])
+        self.assertEqual(_literal_offences("m.py", 1, "--extra-source-limit"), [])
 
 
 class SourceConfigTests(unittest.TestCase):
