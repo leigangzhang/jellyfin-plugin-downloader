@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-10-13-ranking-flow-simplification.md (docs/i18n.md): per heading section, a hash
+# of its English and Chinese blocks outside fenced code blocks.
+# After editing either side, bring the other along and re-record with:
+#   python3 tools/pair-docs.py --write dev/review/2026-10-13-ranking-flow-simplification.md
+/review-1-0-0-8-teammate-2026-10-13:
+  en: eaa7eecbccd5c88b
+  zh: 119d8bb1d5693416
+/review-1-0-0-8-teammate-2026-10-13/claim:
+  en: da404f0303598621
+  zh: 92b5e9e4035cae15
+/review-1-0-0-8-teammate-2026-10-13/evidence:
+  en: e44cdf67a1e3b56b
+  zh: 3463a890c36f893d
+/review-1-0-0-8-teammate-2026-10-13/findings:
+  en: c142c4735f3bde44
+  zh: a7423d88c214253e
+/review-1-0-0-8-teammate-2026-10-13/follow-up:
+  en: 4486053d51c77476
+  zh: ec001a268dea14be
+/review-1-0-0-8-teammate-2026-10-13/deliberate-risks:
+  en: ab48cede4781b7cf
+  zh: 835922d9a1fb0d4c
