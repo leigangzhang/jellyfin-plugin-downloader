@@ -108,3 +108,10 @@ XML 里没有这几个键，仍然照常工作：清单缺席 = 用后端内置�
   的配置面都改了。
 - [B6] `docs` —— README 的功能表、配置表与开发说明在同一次改动里更新，两份前驱决策记录
   也链到这里。
+- [B7] `packaging` —— 两个新增配置键都用 `System.Xml.Serialization.XmlSerializer` 对着
+  **构建出来的插件程序集**做了往返（Jellyfin 就是用它序列化 `BasePluginConfiguration`）：
+  两个带全部四个字段的站点与两条关键字组合，序列化 → 反序列化后逐字段完好；而一份两个键
+  都没有的 XML 反序列化出来是空清单——这正是「清单缺席 = 用后端内置默认值」对存量
+  `1.0.0.7` 安装成立的原因。复现方式：建一个一次性 console 工程，引用本 csproj 与
+  `Jellyfin.Controller`/`Jellyfin.Model` 10.11.11，把两个列表填好后序列化一个
+  `PluginConfiguration`。这不是常驻守卫：本仓库没有 C# 测试工程。

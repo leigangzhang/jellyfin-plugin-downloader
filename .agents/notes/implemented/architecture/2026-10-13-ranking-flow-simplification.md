@@ -132,3 +132,12 @@ that is a known gap, not a contract.
   configuration surface changed on both sides of the plugin/C# boundary.
 - [B6] `docs` — README's feature table, configuration table and developer notes were
   updated in the same change, and both predecessor records link here.
+- [B7] `packaging` — both new configuration keys were round-tripped through
+  `System.Xml.Serialization.XmlSerializer` against the built plugin assembly (the serializer
+  Jellyfin uses for `BasePluginConfiguration`): two stations carrying all four fields and two
+  keyword combinations survive serialize → deserialize intact, and an XML with neither key
+  deserializes to empty lists — which is what makes "an absent list means the backend's
+  built-in defaults" true for an existing `1.0.0.7` install. Reproduce with a throwaway
+  console project referencing this csproj plus `Jellyfin.Controller`/`Jellyfin.Model`
+  10.11.11 and serializing a `PluginConfiguration` with both lists populated. Not a
+  permanent guard: this repository has no C# test project.

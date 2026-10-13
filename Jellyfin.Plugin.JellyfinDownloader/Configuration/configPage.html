@@ -229,7 +229,11 @@
         var input;
         if (options) {
           input = document.createElement('select');
-          options.forEach(function (option) {
+          // 手改过 XML 的类型值不在选项里时，也要把它显示出来：否则 select 会落到第一项，
+          // 用户看到的是「diao」、保存下去的也是「diao」——一次静默的数据改写。
+          var choices = options.slice();
+          if (value && choices.indexOf(value) < 0) { choices.push(value); }
+          choices.forEach(function (option) {
             var node = document.createElement('option');
             node.value = option;
             node.textContent = option;
