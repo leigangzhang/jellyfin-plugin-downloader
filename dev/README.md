@@ -33,9 +33,9 @@ You do not need all eleven stations at once. Pick by where your project is now:
 
 | Tier | Stations to install | Fits |
 |---|---|---|
-| **Minimum** | 1 · 2 · 3 · 4 · 6 · 7, plus documentation, tests, and capabilities | One person iterating fast, with no users yet |
+| **Minimum** | 1 · 2 · 3 · 4 · 5 · 6 · 7 · 8, plus documentation, tests, and capabilities | One person iterating fast, with no users yet |
 | **Delivery** | The above + 9 · 10 (including [evolution.md](../docs/evolution.md) and `dev/upgrade-guide/`) | A public interface, and other people using it |
-| **Long-lived** | Everything + 5 · 8 · 11 (including the `.agents/notes/archived/` seal), rejected records, and incidents (`.agents/notes/rejected/`) | Several rounds of evolution, several people, and a long life |
+| **Long-lived** | Everything + 11 (including the `.agents/notes/archived/` seal), rejected records, and incidents (`.agents/notes/rejected/`) | Several rounds of evolution, several people, and a long life |
 
 For a station you do not install, **its checks turn red for matching no file** (see station 6) — deliberately, because a hollow check is worse than no check. So declare it `none` in [tools/tiers.json](../tools/tiers.json): the switch turns the station into a declared absence, the checks that own nothing but its home stop running, and the empty-corpus rule stops applying to them. That is the whole instruction — the eight mappings this paragraph used to list are now the switch's job. Remove the directory as well, because the switch states intent and the tree states fact: a stage the switch calls absent while its files are still there is red, and so is a stage it calls installed whose home is empty.
 

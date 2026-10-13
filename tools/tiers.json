@@ -13,8 +13,10 @@
       "decision",
       "contract",
       "capabilities",
+      "implementation",
       "verification",
       "review",
+      "integration",
       "documentation",
       "tests"
     ],
@@ -23,8 +25,6 @@
       "evolution"
     ],
     "long-lived": [
-      "implementation",
-      "integration",
       "retirement",
       "rejection",
       "incident"
@@ -122,8 +122,6 @@
     "jellyfin-downloader": {
       "default": "minimum",
       "stages": {
-        "implementation": "none",
-        "integration": "none",
         "release": "none",
         "evolution": "none",
         "retirement": "none",
