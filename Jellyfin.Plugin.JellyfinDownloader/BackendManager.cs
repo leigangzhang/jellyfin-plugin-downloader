@@ -197,7 +197,10 @@ public static class BackendManager
             }
 
             var log = LogPath();
-            var command = $"exec '{python}' '{script}' --port {port} >> '{log}' 2>&1";
+            // 端口用环境变量传，不拼进命令行：命令行整体交给 `/bin/sh -c`，任何拼进去的
+            // 值（这里现在是数字，以后可能是路径）都要再过一层 shell 解析。Python / 脚本 /
+            // 日志三条路径已经各自加了单引号，保持原样。
+            var command = $"exec '{python}' '{script}' >> '{log}' 2>&1";
             var staging = MediaPaths.ResolveStagingRoot(config.StagingRoot, MediaPaths.MediaRoot);
             var info = new ProcessStartInfo
             {
@@ -207,6 +210,9 @@ public static class BackendManager
                 UseShellExecute = false,
                 CreateNoWindow = true,
             };
+
+            // 端口：后端 console_server.py 的 --port 默认值取自这个变量。
+            info.Environment["JMD_PORT"] = port.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
             // 路径来源：媒体库根 = Jellyfin 库配置解析结果；暂存区 = 配置页（或默认）。
             // 后端 media_download_lib 读这两个变量，读不到才用它自己的硬编码兜底。

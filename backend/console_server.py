@@ -892,9 +892,18 @@ def _handle_signal(signum, frame):  # noqa: ARG001
     raise SystemExit(0)
 
 
+def _default_port() -> int:
+    """端口默认值：插件用 `JMD_PORT` 传进来（命令行里不拼端口，见 BackendManager.Start），
+    手工直接起后端时仍可 `--port` 覆盖。变量缺失或不是数字就退回 8123。"""
+    try:
+        return int(os.environ.get("JMD_PORT") or 8123)
+    except ValueError:
+        return 8123
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="省流版本地控制台服务")
-    parser.add_argument("--port", type=int, default=8123)
+    parser.add_argument("--port", type=int, default=_default_port())
     parser.add_argument("--host", default="127.0.0.1")
     args = parser.parse_args()
 

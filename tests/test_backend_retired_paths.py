@@ -683,6 +683,59 @@ class SiteUrlClassificationTests(unittest.TestCase):
                 except subprocess.TimeoutExpired:
                     server.kill()
 
+    def test_paths_with_spaces_reach_the_backend_unharmed(self):
+        """媒体根含空格（如 /Volumes/XIAOMI SSD2/Media）时必须完整传到后端。
+
+        `BackendManager.Start` 把 python / 脚本 / 日志拼进 `/bin/sh -c` 的字符串，
+        所以任何拼进去的值都会被 shell 再解析一遍：不加引号的路径会被空格切成两半
+        （实机踩到过——两个环境变量都变成 /Volumes/XIAOMI，下载会写到错的地方）。
+        这里用带空格的路径过一遍真实的拼串与 shell 解析。
+        """
+        import shlex
+        import subprocess
+
+        media_root = "/Volumes/XIAOMI SSD2/Media"
+        staging_root = "/Volumes/XIAOMI SSD2/Media/.staging"
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "console_server.py"
+            script.write_text("import os\nprint(repr(os.environ.get('JMD_MEDIA_ROOT')))\n",
+                              encoding="utf-8")
+            log = Path(tmp) / "backend.log"
+
+            # 与 BackendManager.Start 同一拼法：三条路径必须各自加单引号。
+            # 先钉住生产代码里真的是这个形状，下面跑的才算「生产拼法」而不是测试自己复读
+            # 一遍引号（否则把 C# 里的引号删掉，这条用例照样绿，就失去守卫意义了）。
+            manager = (ROOT / "Jellyfin.Plugin.JellyfinDownloader" / "BackendManager.cs").read_text(encoding="utf-8")
+            self.assertIn(
+                """var command = $"exec '{python}' '{script}' >> '{log}' 2>&1";""",
+                manager, "python / 脚本 / 日志三条路径必须各自加单引号")
+            command = "exec '%s' '%s' >> '%s' 2>&1" % (sys.executable, script, log)
+            env = dict(os.environ,
+                       JMD_MEDIA_ROOT=media_root,
+                       JMD_STAGING_ROOT=staging_root,
+                       JMD_PORT="8124")
+            proc = subprocess.run(["/bin/sh", "-c", command], env=env,
+                                  capture_output=True, text=True, timeout=30)
+
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            # 启动行把 stdout 重定向进日志（与 BackendManager 的拼法一致），所以读日志
+            self.assertTrue(log.exists(), "日志重定向没生效")
+            self.assertEqual(log.read_text(encoding="utf-8").strip(), repr(media_root),
+                             "媒体根被 shell 切断了——下载会落到错误目录")
+            # 整条命令行按 shell 规则切出来的 argv：三条路径各占一个参数，不多不少
+            argv = shlex.split(command)
+            self.assertEqual(argv[0], "exec")
+            self.assertIn(script.as_posix(), argv)
+            self.assertIn(log.as_posix(), argv)
+            self.assertEqual(env["JMD_STAGING_ROOT"], staging_root)
+
+        # 端口不再拼进命令行，而是走后端读得到的 JMD_PORT
+        manager = (ROOT / "Jellyfin.Plugin.JellyfinDownloader" / "BackendManager.cs").read_text(encoding="utf-8")
+        self.assertIn('info.Environment["JMD_PORT"]', manager)
+        self.assertNotIn("--port {port}", manager)
+        backend = (BACKEND / "console_server.py").read_text(encoding="utf-8")
+        self.assertIn('os.environ.get("JMD_PORT")', backend)
+
     def test_the_backend_announces_itself_with_the_same_marker_the_plugin_looks_for(self):
         """自身标识是 C# 与 Python 之间的字面量契约。
 
