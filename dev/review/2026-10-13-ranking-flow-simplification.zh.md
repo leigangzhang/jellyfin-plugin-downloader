@@ -32,14 +32,14 @@
 - **建议（第二轮，`237ee8b` 关闭）** —— 退役名字的 AST 守卫可被 `getattr(o, "measured_speed_" + "mbps")`、`"".join([...])`、`%` 格式化、`import speed_probe as sp` 绕过。影响：退役路径可能悄悄 回来而没人发现。证据：第二轮用这些写法实测全绿。
 - **建议（第二轮，`237ee8b` 关闭）** —— 严格按季的收口只在 `main()` 末尾跑，而 `collect` 每完成一个 关键词就落一次盘；被杀的那一轮会留下未收口的文件。
 - **建议（第二轮，`237ee8b` 关闭）** —— `CANDIDATE_LINES_SKIPPED` 把用户文件里最多 60 个字符抄进 任务日志；「仅对云盘候选打分」那句在云盘候选文件被读之前就打印了。
-- **未修（在使用者另一个会话正在改的文件里）** —— 保存配置会无条件重启后端，而 `BackendManager.KillByPort` 会杀掉该端口上的每个 pid，于是把端口填成 Jellyfin 自己的端口就是 杀掉 Jellyfin；`POST {"btSites":[null]}` 会 500；C# 的 `IsHttpUrl` 接受了 Python 侧拒绝的值。
+- **阻塞项（第一、二轮，由另一个会话在 `agent/config-page-layout` 上关闭，合并为 `0cd4b4a`）** —— 保存配置会无条件重启后端，而 `BackendManager.KillByPort` 会杀掉该端口上的每个 pid，于是把端口填成 Jellyfin 自己的就是杀掉 Jellyfin；`POST {"btSites":[null]}` 会 500；C# 的 `IsHttpUrl` 接受了 Python 侧拒绝的值。那个分支把「杀进程」换成端口递增探测、让后端带 `SERVICE_ID` 自证身份（外部 HTTP 服务不再被误认成它）、把分类不出来的地址**拒绝**而不是兜成 `diao`，并补上配置页需要的 kind 往返。
 
 ## 归宿
 
 - **变成了一条检查（check）** —— `tests` 面：`CloudChannelWiringTests.test_a_stale_candidate_file_is_not_fed_to_the_probe` / `test_each_round_gets_its_own_candidate_file`、`MissingCandidateFileTests`、 `StrictSeasonFilterTests.test_a_killed_round_lands_already_filtered_candidates`、 `SeasonDetectionTests`、`SeasonRecognitionHasOneHome`，以及 `RetiredFragmentGuardTests` 里的 字面量/拼接/import 用例。
 - **变成了一条规则** —— 决策记录 `2026-10-13-ranking-flow-simplification`（后果段：严格按季由显式 季标记收口；验证段 `[B10]`–`[B12]`），以及 AST 守卫自己的 docstring：写明它抓不到什么。
 - **刻意什么都不做** —— `"".join([...])`、`%` 格式化、`bytes`、先把名字拼进变量这类写法守卫抓不到； 静态穷举它们的维护成本高过它们藏住的缺陷，而它们能复活的那些退役路径已有行为测试覆盖。
-- **刻意什么都不做（在别处未修）** —— 使用者那三个正在改的文件里的发现只报告、不打补丁：那属于正在 被另一个会话重新设计的界面。
+- **在所归属的那个界面上修掉了** —— 配置页 / Controller / `BackendManager` 里的发现当时只报告不打补丁，另一个会话的分支（`agent/config-page-layout@f801a37`）把三条全关了；把它们合进来的那次合并只遇到两处纯注释冲突，两侧都保留。
 
 ## 刻意承担的风险
 

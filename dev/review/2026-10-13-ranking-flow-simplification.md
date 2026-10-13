@@ -35,14 +35,14 @@ Round 1 (`c0ba28a`) and round 2 (`7d4b976`); every one is closed unless marked o
 - **Suggestion (round 2, closed in `237ee8b`)** — the retired-name AST guard was bypassed by `getattr(o, "measured_speed_" + "mbps")`, `"".join([...])`, `%`-formatting and `import speed_probe as sp`. Impact: a retired path could return unnoticed. Evidence: round 2's green run over those shapes.
 - **Suggestion (round 2, closed in `237ee8b`)** — the strict filter ran only at the end of `main()`, while `collect` lands progress per keyword; a killed round left an unfiltered file.
 - **Suggestion (round 2, closed in `237ee8b`)** — `CANDIDATE_LINES_SKIPPED` copied up to 60 characters of the user's file into the job log, and the "only scoring cloud candidates" line printed before the extras file was read.
-- **Open, in files the user is editing in another session** — saving the configuration restarts the backend unconditionally and `BackendManager.KillByPort` kills every pid listening on that port, so setting the port to Jellyfin's own kills Jellyfin; `POST {"btSites":[null]}` raises a 500; the C# `IsHttpUrl` accepts values the Python side rejects.
+- **Blocker (round 1 and 2, closed by the other session on `agent/config-page-layout`, merged as `0cd4b4a`)** — saving the configuration restarted the backend unconditionally and `BackendManager.KillByPort` killed every pid listening on that port, so setting the port to Jellyfin's own killed Jellyfin; `POST {"btSites":[null]}` raised a 500; the C# `IsHttpUrl` accepted values the Python side rejected. The branch replaces the kill with an incrementing port probe, makes the backend announce itself (`SERVICE_ID`) so a foreign HTTP service is not mistaken for it, rejects addresses the classifier cannot place instead of defaulting them to `diao`, and adds the kind round-trip the page needs.
 
 ## Follow-up
 
 - **Became a check** — `tests` surface: `CloudChannelWiringTests.test_a_stale_candidate_file_is_not_fed_to_the_probe` / `test_each_round_gets_its_own_candidate_file`, `MissingCandidateFileTests`, `StrictSeasonFilterTests.test_a_killed_round_lands_already_filtered_candidates`, `SeasonDetectionTests`, `SeasonRecognitionHasOneHome`, and the fragment/import cases in `RetiredFragmentGuardTests`.
 - **Became a rule** — the decision record `2026-10-13-ranking-flow-simplification` (Consequences: strict season is closed by explicit markers; Testing `[B10]`–`[B12]`), and the AST guard's own docstring now states what it cannot catch.
 - **Deliberately nothing** — `"".join([...])`, `%`-formatting, `bytes` and variable-assembled names are not caught by the guard; enumerating them statically costs more than the defect they hide, and the retired paths they would resurrect are already covered by behaviour tests.
-- **Deliberately nothing (open elsewhere)** — the three findings in the user's in-flight files are reported, not patched: they belong to the surface being redesigned in another session.
+- **Fixed on the surface they belonged to** — the findings in the configuration page, the controller and `BackendManager` were reported rather than patched, and the other session's branch (`agent/config-page-layout@f801a37`) closed all three; the merge that brought them in resolved two comment-only conflicts by keeping both sides.
 
 ## Deliberate risks
 

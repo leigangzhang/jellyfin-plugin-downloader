@@ -31,17 +31,22 @@ no UI called that endpoint.
 Configuration moved into one home, the search became a loop over stations with the
 publisher keywords first, and the retired paths were deleted rather than disabled.
 
-1. **`backend/source_config.py` owns both lists.** `JMD_BT_SITES` (a JSON array of
-   `{name, kind, base_url, web_search_url}`) and `JMD_L1_KEYWORDS` (an array of query
-   suffixes). A station needs at least one entrance: `base_url` + `kind` for magnets
-   (`kind` selects the adapter — `diao` for the structured search API, `torrents-csv` for
-   the aggregate index), and/or `web_search_url` for the cloud channel. `web_search_url`
-   may stand alone — the kind of site that publishes cloud shares and has no search API is
-   exactly the cloud channel's usual entrance, and it is normalised to `kind: ""` so the
-   magnet side never treats it as a station. Empty means the built-in defaults: the two
-   stations already in use, and the two publisher signatures that were measured to work. A
-   malformed list is reported (`SOURCE_CONFIG_ERROR`) and search exits 2; it is never
-   silently replaced by the defaults.
+1. **`backend/source_config.py` owns both lists.** `JMD_BT_SITES` and `JMD_L1_KEYWORDS`
+   (arrays; the station entries are `{name, kind, base_url, web_search_url}`).
+   `JMD_L1_KEYWORDS` entries are query suffixes appended to the film title.
+   **A station is one address** (the config page writes one line per station and puts the
+   typed address in `base_url`): an address containing `{q}` is that station's search page
+   and therefore a cloud-channel entrance — the kind of site that publishes cloud shares
+   and has no search API is exactly the cloud channel's usual entrance, so it is normalised
+   to `kind: ""` and the magnet side never treats it as a station. Any other address is
+   classified by host: the two built-in hosts get their default API path appended when only
+   the host was typed, and an unknown host is used as the API exactly as written unless the
+   caller declares a `kind` explicitly (legacy XMLs, scripts and self-hosted stations keep
+   working through those declared fields). A station needs at least one of the two
+   entrances. Empty means the built-in defaults: the two stations already in use, and the
+   two publisher signatures that were measured to work. A malformed list is reported
+   (`SOURCE_CONFIG_ERROR`) and search exits 2; it is never silently replaced by the
+   defaults.
 2. **Every configured station is asked, and the budget is divided.** The per-keyword wall
    clock is split evenly across the API-kind stations, with the same treatment for the
    non-API ones inside their reserved slice. The worst case therefore stays
@@ -63,9 +68,9 @@ publisher keywords first, and the retired paths were deleted rather than disable
 
    The last three lines are why the defaults are not the phrase that reads like the
    publisher's name, and why the anchor tier is not combined with a season hint.
-4. **The cloud channel is each station's `web_search_url`.** A station that declares one
-   (`.../search?q={q}`, required to contain `{q}`) is fetched through the existing
-   `pan_search.py --page` path, and the console says so per station. No station declaring
+4. **The cloud channel is every station address that contains `{q}`.** Those
+   (`.../search?q={q}`) are fetched through the existing `pan_search.py --page` path, and
+   the console says so per station. No station declaring
    one prints `云盘通道没有入口` instead of returning a silent empty. A magnet search whose
    station list has no `base_url` at all says `NO_MAGNET_STATION` and exits 4 rather than
    reporting an empty pool.
@@ -113,8 +118,9 @@ rather than guessed at, because dropping a whole-season pack is harder to notice
 leaking one show. A station list longer than one divides the same
 budget into smaller slices, so each station's own recall drops. A `1.0.0.7` configuration
 XML has none of these keys and keeps working: an absent list means "use the backend's
-built-in defaults". A station with only a `web_search_url` contributes nothing to the
-magnet channels and costs no budget slice — it is an entry for the cloud channel alone. Pan candidates parsed from a web page carry the bare title as their
+built-in defaults". A station whose address carries `{q}` (a cloud search page)
+contributes nothing to the magnet channels and costs no budget slice — it is an entry for
+the cloud channel alone. Pan candidates parsed from a web page carry the bare title as their
 name (`extract_share_entries` records the link, not the release name), so their quality
 score is coarser than the removed Pansou path's, which read the search result's `note`;
 that is a known gap, not a contract.
@@ -164,6 +170,13 @@ that is a known gap, not a contract.
   and asserts that a candidate with no season marker (a pack, a bare title, `第11集`) is
   kept. Both were watched red: removing the word forms fails the detection cases, and
   treating "no marker" as "another season" fails the keep cases.
+- [B13] `tests` — the single-address page contract is pinned by the guards that came with
+  the merged `agent/config-page-layout` branch (`SiteUrlClassificationTests`): bare hosts
+  get the built-in search paths, an address with `{q}` becomes the cloud page, an address
+  the classifier cannot place is *rejected* instead of being silently treated as a magnet
+  station, an explicitly declared kind still carries a self-hosted station, the page
+  round-trips the kind it shows, and the backend's `SERVICE_ID` marker is the same literal
+  the plugin looks for.
 - [B9] `tests` — the cloud-only station contract: `source_config` accepts a station with
   a `web_search_url` and no `base_url` (and rejects one with neither entrance), and
   `magnet_sites()` keeps it out of both magnet channels. `tests/test_backend_sources` pins
