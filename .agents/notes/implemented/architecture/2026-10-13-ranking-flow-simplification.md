@@ -132,6 +132,14 @@ that is a known gap, not a contract.
   configuration surface changed on both sides of the plugin/C# boundary.
 - [B6] `docs` — README's feature table, configuration table and developer notes were
   updated in the same change, and both predecessor records link here.
+- [B8] `source` — one live round on 2026-10-13 (real index, real swarm, no fakes):
+  `search_pool.py 漫长的季节 --publisher-only` ran the two configured keywords as its only
+  queries (`[anchor] 漫长的季节 高清剧集网` → 61 hits in 5.4 s over 7 pages, stopped by
+  `--enough`), the publisher name filter kept all 61, and `probe_magnets.py` over the six
+  largest of them reported `stage_seconds = {health, metadata, live_check}` — no speed stage
+  — with a `speed` breakdown of `{seeds_prior, seed_source, seeds, peers, mode,
+  score_source}` and `live_check.reused_from_enrich = 1` (the re-score path). Best score
+  72.38 with a magnet present. Recorded because the offline suite cannot see the real index.
 - [B7] `packaging` — both new configuration keys were round-tripped through
   `System.Xml.Serialization.XmlSerializer` against the built plugin assembly (the serializer
   Jellyfin uses for `BasePluginConfiguration`): two stations carrying all four fields and two

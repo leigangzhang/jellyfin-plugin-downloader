@@ -108,6 +108,14 @@ XML 里没有这几个键，仍然照常工作：清单缺席 = 用后端内置�
   的配置面都改了。
 - [B6] `docs` —— README 的功能表、配置表与开发说明在同一次改动里更新，两份前驱决策记录
   也链到这里。
+- [B8] `source` —— 2026-10-13 跑了一轮**真实**的（真索引、真 swarm，无桩）：
+  `search_pool.py 漫长的季节 --publisher-only` 只剩两条配置的关键字查询
+  （`[anchor] 漫长的季节 高清剧集网` → 7 页 61 条、5.4s，被 `--enough` 收工），发布者按名
+  收口后 61 条全留；对这 61 条里最大的 6 条跑 `probe_magnets.py`，`stage_seconds =
+  {health, metadata, live_check}`——**没有 speed 阶段**，`speed` 的 breakdown 是
+  `{seeds_prior, seed_source, seeds, peers, mode, score_source}`，
+  `live_check.reused_from_enrich = 1`（re-score 路径）。第 1 名 72.38 分且带磁力。记在这里是
+  因为离线套件看不到真索引。
 - [B7] `packaging` —— 两个新增配置键都用 `System.Xml.Serialization.XmlSerializer` 对着
   **构建出来的插件程序集**做了往返（Jellyfin 就是用它序列化 `BasePluginConfiguration`）：
   两个带全部四个字段的站点与两条关键字组合，序列化 → 反序列化后逐字段完好；而一份两个键
