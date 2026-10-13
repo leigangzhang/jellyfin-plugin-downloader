@@ -36,6 +36,20 @@ The measured-throughput probe is no longer a ranking input. It can only raise a 
 - `backend/search_pool.py` writes those two fields (and never writes `seeds`, which
   announce owns); `backend/probe_magnets.py` carries them onto the scoring record and
   derives a dead-swarm verdict from peers, not from a probe.
+- A second measurement ended the seeders prior's claim to be decisive. Two shows fetched in
+  one session: the first-ranked candidate for one produced no bytes in a 30-second window
+  while a 10-seed candidate for the other sustained 9.3–9.7 MB/s — with no probe input on
+  either side (`measured_speed_mbps` null for both), so announce seeders were doing the
+  deciding and their verdict was the opposite of the outcome (105 seeds, zero bytes). The
+  faster release was also unreachable by title: its publisher names that show
+  `周三俱乐部`, so the pool for it held none of that publisher's releases at all.
+- **The publisher is therefore preferred by name, in two bounded places.** In
+  `backend/candidate_score.py`, a name containing `DDHDTV_SOURCE_TOKENS` (`ddhdtv`,
+  `高清剧集网`) adds `DDHDTV_SOURCE_BONUS = 4.0` to the **total** score, recorded as
+  `breakdown["source_preference"]`; the four dimension scores are bit-identical with and
+  without it. In `backend/search_pool.py`, the ladder gains a `publisher` tier querying
+  `<name> DDHDTV`, placed after the alias/year tiers and before the bare-title tier, and
+  skipped for pure-CJK names (the token is ASCII) and in strict season mode.
 - `backend/speed_probe.py` remains as a manual diagnostic. `backend/console_server.py`
   no longer passes `--speed-probe` on its normal path.
 
@@ -61,6 +75,23 @@ noise into the ranking.
 the real download environment, concurrent trials collide, and it depends on the client
 being up.
 
+**Let the seeders prior decide alone, with no publisher preference.** That is the state the
+second measurement falsified: 105 announced seeds produced no bytes in a 30-second window
+while a 10-seed candidate sustained 9.3–9.7 MB/s. The public swarm cannot see the client's
+offline/cloud acceleration path, which this publisher's repacks appear to reach, so the
+prior was never measuring what the choice depends on.
+
+**Put the publisher bonus in the experience dimension.** Tried and reverted inside the same
+change: a real candidate from that publisher already sat at 99.9/100 experience, so the
+dimension clamped the bonus and it was worth 1.3 points instead of the intended 4.4. A
+preference that vanishes exactly on the candidates it targets is worse than none, because
+the code reads as if it works.
+
+**A larger bonus that makes the publisher win outright.** Declined: at 4.0 the preference
+lifts a one-step resolution difference but loses to a two-step gap with comparable bitrate
+(1080p 78.79 vs 480p + bonus 72.58), which is the intended shape — a preference, not a
+replacement for selection.
+
 ## Consequences
 
 The speed dimension keeps its `0.28` weight and its `0.40` neutral value; `0.05` is now
@@ -71,6 +102,14 @@ and the other three dimensions decide. That is deliberate: revisit it only by ch
 A pool entry written before this decision carries the old field names
 (`seeders`, `seeders_snapshot_age_days`), which no read path recognises; its external
 signal stays silent until the title is searched again.
+
+The publisher preference is bounded and only fires where that name appears, so a pool
+without it ranks exactly as before — this decision cannot fix a show whose releases are
+absent. `DDHDTV_SOURCE_BONUS = 4.0` comes from one measured pair plus the user's
+ten-download record, not from a corpus; the honest route to a defensible number is a
+calibration loop that writes the client's measured speed back into the pool per candidate,
+which does not exist yet. There is no publisher-freshness signal to lean on: the index
+returns names and nothing else about who published, so the name is the only carrier.
 
 ## Testing
 
@@ -86,3 +125,15 @@ signal stays silent until the title is searched again.
   criterion here depends on a live swarm.
 - [A4] `source` — the cost of the surviving probe path per round is bounded by
   `tests/test_backend_search_budget.py` and the budget guard in `probe_magnets.py`.
+- [A5] `tests` — `tests/test_backend_scoring.py` pins the publisher preference: the bonus
+  equals `DDHDTV_SOURCE_BONUS` exactly, it lands in `breakdown.source_preference`, all four
+  dimension scores are identical with and without it, and the bound is stated by bitrate
+  adequacy rather than by resolution label (a two-step gap with comparable bitrate still
+  wins). That file also records why a label-based comparison misleads: quality scores
+  bitrate adequacy, and a fixed-bitrate fixture starves a 2160p candidate while satisfying
+  a 1080p one.
+- [A6] `tests` — `tests/test_backend_sources.py` pins the ladder tier's position and its two
+  skips (pure-CJK name, strict season mode).
+- [A7] `source` — the end-to-end shape was measured, not asserted: searching `挑情丑闻` with
+  the console's own parameters reaches the ladder's publisher tier and the publisher's
+  release enters the pool, which the previous release could not do.
