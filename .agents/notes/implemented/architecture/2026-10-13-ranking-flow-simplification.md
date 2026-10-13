@@ -122,7 +122,12 @@ that is a known gap, not a contract.
   red on a retired symbol, keyword-argument name or CLI-flag constant reappearing anywhere
   under `backend/`; it also pins `speed_probe.py`'s absence, the console's missing
   `/api/verify`, and the `source_config` contract (defaults, validation, caps, `{q}`
-  requirement, `web_search_urls`).
+  requirement, `web_search_urls`). Its `CloudChannelWiringTests` drives a real
+  `console_server._run_search_job` round with the CLI runners replaced, so the cloud
+  channel is pinned by behaviour rather than by a source-string assertion: two stations
+  with web pages produce one `pan_search.py` call carrying both `--page` arguments with the
+  title URL-encoded, and a station list with none produces no call at all plus the
+  `云盘通道没有入口` line.
 - [B2] `tests` — `tests/test_backend_sources.QueryLadderTests` pins the anchor tier's
   position, configured order, CJK coverage and strict-mode presence;
   `run_search_main`/`EndToEndOfflineTests` pin the env-driven station list, the

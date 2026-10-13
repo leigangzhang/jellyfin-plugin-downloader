@@ -1,7 +1,10 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
+using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Text.Json;
 using System.Threading;
 using Jellyfin.Plugin.JellyfinDownloader.Configuration;
@@ -12,8 +15,18 @@ namespace Jellyfin.Plugin.JellyfinDownloader;
 public static class BackendManager
 {
     private const int DefaultPort = 8123;
+
+    /// <summary>端口自增时最多往后试这么多个（8123→8124→…）。</summary>
+    private const int PortScanSpan = 20;
     private static readonly object Gate = new();
     private static Process? _process;
+    private static int? _activePort;
+
+    /// <summary>
+    /// Gets 当前真正监听的端口。插件没有托管后端时退回配置的端口——端口只在
+    /// <see cref="Start"/> 里分配，分配前问它拿到的是「上次用的那个」。
+    /// </summary>
+    public static int EffectivePort => _activePort ?? ConfiguredPort();
 
     /// <summary>Gets the configured base URL.</summary>
     public static string BaseUrl
@@ -21,7 +34,15 @@ public static class BackendManager
         get
         {
             var url = Plugin.Instance?.Configuration?.BackendBaseUrl;
-            return string.IsNullOrWhiteSpace(url) ? "http://127.0.0.1:8123" : url.TrimEnd('/');
+            if (!string.IsNullOrWhiteSpace(url)
+                && url.Contains(":" + EffectivePort, StringComparison.Ordinal))
+            {
+                return url.TrimEnd('/');
+            }
+
+            // 端口可能因为被占用而自增过，BaseUrl 跟着实际监听的端口走，
+            // 否则代理会打到别人（或上一次留下的）后端上。
+            return "http://127.0.0.1:" + EffectivePort;
         }
     }
 
@@ -54,7 +75,10 @@ public static class BackendManager
         var detected = PythonLocator.Detect(config?.BackendPython);
         var python = PythonLocator.ResolveExecutable(config?.BackendPython);
         var script = string.IsNullOrWhiteSpace(config?.BackendScript) ? BundledScriptPath() : config!.BackendScript;
-        var port = config?.BackendPort is > 0 ? config!.BackendPort : DefaultPort;
+        var port = EffectivePort;
+        // 用户要求的那个端口：与 port 不同时说明它被占用、实际端口是自增出来的，
+        // 配置页那行「服务端口」据此显示原因。
+        var portRequested = ConfiguredPort();
         var staging = MediaPaths.ResolveStagingRoot(config?.StagingRoot, MediaPaths.MediaRoot);
         var running = false;
         int? pid = null;
@@ -88,6 +112,7 @@ public static class BackendManager
             pythonFound = detected.Found,
             script,
             port,
+            portRequested,
             pythonExists = detected.Found || File.Exists(python),
             scriptExists = File.Exists(script),
             mediaRoot = MediaPaths.MediaRoot,
@@ -109,6 +134,11 @@ public static class BackendManager
                 return (true, "已在运行（插件启动）");
             }
 
+            // 端口自增的前提是「异常退出留下的旧后端」不能占着端口：先按记录的端口
+            // 收掉它。只认插件自己启动过的那个端口，不会去动别人的进程。
+            KillByPort(EffectivePort);
+            Thread.Sleep(200);
+
             if (Reachable())
             {
                 return (true, "已在运行（外部进程）");
@@ -125,7 +155,6 @@ public static class BackendManager
             var script = string.IsNullOrWhiteSpace(config.BackendScript)
                 ? BundledScriptPath()
                 : config.BackendScript;
-            var port = config.BackendPort <= 0 ? DefaultPort : config.BackendPort;
 
             if (!File.Exists(python))
             {
@@ -135,6 +164,14 @@ public static class BackendManager
             if (!File.Exists(script))
             {
                 return (false, $"脚本不存在：{script}");
+            }
+
+            // 端口分配放在启动前置检查之后：这些检查失败时端口并没有被拿走。
+            var requested = ConfiguredPort();
+            var port = ResolvePort(requested);
+            if (port != requested)
+            {
+                _activePort = port;
             }
 
             var log = LogPath();
@@ -172,10 +209,14 @@ public static class BackendManager
             try
             {
                 _process = Process.Start(info);
-                return (true, $"已启动（pid {_process?.Id}）");
+                _activePort = port;
+                return (true, port == requested
+                    ? $"已启动（pid {_process?.Id}）"
+                    : $"已启动（pid {_process?.Id}，端口 {requested} 已被占用，改用 {port}）");
             }
             catch (Exception ex)
             {
+                _activePort = null;
                 return (false, ex.Message);
             }
         }
@@ -214,16 +255,92 @@ public static class BackendManager
             : (true, "本就未运行");
     }
 
-    /// <summary>Stops whatever is listening on the port and starts a fresh backend.</summary>
+    /// <summary>Stops whatever is listening on the backend port and starts a fresh backend.</summary>
     public static (bool Ok, string Detail) Restart()
     {
-        var config = Plugin.Instance?.Configuration;
-        var port = config?.BackendPort is > 0 ? config!.BackendPort : DefaultPort;
+        // 先放掉插件自己那个端口：端口已经被外部进程占用时不去杀它，
+        // Start 会按 8123 起往上找下一个可用端口。
+        var port = EffectivePort;
         Stop();
+        _activePort = null;
         KillByPort(port);
         Thread.Sleep(600);
         var result = Start();
         return (result.Ok, "已重启：" + result.Detail);
+    }
+
+    /// <summary>配置里写的端口；没配或配得不合法时用默认端口。</summary>
+    private static int ConfiguredPort()
+    {
+        var port = Plugin.Instance?.Configuration?.BackendPort ?? 0;
+        return port is > 0 and <= 65535 ? port : DefaultPort;
+    }
+
+    /// <summary>
+    /// 端口从 <paramref name="requested"/> 起递增，取第一个没人监听的。
+    /// 上限是 <paramref name="requested"/> 之后 <see cref="PortScanSpan"/> 个端口：
+    /// 连续这么多端口都被占是异常情况，那时宁可复用 requested 让启动失败可见。
+    /// </summary>
+    private static int ResolvePort(int requested)
+    {
+        for (var port = requested; port < requested + PortScanSpan; port++)
+        {
+            if (port > 65535)
+            {
+                break;
+            }
+
+            if (IsPortFree(port))
+            {
+                return port;
+            }
+        }
+
+        return requested;
+    }
+
+    /// <summary>
+    /// 端口能不能拿来监听。bind 失败也别急着判「占用」：TIME_WAIT 残留下来的
+    /// 连接会让 bind 失败但并没有进程在听，所以再用 connect 复核一次。
+    /// </summary>
+    private static bool IsPortFree(int port)
+    {
+        TcpListener? probe = null;
+        try
+        {
+            probe = new TcpListener(IPAddress.Loopback, port);
+            probe.Start();
+            return true;
+        }
+        catch (SocketException)
+        {
+            return !IsPortListening(port);
+        }
+        finally
+        {
+            try
+            {
+                probe?.Stop();
+            }
+            catch (SocketException)
+            {
+                // 探测失败不影响结论：停止监听本身没有别的失败模式。
+            }
+        }
+    }
+
+    private static bool IsPortListening(int port)
+    {
+        try
+        {
+            using var client = new TcpClient();
+            return client.ConnectAsync(IPAddress.Loopback, port).Wait(TimeSpan.FromMilliseconds(200))
+                && client.Connected;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
     }
 
     /// <summary>

@@ -99,7 +99,10 @@ XML 里没有这几个键，仍然照常工作：清单缺席 = 用后端内置�
 - [B1] `tests` —— `tests/test_backend_retired_paths.py` 是本次新增的守卫：它的 AST 扫描
   在 `backend/` 下任何位置重新出现退役符号、关键字参数名或 CLI flag 常量时变红；同时钉住
   `speed_probe.py` 不存在、控制台不再有 `/api/verify`，以及 `source_config` 的契约
-  （默认值、校验、上限、`{q}` 要求、`web_search_urls`）。
+  （默认值、校验、上限、`{q}` 要求、`web_search_urls`）。它的 `CloudChannelWiringTests`
+  把 CLI 调用换成记录器、真跑一轮 `console_server._run_search_job`，所以云盘通道是用行为
+  钉住的、不是源码字符串断言：两个带网页地址的站 → 一次 `pan_search.py` 调用里带两个
+  `--page`（片名已 URL 编码）；一个都没填 → 一次都不调用，并打印「云盘通道没有入口」。
 - [B2] `tests` —— `tests/test_backend_sources.QueryLadderTests` 钉住锚点档的位置、配置顺序、
   中文片名覆盖与严格模式下同样运行；`run_search_main`/`EndToEndOfflineTests` 钉住站点清单
   与关键字来自环境变量，以及坏配置走 `SOURCE_CONFIG_ERROR` 退出。
