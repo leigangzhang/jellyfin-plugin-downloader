@@ -1,14 +1,14 @@
 {
   "category": "General",
-  "changelog": "1.0.0.4：选种新增发布者偏好——命中「高清剧集网发布 www.DDHDTV.com」的候选在总分上加固定 4 分（不并入任何维度，可在面板 breakdown 里看到）；搜索阶梯新增「片名 + DDHDTV」档位，能搜到按剧名够不着的该源资源。",
+  "changelog": "1.0.0.5：修复清理逻辑把迅雷「暂停/失败」（state=4）的任务当成可删残留的问题——现在只要任务仍在迅雷任务库里，其目录与 .magent 种子一律不动，必须显式 --allow-task-deletion 才放行；该缺陷曾导致恢复下载报「获取种子文件失败」。",
   "description": "在电影/剧集/单集详情页提供「获取资源」入口（仅管理员）。",
   "guid": "b7f3e2a1-6c4d-4e9b-9a21-7d5c8e1f0a33",
   "name": "Jellyfin Downloader",
   "overview": "详情页「获取资源」：搜索源、打分，列出 ≥60 分候选。",
   "owner": "ray",
   "targetAbi": "10.11.11.0",
-  "timestamp": "2026-10-13T10:00:00.0000000Z",
-  "version": "1.0.0.4",
+  "timestamp": "2026-10-13T11:00:00.0000000Z",
+  "version": "1.0.0.5",
   "status": "Active",
   "autoUpdate": false,
   "assemblies": []
