@@ -104,10 +104,13 @@ in the release name in a form this index matches.
 ## Consequences
 
 The default round is now two stations, two anchor queries per name, no speed probe; the
-cloud channel stays inert until a station declares a web page. Strict-season searches see
-the show's other seasons through the anchor tier, because the tier carries no season
-marker and there is no downstream season filter — recorded here so the next change makes
-it deliberate rather than accidental. A station list longer than one divides the same
+cloud channel stays inert until a station declares a web page. The anchor tier carries no
+season marker, so strict-season searches *would* see the show's other seasons; an explicit
+season-marker filter closes that (`candidate_seasons` / `strict_season_filter`), and it
+recognises the three forms a release name actually uses — `SxxEyy`, a bare `Sxx`,
+`第N季`/`第X季` and `Season N` — as a union. A candidate that states no season is kept
+rather than guessed at, because dropping a whole-season pack is harder to notice than
+leaking one show. A station list longer than one divides the same
 budget into smaller slices, so each station's own recall drops. A `1.0.0.7` configuration
 XML has none of these keys and keeps working: an absent list means "use the backend's
 built-in defaults". A station with only a `web_search_url` contributes nothing to the
@@ -143,6 +146,17 @@ that is a known gap, not a contract.
   configuration surface changed on both sides of the plugin/C# boundary.
 - [B6] `docs` — README's feature table, configuration table and developer notes were
   updated in the same change, and both predecessor records link here.
+- [B10] `tests` — the two high-severity findings from the review round: a round whose
+  non-API stations cannot produce a candidate file no longer hands the *previous* round's
+  `/tmp/<slug>.magnets` to the probe (`CloudChannelWiringTests` pins both directions), and
+  the probe no longer aborts before reading `--extra-candidates` when that file is missing
+  (`MissingCandidateFileTests`), so cloud candidates survive a magnet-side failure.
+- [B11] `tests` — the strict-season filter is pinned in both error directions:
+  `SeasonDetectionTests` covers the three explicit forms and the numerals
+  (`cn_number`), `StrictSeasonFilterTests` drops another season for `Sxx` and for `第二季`,
+  and asserts that a candidate with no season marker (a pack, a bare title, `第11集`) is
+  kept. Both were watched red: removing the word forms fails the detection cases, and
+  treating "no marker" as "another season" fails the keep cases.
 - [B9] `tests` — the cloud-only station contract: `source_config` accepts a station with
   a `web_search_url` and no `base_url` (and rejects one with neither entrance), and
   `magnet_sites()` keeps it out of both magnet channels. `tests/test_backend_sources` pins
