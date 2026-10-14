@@ -9,6 +9,14 @@
     /* 页面风格跟控制台其它插件页（如 TheTVDB）对齐：标题用 .sectionTitle、输入框用
        .emby-input、说明用 .fieldDescription，字体与行距全部交回 Jellyfin 主题。
        这里只保留主题没有的排布：一行一条的列表、行尾按钮组、端口行。 */
+
+    /* 行尾按钮区的宽度与行间距做成变量：媒体目录输入框要按同一套数值算出等长宽度，
+       两处引用同一个来源，改一处不会让另一处漂移。 */
+    #JellyfinDownloaderConfigPage {
+      --jdl-actions-width: 168px;
+      --jdl-row-gap: 8px;
+    }
+
     #JellyfinDownloaderConfigPage .jdl-list {
       display: flex;
       flex-direction: column;
@@ -24,10 +32,18 @@
     #JellyfinDownloaderConfigPage .jdl-list__row {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: var(--jdl-row-gap);
       width: 100%;
       margin: 0;
       padding: 0;
+      box-sizing: border-box;
+    }
+
+    /* 媒体目录：没有行尾按钮，但要和资源站点/关键词的输入框**等长**——
+       按同一套「整行宽 - 按钮区 - 行间距」算出来，左边缘本来就与列表对齐。 */
+    #JellyfinDownloaderConfigPage #jdl-media {
+      width: calc(100% - var(--jdl-actions-width) - var(--jdl-row-gap));
+      max-width: 100%;
       box-sizing: border-box;
     }
 
@@ -42,7 +58,7 @@
        这样 (a) 所有输入框等长、(b) 上移/下移/删除三列上下对齐、
        (c) 新增 + 落在第四列，比删除键再往右一点。 */
     #JellyfinDownloaderConfigPage .jdl-list__buttons {
-      flex: 0 0 168px;
+      flex: 0 0 var(--jdl-actions-width);
       display: inline-flex;
       align-items: center;
       justify-content: flex-start;

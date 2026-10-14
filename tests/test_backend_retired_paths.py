@@ -1053,16 +1053,26 @@ class SiteUrlClassificationTests(unittest.TestCase):
         self.assertIn("padding: 0", list_block, "列表必须清掉主题的内缩")
         self.assertIn("margin: 0", list_block)
 
-        # 媒体目录输入框必须保持满宽：它没有按钮区，跟着列表去「等长」是误改
-        # （上一轮我的提交信息就把这条说错了，这里把范围钉死）
-        self.assertNotIn("#jdl-media {", page, "别给媒体目录输入框加宽度规则")
+        # 媒体目录输入框要和列表里的输入框等长：宽度必须由同一套变量算出来
+        # （--jdl-actions-width / --jdl-row-gap），不能写死一个数字——写死就会在
+        # 按钮区宽度变化时与列表漂移。
+        self.assertIn("--jdl-actions-width:", page, "按钮区宽度要做成共享变量")
+        self.assertIn("--jdl-row-gap:", page, "行间距要做成共享变量")
+        media_rule = page[page.index("#jdl-media {"):]
+        media_rule = media_rule[:media_rule.index("}")]
+        self.assertIn("calc(100% - var(--jdl-actions-width) - var(--jdl-row-gap))",
+                      media_rule, "媒体目录宽度必须与列表用同一套变量算")
+        buttons_uses_var = page[page.index(".jdl-list__buttons {"):]
+        buttons_uses_var = buttons_uses_var[:buttons_uses_var.index("}")]
+        self.assertIn("flex: 0 0 var(--jdl-actions-width)", buttons_uses_var,
+                      "按钮区宽度必须引用同一个变量，否则两处会漂移")
         media_tag = page[page.index('id="jdl-media"'):]
         media_tag = media_tag[:media_tag.index(">")]
         self.assertNotIn("style=", media_tag, "媒体目录输入框不该有内联宽度")
 
         buttons_block = page[page.index(".jdl-list__buttons {"):]
         buttons_block = buttons_block[:buttons_block.index("}")]
-        self.assertIn("flex: 0 0 168px", buttons_block,
+        self.assertIn("flex: 0 0 var(--jdl-actions-width)", buttons_block,
                       "按钮区必须定宽，否则输入框长度会随按钮个数变化")
         self.assertNotIn("flex: 0 0 auto", buttons_block)
 
