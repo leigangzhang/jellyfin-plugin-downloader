@@ -32,7 +32,14 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Web/inject.js" />
+    <!-- /script 由下面 5 个分片按声明顺序拼接而成（分片本身不是完整脚本：第一片开 IIFE，
+         最后一片收尾）。顺序必须与 JellyfinDownloaderController.ScriptSegments 一致，
+         改完必须 ./build.sh 才生效。 -->
+    <EmbeddedResource Include="Web/inject_01_core.js" />
+    <EmbeddedResource Include="Web/inject_02_entry.js" />
+    <EmbeddedResource Include="Web/inject_03_panel.js" />
+    <EmbeddedResource Include="Web/inject_04_search.js" />
+    <EmbeddedResource Include="Web/inject_05_render.js" />
     <EmbeddedResource Include="Web/style.css" />
     <EmbeddedResource Include="Configuration/configPage.html" />
   </ItemGroup>

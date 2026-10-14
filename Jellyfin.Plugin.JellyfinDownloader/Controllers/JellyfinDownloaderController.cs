@@ -22,7 +22,9 @@ namespace Jellyfin.Plugin.JellyfinDownloader.Controllers;
 [Route("JellyfinDownloader")]
 public class JellyfinDownloaderController : ControllerBase
 {
-    private const string ScriptResource = "Jellyfin.Plugin.JellyfinDownloader.Web.inject.js";
+    // Web/inject.js 已按职责拆成这些分片：前缀 + 段名 + 后缀 = 资源名。
+    private const string ScriptSegmentPrefix = "Jellyfin.Plugin.JellyfinDownloader.Web.inject_";
+    private const string ScriptSegmentSuffix = ".js";
     private const string StyleResource = "Jellyfin.Plugin.JellyfinDownloader.Web.style.css";
     private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromMinutes(30) };
     private static readonly object PackageGate = new();
@@ -48,13 +50,13 @@ public class JellyfinDownloaderController : ControllerBase
 
     private static readonly string[] DefaultKeywords = { "高清剧集网", "DDHDTV", "BBHDTV" };
 
-    /// <summary>Gets the injected client script.</summary>
+    /// <summary>Gets the injected client script (fragments joined in <see cref="ScriptSegments"/> order).</summary>
     [HttpGet("script")]
     [AllowAnonymous]
     public IActionResult GetScript()
     {
         NoCache();
-        return Content(ReadResource(ScriptResource), "application/javascript; charset=utf-8");
+        return Content(ReadScript(), "application/javascript; charset=utf-8");
     }
 
     /// <summary>Gets the injected stylesheet.</summary>
@@ -595,6 +597,21 @@ public class JellyfinDownloaderController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// /script 输出由这些分片按此顺序拼成——这一列的顺序就是浏览器里的代码顺序。
+    /// 新增 / 改名分片时三处必须同步：Web/ 下的文件、csproj 的 EmbeddedResource、
+    /// 这份列表。<see cref="DescribeScriptSegmentMismatch"/> 拿程序集里真实存在的资源
+    /// 反查这份列表，因为「加了分片却忘了登记」与服务端静默少发代码是同一件事。
+    /// </summary>
+    private static readonly string[] ScriptSegments =
+    {
+        "01_core",
+        "02_entry",
+        "03_panel",
+        "04_search",
+        "05_render",
+    };
+
     private static string ReadResource(string name)
     {
         var assembly = typeof(Plugin).Assembly;
@@ -606,6 +623,60 @@ public class JellyfinDownloaderController : ControllerBase
 
         using var reader = new StreamReader(stream, Encoding.UTF8);
         return reader.ReadToEnd();
+    }
+
+    /// <summary>
+    /// 按 <see cref="ScriptSegments"/> 的顺序读分片并拼接。拼接结果必须与拆分前的
+    /// Web/inject.js 逐字节相同：分片边界都落在顶层语句之间的整行上，拼接即还原原文件。
+    /// </summary>
+    private static string ReadScript()
+    {
+        var assembly = typeof(Plugin).Assembly;
+        var mismatch = DescribeScriptSegmentMismatch(assembly.GetManifestResourceNames());
+        if (mismatch is not null)
+        {
+            throw new InvalidOperationException(mismatch);
+        }
+
+        var script = new StringBuilder();
+        foreach (var segment in ScriptSegments)
+        {
+            script.Append(ReadResource(SegmentResourceName(segment)));
+        }
+
+        return script.ToString();
+    }
+
+    /// <summary>
+    /// 守卫：把装配顺序列表与程序集里真实存在的分片资源对账，不一致就返回要抛出的信息。
+    /// 缺一个 = 顺序表里写了一个不存在的分片；多一个 = 新加了分片却忘了登记。两种都等于
+    /// 服务端静默少发代码，所以宁可让 /script 响亮失败，也不发一份缺块的脚本给浏览器。
+    /// 参数化成「资源名清单」是为了让这条判定可以被独立验证（见修复记录/审查命令）。
+    /// </summary>
+    private static string? DescribeScriptSegmentMismatch(IEnumerable<string> bundledResources)
+    {
+        var bundled = bundledResources.ToList();
+        var declared = ScriptSegments.Select(SegmentResourceName).ToList();
+        var missing = declared.Where(name => !bundled.Contains(name, StringComparer.Ordinal)).ToList();
+        var unlisted = bundled
+            .Where(name => name.StartsWith(ScriptSegmentPrefix, StringComparison.Ordinal)
+                && name.EndsWith(ScriptSegmentSuffix, StringComparison.Ordinal)
+                && !declared.Contains(name, StringComparer.Ordinal))
+            .ToList();
+        if (missing.Count == 0 && unlisted.Count == 0)
+        {
+            return null;
+        }
+
+        return "[JellyfinDownloader] inject.js 分片与 ScriptSegments 对不上：顺序表里缺失 ["
+            + string.Join(", ", missing) + "]，未登记进顺序表 ["
+            + string.Join(", ", unlisted) + "]。请同步 Web/ 下的分片、csproj 的 EmbeddedResource "
+            + "与 JellyfinDownloaderController.ScriptSegments 三处后重新 ./build.sh。";
+    }
+
+    private static string SegmentResourceName(string segment)
+    {
+        return ScriptSegmentPrefix + segment + ScriptSegmentSuffix;
     }
 
     /// <summary>
