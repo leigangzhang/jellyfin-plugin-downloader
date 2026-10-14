@@ -263,6 +263,18 @@ def count_words(text: str) -> int:
     return len(text.split())
 
 
+def count_bytes(text: str) -> int:
+    """Count UTF-8 bytes, the unit a reader's file-size ceiling is stated in.
+
+    This sits beside the line and word counters rather than replacing them: a
+    minified file, or one whose comments are dense CJK, can pass a line budget
+    and still be too large for the reader to open in one call. `50 KB` is the
+    ceiling this repository states for that, and it is a byte count, so a line
+    budget is a proxy that misses exactly the files that motivated the rule.
+    """
+    return len(text.encode("utf-8"))
+
+
 def read_manifest(root: Path, check: dict, key: str) -> dict:
     """Read a check's manifest and require `key` to be a non-empty list."""
     manifest_rel = check.get("manifest")

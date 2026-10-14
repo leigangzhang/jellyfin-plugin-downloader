@@ -278,6 +278,20 @@ def self_test() -> int:
         failed.append("budget-words")
         print("FAIL budget-words: the word ceiling did not fire, or a file under it was rejected")
 
+    # The byte ceiling carries the file-size rule this repository states in bytes, so it
+    # must fire on a file that is short in lines and long in bytes — the shape a proxy
+    # budget misses.
+    byte_check = {"id": "self-budget-bytes", "kind": "budget", "patterns": ["NOTE.md"], "maxBytes": 20}
+    with write_fixtures({"NOTE.md": "x" * 40 + "\n"}) as long_dir:
+        over_bytes = RUNNERS["budget"](Path(long_dir), byte_check)
+    with write_fixtures({"NOTE.md": "short\n"}) as small_dir:
+        under_bytes = RUNNERS["budget"](Path(small_dir), byte_check)
+    if over_bytes and not under_bytes:
+        print(f"PASS budget-bytes: a file over its byte ceiling was rejected ({over_bytes[0]})")
+    else:
+        failed.append("budget-bytes")
+        print("FAIL budget-bytes: the byte ceiling did not fire, or a file under it was rejected")
+
     # The publication manifest has three failure directions beyond the one the main case
     # covers: a public promise with no file behind it, one file caught by two classes,
     # and an internal entry that never says why. Each must fail on its own.

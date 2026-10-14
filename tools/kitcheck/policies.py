@@ -6,12 +6,12 @@ from .core import die
 
 import re
 
-from .core import count_lines, count_words, iter_files, section_body
+from .core import count_bytes, count_lines, count_words, iter_files, section_body
 
 def check_budget(root: Path, check: dict) -> list[str]:
-    """Reject any matching file that exceeds a declared line or word budget."""
+    """Reject any matching file that exceeds a declared line, word, or byte budget."""
     limits: dict[str, int] = {}
-    for field in ("maxLines", "maxWords"):
+    for field in ("maxLines", "maxWords", "maxBytes"):
         value = check.get(field)
         if value is None:
             continue
@@ -19,9 +19,9 @@ def check_budget(root: Path, check: dict) -> list[str]:
             die(f"check {check['id']!r}: {field!r} must be a positive integer")
         limits[field] = value
     if not limits:
-        die(f"check {check['id']!r}: needs 'maxLines', 'maxWords', or both")
+        die(f"check {check['id']!r}: needs 'maxLines', 'maxWords', 'maxBytes', or more than one")
 
-    counters = {"maxLines": count_lines, "maxWords": count_words}
+    counters = {"maxLines": count_lines, "maxWords": count_words, "maxBytes": count_bytes}
     violations: list[str] = []
     for relative, text in iter_files(root, check["patterns"]):
         for field, limit in limits.items():

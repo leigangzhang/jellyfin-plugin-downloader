@@ -52,6 +52,7 @@ The class set above is closed and adopted. This one is open and this project's o
 | `lifecycle` | The eleven stations, the tier ladder, the version states. |
 | `ranking` | Finding candidates, scoring them, and deciding which one to take: the pool, the signals, the order. |
 | `records` | The records — rules, layout, taxonomy, titles, retirement. |
+| `modularity` | How this repository's own source is divided into files and directories, and how large one file may get before a reader must read it in slices. |
 | `testing` | Test infrastructure, the tiers, the flake policy. |
 | `trust` | The stance an agent takes toward its own signals. |
 
