@@ -13,7 +13,9 @@ API：/api/snapshot /api/search /api/submit /api/watch /api/cleanup
 认这个进程、测试按这条路径读源码做断言），所以常量、状态映射、service 信封与端口
 默认值留在本文件；实现按主题拆在 `backend/console_server/` 包里（HTTP 面 / 搜索任务 /
 快照 / 进程），由下面的导入与 `_wire_http_api()` 接起来 —— 包内不复制这些定量，
-也不 import 入口（脚本方式运行时入口叫 `__main__`，再 import 一次会让状态分身）。
+也不 import 入口：依赖方向只能是入口 → 包（包是在入口的导入过程中初始化的，回头
+import 入口只会绕回半初始化的自己）；而脚本方式下 `console_server` 这个名字就是
+`__main__` 本身（见 backend/console_server/__init__.py 的别名分支），根本不需要再取一次。
 """
 from __future__ import annotations
 
@@ -245,9 +247,10 @@ def _wire_http_api() -> None:
     """把 Handler 的目标目录校验与搜索调度接回入口。
 
     Handler 的实现在包里，但这两处必须按入口全局解析：入口是唯一持有预算常量与
-    `_run_search_job` 的地方，测试替换的也是入口模块上的名字。必须在入口所有定义
-    之后调用 —— 脚本方式运行时包会先被导入并按包内那一次接线，这里是最后一次、
-    也是生效的那次。
+    `_run_search_job` 的地方，测试替换的也是入口模块上的名字。两条路线（`import
+    console_server` 与脚本方式运行，看到的是同一个模块对象，见
+    backend/console_server/__init__.py）都要在入口所有定义之后调用它接线 ——
+    只有这一处接线，没有第二处。
     """
     http_api.valid_target_dir = _entry_valid_target_dir
     http_api.dispatch_search = _dispatch_search
