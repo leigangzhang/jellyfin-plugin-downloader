@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import os
 import shutil
 import sys
@@ -122,6 +123,117 @@ def _fold_strings(node):
         if left is not None and right is not None:
             return left + right
     return None
+
+
+def _skip_string(source: str, index: int):
+    """从引号处跳过整个字面量（含 `""` 转义与逐字字符串），返回结束后的下标。"""
+    quote = source[index]
+    verbatim = index > 0 and source[index - 1] == "@"
+    index += 1
+    length = len(source)
+    while index < length:
+        if verbatim and source[index] == '"' and source[index : index + 2] == '""':
+            index += 2
+            continue
+        if not verbatim and source[index] == "\\":
+            index += 2
+            continue
+        if source[index] == quote:
+            return index + 1
+        index += 1
+    return length
+
+
+def anonymous_object_keys(source: str) -> list:
+    """把一个 C# 源文件里所有 `new { ... }` 匿名对象的本层键名收集出来。
+
+    用途是找「同一个匿名对象里两个键只差大小写」——C# 编译通过，但
+    System.Text.Json 序列化时会抛 "property name collides with another property"，
+    表现是整个接口 500，而构建与单测都不会红。
+
+    字符级扫描，并且要跳过会把花括号计数带偏的东西：字符串与字符字面量、注释、
+    特性（`[Authorize(Policy = "...")]` 里的 `Policy =` 不是匿名对象的键）、
+    以及 `=>` / `==` 这类不是赋值的等号。
+    """
+    keys = []
+    depth = 0
+    anon_depth = None
+    pending_new = False
+    in_attribute = False
+    index = 0
+    length = len(source)
+    while index < length:
+        char = source[index]
+
+        if char in " \t\r\n":
+            index += 1
+            continue
+        if char == '"' or char == "'":
+            index = _skip_string(source, index)
+            pending_new = False
+            continue
+        if source[index : index + 2] == "//":
+            index = source.find("\n", index)
+            index = length if index < 0 else index + 1
+            continue
+        if source[index : index + 2] == "/*":
+            end = source.find("*/", index + 2)
+            index = length if end < 0 else end + 2
+            continue
+        if char == "[" and depth >= 1:
+            # 特性只出现在类型/成员声明上，不在匿名对象体内；跳过整个 `[...]`
+            in_attribute = True
+            index += 1
+            continue
+        if char == "]" and in_attribute:
+            in_attribute = False
+            index += 1
+            continue
+        if in_attribute:
+            index += 1
+            continue
+
+        # 标点先处理（`{` / `}` 可能紧跟在标识符后面，比如 `new {` 里的花括号）
+        if char == "{":
+            depth += 1
+            if pending_new:
+                # 只有「紧跟在 new 后面」的花括号才是匿名对象
+                anon_depth = depth
+            pending_new = False
+            index += 1
+            continue
+        if char == "}":
+            depth -= 1
+            if anon_depth is not None and depth < anon_depth:
+                anon_depth = None
+            pending_new = False
+            index += 1
+            continue
+
+        word = re.match(r"[A-Za-z_][A-Za-z0-9_]*", source[index:])
+        if word:
+            token = word.group(0)
+            end = index + len(token)
+            look = end
+            while look < length and source[look] in " \t\r\n":
+                look += 1
+            was_pending_new = pending_new
+            # `new` 只可能紧邻 `{`：中间出现别的标识符说明它是 `new List<...>()`，
+            # 不清掉待定状态的话，后面随便一个 `{` 都会被当成匿名对象开头。
+            pending_new = token == "new"
+            if anon_depth is not None and depth == anon_depth \
+                    and source[look : look + 1] == "=" and source[look : look + 2] not in ("==", "=>"):
+                keys.append(token)
+            index = end
+            continue
+
+        if char == ";":
+            pending_new = False
+        elif char == ",":
+            pending_new = False
+        index += 1
+
+    return keys
 
 
 def backend_modules():
@@ -735,6 +847,62 @@ class SiteUrlClassificationTests(unittest.TestCase):
         self.assertNotIn("--port {port}", manager)
         backend = (BACKEND / "console_server.py").read_text(encoding="utf-8")
         self.assertIn('os.environ.get("JMD_PORT")', backend)
+
+    def test_the_page_shows_the_builtin_defaults_when_config_is_empty(self):
+        """配置为空时页面要显示内置默认站点/关键词，而不是一排空输入框。
+
+        需求是「系统内置两个资源站点，默认显示完整站点名」。后端在配置为空时会用
+        内置默认，但那只发生在启动参数里——页面照 `btSites` 渲染，空了就是空白，
+        用户看不到默认值。所以 C# 侧也存了一份默认，这里钉住它与 Python 侧逐字一致
+        （两份默认一旦分叉，页面显示的和后端实际用的就不是一回事）。
+        """
+        import source_config
+
+        controller = (ROOT / "Jellyfin.Plugin.JellyfinDownloader" / "Controllers"
+                      / "JellyfinDownloaderController.cs").read_text(encoding="utf-8")
+        sites_block = controller[controller.index("private static readonly string[] DefaultSiteUrls"):]
+        keywords_block = sites_block[sites_block.index("private static readonly string[] DefaultKeywords"):]
+        cs_urls = re.findall(r'"(https://[^"]+)"', sites_block[:sites_block.index("DefaultKeywords")])
+        cs_keywords = re.findall(r'"([^"]+)"', keywords_block[:keywords_block.index("};")])
+
+        self.assertEqual(cs_urls, [site["base_url"] for site in source_config.DEFAULT_SITES],
+                         "C# 内置默认站点与 source_config.DEFAULT_SITES 不一致")
+        self.assertEqual(cs_keywords, list(source_config.DEFAULT_ANCHOR_KEYWORDS),
+                         "C# 内置默认关键词与 source_config.DEFAULT_ANCHOR_KEYWORDS 不一致")
+        # 空配置时走默认这一分支必须存在
+        self.assertIn("DefaultSiteUrls", controller)
+        self.assertIn("config?.BtSites is { Count: > 0 }", controller)
+        self.assertIn("config?.L1Keywords is { Count: > 0 }", controller)
+
+    def test_no_json_payload_has_case_colliding_keys(self):
+        """JSON 响应里不许出现「只差大小写」的两个键。
+
+        实机踩到过：`GetConfig` 的匿名对象里同时留着 `btSites` 与 `BtSites`，
+        System.Text.Json 的冲突检测直接抛异常 → `/JellyfinDownloader/config` 整个 500
+        → 配置页读不到任何配置（站点/关键词列表整块不渲染、端口显示 —）。
+        编译器不报、构建与单测都不红，所以单独立一条守卫盯着。
+        """
+        offenders = []
+        for path in sorted((ROOT / "Jellyfin.Plugin.JellyfinDownloader").rglob("*.cs")):
+            seen = {}
+            for key in anonymous_object_keys(path.read_text(encoding="utf-8")):
+                seen.setdefault(key.lower(), set()).add(key)
+            for lower, variants in seen.items():
+                if len(variants) > 1:
+                    offenders.append(f"{path.name}: {sorted(variants)}")
+        self.assertEqual(offenders, [],
+                         "匿名对象里有只差大小写的键，序列化会 500：" + "; ".join(offenders))
+
+    def test_the_config_endpoint_serves_one_site_field(self):
+        """配置页读 `config.btSites`，所以这个 key 必须存在且唯一。"""
+        controller = (ROOT / "Jellyfin.Plugin.JellyfinDownloader" / "Controllers"
+                      / "JellyfinDownloaderController.cs").read_text(encoding="utf-8")
+        config_action = controller[controller.index("public IActionResult GetConfig()"):]
+        config_action = config_action[:config_action.index("public IActionResult UpdateConfig")]
+        self.assertIn("btSites = sites", config_action)
+        self.assertNotIn("BtSites = config", config_action)
+        page = (ROOT / "Jellyfin.Plugin.JellyfinDownloader" / "Configuration" / "configPage.html").read_text(encoding="utf-8")
+        self.assertIn("config.btSites", page, "配置页必须读这个唯一的字段名")
 
     def test_the_backend_announces_itself_with_the_same_marker_the_plugin_looks_for(self):
         """自身标识是 C# 与 Python 之间的字面量契约。

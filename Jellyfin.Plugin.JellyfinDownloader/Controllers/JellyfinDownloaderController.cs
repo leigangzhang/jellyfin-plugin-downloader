@@ -33,6 +33,20 @@ public class JellyfinDownloaderController : ControllerBase
         "search", "snapshot", "submit", "watch", "verify", "mark", "cleanup", "pan/",
     };
 
+    /// <summary>
+    /// 内置默认资源站：与 <c>backend/source_config.py</c> 的 <c>DEFAULT_SITES</c> /
+    /// <c>DEFAULT_ANCHOR_KEYWORDS</c> 必须一致（两边各有守卫盯着）。配置为空时配置页
+    /// 要把它们显示出来——需求是「系统内置两个资源站点，默认显示完整站点名」，
+    /// 让用户看到空白输入框等于把内置默认藏起来了。
+    /// </summary>
+    private static readonly string[] DefaultSiteUrls =
+    {
+        "https://m.diao.im/api/search",
+        "https://torrents-csv.com/service/search",
+    };
+
+    private static readonly string[] DefaultKeywords = { "高清剧集网", "DDHDTV" };
+
     /// <summary>Gets the injected client script.</summary>
     [HttpGet("script")]
     [AllowAnonymous]
@@ -59,17 +73,30 @@ public class JellyfinDownloaderController : ControllerBase
         NoCache();
         RefreshMediaPaths();
         var config = Plugin.Instance?.Configuration;
+        // 配置为空 = 用内置默认，所以页面上显示的也应该是内置默认本身：
+        // 「一行都没有时用内置默认」这条对用户是隐形的，不该让他面对一个空输入框。
+        var sites = config?.BtSites is { Count: > 0 }
+            ? DescribeSites(config.BtSites)
+            : DefaultSiteUrls
+                .Select(url => (object)new { name = SiteHost(url, null), kind = KindForUrl(url),
+                    baseUrl = url, webSearchUrl = string.Empty })
+                .ToList();
+        var keywords = config?.L1Keywords is { Count: > 0 }
+            ? config.L1Keywords
+            : DefaultKeywords.ToList();
         return new JsonResult(new
         {
             minScore = config?.MinScore ?? 60,
-            BackendPort = config?.BackendPort ?? 8123,
             StagingRoot = config?.StagingRoot ?? string.Empty,
             MediaRoot = config?.MediaRoot ?? string.Empty,
             BackendPython = config?.BackendPython ?? string.Empty,
             // 配置页一个站只显示一个地址：站点名按主机名给（后端也用同一规则）。
-            btSites = DescribeSites(config?.BtSites),
-            BtSites = config?.BtSites ?? new List<BtSiteConfig>(),
-            l1Keywords = config?.L1Keywords ?? new List<string>(),
+            // 这个对象里每个键只能出现一次（大小写不敏感也要算）：`btSites` 与
+            // `BtSites`、`BackendPort` 与 `backendPort` 同时出现，System.Text.Json
+            // 的冲突检测会直接抛异常，整个接口 500——配置页因此读不到任何东西。
+            // 测试 tests/test_backend_retired_paths.py 的 json 键冲突守卫盯着这条。
+            btSites = sites,
+            l1Keywords = keywords,
             resolvedMediaRoot = MediaPaths.MediaRoot,
             // 生效端口与状态接口同一个事实源：端口被占用时这里是自增后的那个值。
             backendPort = BackendManager.EffectivePort,
@@ -146,7 +173,6 @@ public class JellyfinDownloaderController : ControllerBase
             ok = true,
             backendRestarted = restart.Ok,
             backendDetail = restart.Detail,
-            BackendPort = config.BackendPort,
             StagingRoot = config.StagingRoot,
             MediaRoot = config.MediaRoot,
             BackendPython = config.BackendPython,
