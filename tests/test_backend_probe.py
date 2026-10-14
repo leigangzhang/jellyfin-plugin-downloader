@@ -471,7 +471,12 @@ class ConsoleWiringTests(unittest.TestCase):
         self.assertNotIn("UNSUPPORTED_THUNDER_DIRECT_LINK", self.source)
 
     def test_probe_still_exposes_the_same_exit_codes(self):
-        probe_source = (BACKEND / "probe_magnets.py").read_text(encoding="utf-8")
+        # 0/2 在 probe_magnets.main() 的入口分支里，4/5/7/8 在 probe_round 的交付阶段。
+        # 两个文件合起来必须仍然覆盖 0/4/5/7/8；把范围钉在两个文件上，语义守卫不变。
+        probe_source = "\n".join(
+            (BACKEND / name).read_text(encoding="utf-8")
+            for name in ("probe_magnets.py", "probe_round.py")
+        )
         for code in ("return 0", "return 4", "return 5", "return 7", "return 8"):
             self.assertIn(code, probe_source, code)
 
@@ -605,10 +610,17 @@ class MetadataStampWriteRuleTests(ProbeCase):
 
     def test_metadata_at_definition_lives_in_one_place(self):
         """写入侧只剩 probe 一处规则：源码里只有一个 metadata_has_usable_video 判定。"""
-        source = (BACKEND / "probe_magnets.py").read_text(encoding="utf-8")
+        # 定义搬到了 probe_pool.py（池缓存的读侧与 metadata 的写侧共用它），
+        # 但「全仓只有一处定义」这条不变；probe_magnets 只做重绑定。
+        source = (BACKEND / "probe_pool.py").read_text(encoding="utf-8")
         self.assertEqual(source.count("def metadata_has_usable_video"), 1)
-        self.assertNotIn('metadata_at=now, **metadata', source)
-        self.assertNotIn("probe_ok_at=now, metadata_at=now", source)
+        probe_source = "\n".join(
+            (BACKEND / name).read_text(encoding="utf-8")
+            for name in ("probe_magnets.py", "probe_round.py", "probe_metadata.py")
+        )
+        self.assertEqual(probe_source.count("def metadata_has_usable_video"), 0)
+        self.assertNotIn('metadata_at=now, **metadata', source + probe_source)
+        self.assertNotIn("probe_ok_at=now, metadata_at=now", source + probe_source)
 
 
 class ProbePartialStatusTests(unittest.TestCase):
