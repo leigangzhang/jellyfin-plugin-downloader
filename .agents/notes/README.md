@@ -44,6 +44,7 @@ The class set above is closed and adopted. This one is open and this project's o
 | Module | What it covers |
 |---|---|
 | `adoption` | Copying the kit in: what arrives, what must not. |
+| `console` | The pages this plugin puts in front of a person: the configuration page, and the panel injected into item pages — what they show and how they react. |
 | `docs` | The standing documents — kinds, placement, budgets, publication. |
 | `gates` | The check engine, the checks, the evidence they read. |
 | `i18n` | Paired documents: what pairs, and how the sides stay in step. |

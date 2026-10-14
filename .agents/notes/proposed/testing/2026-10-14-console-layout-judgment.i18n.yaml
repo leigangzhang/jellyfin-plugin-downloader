@@ -1,0 +1,25 @@
+# Bilingual-pair consistency record for 2026-10-14-console-layout-judgment.md (docs/i18n.md): per heading section, a hash
+# of its English and Chinese blocks outside fenced code blocks.
+# After editing either side, bring the other along and re-record with:
+#   python3 tools/pair-docs.py --write .agents/notes/proposed/testing/2026-10-14-console-layout-judgment.md
+/proposal-console-layout-changes-are-judged-by-rendering-and-measuring-not-by-source-strings:
+  en: 55bf294ce1eb94b5
+  zh: 363f76e691ce6b58
+/proposal-console-layout-changes-are-judged-by-rendering-and-measuring-not-by-source-strings/problem:
+  en: 6583388dff39e22d
+  zh: 2428ee38481b1b5d
+/proposal-console-layout-changes-are-judged-by-rendering-and-measuring-not-by-source-strings/proposal:
+  en: aff2702db7654385
+  zh: 7f99af4a1ff2a1e3
+/proposal-console-layout-changes-are-judged-by-rendering-and-measuring-not-by-source-strings/alternatives-considered:
+  en: 482b7e02ab956705
+  zh: cbb55d71c0f04ccb
+/proposal-console-layout-changes-are-judged-by-rendering-and-measuring-not-by-source-strings/acceptance-criteria:
+  en: 838137e6d7aee20a
+  zh: 1e47ef9421bf5eeb
+/proposal-console-layout-changes-are-judged-by-rendering-and-measuring-not-by-source-strings/risks:
+  en: 55ec38e2f0fee567
+  zh: 00ec4ef7c511041c
+/proposal-console-layout-changes-are-judged-by-rendering-and-measuring-not-by-source-strings/delivery-stages:
+  en: cb084d4b65c35649
+  zh: 75920888eef81347
