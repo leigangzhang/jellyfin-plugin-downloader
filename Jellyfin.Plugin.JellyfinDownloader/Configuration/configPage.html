@@ -84,22 +84,14 @@
       margin-left: 14px;
     }
 
-    /* 服务端口：标签 + 端口值 + 运行状态 + 两个按钮，全在同一行。
-       flex-wrap 只为极窄屏兜底，正常宽度下永远是一行。 */
+    /* 服务端口第二行：端口值 + 运行状态 + 两个按钮。
+       标题已经移到上一行（与前三组同构：标题 / 状态行 / 说明）。 */
     #JellyfinDownloaderConfigPage .jdl-port-row {
       display: flex;
       align-items: center;
       gap: 10px;
       flex-wrap: wrap;
       min-height: 40px;
-    }
-
-    /* 服务端口的标签用和媒体目录/资源站点同一个元素与类（h2.sectionTitle），
-       因此字号由主题的 h2 规则决定，三处天然一致——不要在这里抄一个 1.5em：
-       另一套主题的 h2 是 1.8em，抄死数字换主题就不一致了。这里只清掉行内排版。 */
-    #JellyfinDownloaderConfigPage .jdl-port-row__label {
-      margin: 0;
-      white-space: nowrap;
     }
 
     #JellyfinDownloaderConfigPage .jdl-port-row__value {
@@ -198,10 +190,12 @@
               </div>
             </div>
 
-            <!-- ④ 服务端口 -->
+            <!-- ④ 服务端口：标题 / 状态行 / 说明，三行（与前三组同构） -->
+            <div class="sectionTitleContainer flex align-items-center">
+              <h2 id="jdl-port-label" class="sectionTitle">服务端口</h2>
+            </div>
             <div class="inputContainer">
               <div class="jdl-port-row" role="group" aria-labelledby="jdl-port-label">
-                <h2 id="jdl-port-label" class="sectionTitle jdl-port-row__label">服务端口</h2>
                 <span id="jdl-port-value" class="jdl-port-row__value">—</span>
                 <span id="jdl-status" class="jdl-status jdl-status--unknown">
                   <span class="jdl-status__dot" aria-hidden="true"></span>

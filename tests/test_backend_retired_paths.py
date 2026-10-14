@@ -984,11 +984,11 @@ class SiteUrlClassificationTests(unittest.TestCase):
         self.assertIn('TryGetProperty("service", out var service)', manager)
 
     def test_the_port_row_still_reports_a_stopped_backend(self):
-        """服务端口那一行：标签 + 端口 + 运行状态 + 两个按钮，同一行；状态不许带 pid。
+        """服务端口第二行：端口值 + 运行状态 + 两个按钮；状态不许带 pid。
 
-        原来那行「正在运行 · pid …」被删掉之后，运行状态改成了端口行里的徽标
+        原来那行「正在运行 · pid …」被删掉之后，运行状态改成了这行里的徽标
         （运行中 / 已停止 / 启动中）。使用方明确要求不带 pid 这类冗余字段，
-        所以页面里不许再渲染它。
+        所以页面里不许再渲染它。标题自成一节（第一行），说明是第三行。
         """
         page = (ROOT / "Jellyfin.Plugin.JellyfinDownloader" / "Configuration" / "configPage.html").read_text(encoding="utf-8")
         self.assertIn("status.running === false", page)
@@ -998,14 +998,15 @@ class SiteUrlClassificationTests(unittest.TestCase):
         # 三种状态文案都要在
         for state in ("运行中", "已停止", "启动中"):
             self.assertIn(state, page, f"状态徽标缺少「{state}」")
-        # 同一行：标签、端口值、状态徽标、按钮都在 .jdl-port-row 里
+        # 第二行里：端口值、状态徽标、两个按钮
         row = page[page.index('class="jdl-port-row"'):]
         row = row[:row.index("jdl-port-hint")]
-        for token in ("服务端口", "jdl-port-value", "jdl-status",
+        for token in ("jdl-port-value", "jdl-status",
                       "jdl-backend-refresh", "jdl-backend-restart"):
-            self.assertIn(token, row, f"服务端口行里缺少 {token}")
-        # 不再单独占一行标题
-        self.assertNotIn('<h2 class="sectionTitle">服务端口</h2>', page)
+            self.assertIn(token, row, f"服务端口状态行里缺少 {token}")
+        # 标题在状态行之外，且是独立的一节
+        self.assertIn('<h2 id="jdl-port-label" class="sectionTitle">服务端口</h2>', page)
+        self.assertNotIn("服务端口</h2>", row)
         # 不渲染 pid 等冗余字段
         self.assertNotIn("status.pid", page, "运行状态不许带 pid")
 
@@ -1086,14 +1087,18 @@ class SiteUrlClassificationTests(unittest.TestCase):
         icon_btn = icon_btn[:icon_btn.index("}")]
         self.assertIn("margin: 0", icon_btn, "图标按钮必须清掉主题外边距")
 
-        # 服务端口标签的字号必须与媒体目录/资源站点一致：靠「同一个元素 + 同一个类」
-        # 保证（h2.sectionTitle），不是抄一个 1.5em 的数字——另一套主题的 h2 是 1.8em。
-        self.assertIn('<h2 id="jdl-port-label" class="sectionTitle jdl-port-row__label">服务端口</h2>',
-                      page, "端口标签要用与其它小节标题相同的元素与类")
-        label_rule = page[page.index(".jdl-port-row__label {"):]
-        label_rule = label_rule[:label_rule.index("}")]
-        self.assertNotIn("font-size", label_rule, "不要给端口标签写死字号，交给主题的 h2 规则")
-        self.assertNotIn("font-weight", label_rule, "不要覆盖字重，否则与其它标题不一致")
+        # 服务端口要跟另外三组同构：标题独占一行（h2.sectionTitle），第二行才是
+        # 端口值 + 状态 + 按钮，第三行是说明。字号靠「同一个元素 + 同一个类」保证，
+        # 不抄 1.5em 这种数字——另一套主题的 h2 是 1.8em。
+        self.assertIn('<h2 id="jdl-port-label" class="sectionTitle">服务端口</h2>',
+                      page, "端口标题要用与其它小节标题相同的元素与类，并独占一行")
+        self.assertNotIn(".jdl-port-row__label", page, "标题搬出去后不该再留行内标签的样式")
+        port_section = page[page.index('<h2 id="jdl-port-label"'):]
+        port_section = port_section[:port_section.index("jdl-port-hint")]
+        title_at = port_section.index('id="jdl-port-label"')
+        row_at = port_section.index('class="jdl-port-row"')
+        self.assertLess(title_at, row_at, "标题必须排在状态行之前")
+        self.assertNotIn("服务端口</h2>", port_section[row_at:], "状态行里不该再有标题文本")
 
         port_btn = page[page.index(".jdl-port-btn {"):]
         port_btn = port_btn[:port_btn.index("}")]
