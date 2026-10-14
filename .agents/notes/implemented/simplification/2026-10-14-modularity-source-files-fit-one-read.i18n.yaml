@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-10-14-modularity-source-files-fit-one-read.md (docs/i18n.md): per heading section, a hash
+# of its English and Chinese blocks outside fenced code blocks.
+# After editing either side, bring the other along and re-record with:
+#   python3 tools/pair-docs.py --write .agents/notes/implemented/simplification/2026-10-14-modularity-source-files-fit-one-read.md
+/decision-modularity-one-source-file-fits-one-read-one-domain-gets-one-directory:
+  en: 8e215443abd1e63b
+  zh: 1ea023d2c4a8d8c5
+/decision-modularity-one-source-file-fits-one-read-one-domain-gets-one-directory/problem:
+  en: 328d068aca2d1409
+  zh: e55b0854ce9ced3e
+/decision-modularity-one-source-file-fits-one-read-one-domain-gets-one-directory/decision:
+  en: 565f9073856fce1d
+  zh: 2a9829380244982c
+/decision-modularity-one-source-file-fits-one-read-one-domain-gets-one-directory/alternatives-considered:
+  en: f527ce8cc21f1dfd
+  zh: bade76a407dabc94
+/decision-modularity-one-source-file-fits-one-read-one-domain-gets-one-directory/consequences:
+  en: b2a45a1c6ac9e298
+  zh: 456a02bff63cd392
+/decision-modularity-one-source-file-fits-one-read-one-domain-gets-one-directory/testing:
+  en: a8f0054b7d7c562a
+  zh: 310f6452c83075bd
