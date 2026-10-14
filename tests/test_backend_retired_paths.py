@@ -1035,6 +1035,45 @@ class SiteUrlClassificationTests(unittest.TestCase):
         # 别退回「只给文字着色」的老方案
         self.assertNotIn("jdl-status--running { color:", page)
 
+    def test_list_layout_keeps_inputs_and_button_columns_aligned(self):
+        """列表的排布要求（都能在源码里查，避免改样式时悄悄破坏）：
+
+        (a) 列表要清掉主题塞进来的内缩——否则站点行与媒体目录输入框差 20px；
+        (b) 按钮区固定宽度——否则最后一行多一个 `+` 就比别的行窄，输入框不等长、
+            上移/下移/删除三列也会错开；
+        (c) `+` 单独占第四列并往右挪一点；
+        (d) 服务端口那两个按钮要压到和该行文字同一字号。
+        """
+        page = (ROOT / "Jellyfin.Plugin.JellyfinDownloader" / "Configuration" / "configPage.html").read_text(encoding="utf-8")
+
+        list_block = page[page.index(".jdl-list {"):]
+        list_block = list_block[:list_block.index(".jdl-list__row")]
+        self.assertIn("padding: 0", list_block, "列表必须清掉主题的内缩")
+        self.assertIn("margin: 0", list_block)
+
+        buttons_block = page[page.index(".jdl-list__buttons {"):]
+        buttons_block = buttons_block[:buttons_block.index("}")]
+        self.assertIn("flex: 0 0 168px", buttons_block,
+                      "按钮区必须定宽，否则输入框长度会随按钮个数变化")
+        self.assertNotIn("flex: 0 0 auto", buttons_block)
+
+        add_rule = page[page.index('[data-action="add"]'):]
+        add_rule = add_rule[:add_rule.index("}")]
+        self.assertIn("margin-left", add_rule, "新增 + 要往右挪，和本行三个操作分开")
+
+        # 图标按钮必须清掉主题的外边距：主题给每个按钮每边约 6.3px，
+        # 4 个叠起来会把预留区顶大、把最后一行输入框挤窄（实测窄 24px）。
+        icon_btn = page[page.index(".jdl-icon-btn {"):]
+        icon_btn = icon_btn[:icon_btn.index("}")]
+        self.assertIn("margin: 0", icon_btn, "图标按钮必须清掉主题外边距")
+
+        port_btn = page[page.index(".jdl-port-btn {"):]
+        port_btn = port_btn[:port_btn.index("}")]
+        self.assertIn("font-size: 1em", port_btn, "端口按钮字号要与该行文字一致")
+        self.assertIn("jdl-port-btn", page)
+        for button_id in ("jdl-backend-refresh", "jdl-backend-restart"):
+            self.assertIn(button_id, page)
+
     def test_station_rows_keep_their_live_hint_slot(self):
         """站点行的实时识别提示不能只在渲染时非空才创建。
 

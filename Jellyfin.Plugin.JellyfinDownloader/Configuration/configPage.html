@@ -12,35 +12,61 @@
     #JellyfinDownloaderConfigPage .jdl-list {
       display: flex;
       flex-direction: column;
+      align-items: stretch;
       gap: 4px;
+      width: 100%;
+      /* 主题里给这一段塞了内缩（实测：行被内缩 20px，与媒体目录输入框对不齐），
+         这里显式清掉，让列表和媒体目录输入框从同一条左基准线开始。 */
+      margin: 0;
+      padding: 0;
     }
 
     #JellyfinDownloaderConfigPage .jdl-list__row {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
+      width: 100%;
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
     }
 
     #JellyfinDownloaderConfigPage .jdl-list__field {
       flex: 1 1 auto;
       min-width: 0;
+      margin: 0;
+      padding: 0;
     }
 
+    /* 按钮区固定宽度：每行永远预留「上移 / 下移 / 删除 / 新增」四个位置，
+       这样 (a) 所有输入框等长、(b) 上移/下移/删除三列上下对齐、
+       (c) 新增 + 落在第四列，比删除键再往右一点。 */
     #JellyfinDownloaderConfigPage .jdl-list__buttons {
-      flex: 0 0 auto;
+      flex: 0 0 168px;
       display: inline-flex;
       align-items: center;
+      justify-content: flex-start;
+      gap: 4px;
     }
 
-    /* Jellyfin 自带的图标按钮默认偏大，这里只压尺寸，配色/字体仍走主题 */
+    /* Jellyfin 自带的图标按钮默认偏大，这里只压尺寸，配色/字体仍走主题。
+       margin: 0 是必须的——主题给 paper-icon-button-light 每边约 6.3px 的外边距，
+       4 个按钮叠加后把预留区从 168px 顶到 192px，最后一行输入框就比其它行窄了
+       24px（实测过）。间距统一交给容器自己的 gap。 */
     #JellyfinDownloaderConfigPage .jdl-icon-btn {
       width: 34px;
       height: 34px;
       padding: 0;
+      margin: 0;
       flex: 0 0 auto;
     }
 
     #JellyfinDownloaderConfigPage .jdl-icon-btn .material-icons { font-size: 20px; }
+
+    /* 新增 + 与「本行的三个操作」拉开距离，单独占第四列 */
+    #JellyfinDownloaderConfigPage .jdl-list__buttons .jdl-icon-btn[data-action="add"] {
+      margin-left: 14px;
+    }
 
     /* 服务端口：标签 + 端口值 + 运行状态 + 两个按钮，全在同一行。
        flex-wrap 只为极窄屏兜底，正常宽度下永远是一行。 */
@@ -66,6 +92,16 @@
       display: inline-flex;
       align-items: center;
       gap: 8px;
+    }
+
+    /* 这两个按钮跟端口行同一字号（不吃主题按钮的放大字号/大内边距），
+       尺寸压到和这行文字一个量级。 */
+    #JellyfinDownloaderConfigPage .jdl-port-btn {
+      font-size: 1em;
+      line-height: 1.5;
+      padding: 3px 10px;
+      min-width: 0;
+      min-height: 0;
     }
 
     /* 运行状态：实心胶囊 + 白字。对比度由胶囊自身保证（白字对四种底色的对比度
@@ -153,8 +189,8 @@
                   <span id="jdl-status-text">状态未知</span>
                 </span>
                 <span class="jdl-port-row__actions">
-                  <button id="jdl-backend-refresh" type="button" is="emby-button" class="raised button-alt">刷新状态</button>
-                  <button id="jdl-backend-restart" type="button" is="emby-button" class="raised button-alt">重启后端</button>
+                  <button id="jdl-backend-refresh" type="button" is="emby-button" class="raised button-alt jdl-port-btn">刷新状态</button>
+                  <button id="jdl-backend-restart" type="button" is="emby-button" class="raised button-alt jdl-port-btn">重启后端</button>
                 </span>
               </div>
               <div class="fieldDescription">
