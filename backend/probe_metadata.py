@@ -11,7 +11,7 @@ import urllib.parse
 
 from media_download_lib import GB, JUNK_EXTS, VIDEO_EXTS
 from probe_health import ANNOUNCE_TRACKERS
-from probe_pool import metadata_has_usable_video, pool_metadata, update_pool_entry
+from probe_pool import metadata_has_usable_video
 
 
 ARIA2_DHT_FLAG = "--enable-dht=true"

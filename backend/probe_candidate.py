@@ -5,7 +5,6 @@
 import base64
 import json
 import re
-import urllib.parse
 
 from candidate_score import structural_reject
 from media_download_lib import GB

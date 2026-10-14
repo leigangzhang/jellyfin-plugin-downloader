@@ -19,7 +19,6 @@ from candidate_score import (
 )
 from media_download_lib import GB
 
-from probe_candidate import dedupe, load_extra_candidates
 from probe_health import (
     ANNOUNCE_TIMEOUT_SECONDS,
     MIN_HEALTH_BUDGET_SECONDS,

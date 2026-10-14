@@ -5,8 +5,6 @@ probe_metadata 用它拼磁力链接的 tracker 参数。
 """
 import hashlib
 import json
-import os
-import re
 import socket
 import struct
 import time
