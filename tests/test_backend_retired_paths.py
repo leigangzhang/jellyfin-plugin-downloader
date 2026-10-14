@@ -1039,8 +1039,10 @@ class SiteUrlClassificationTests(unittest.TestCase):
         """列表的排布要求（都能在源码里查，避免改样式时悄悄破坏）：
 
         (a) 列表要清掉主题塞进来的内缩——否则站点行与媒体目录输入框差 20px；
-        (b) 按钮区固定宽度——否则最后一行多一个 `+` 就比别的行窄，输入框不等长、
-            上移/下移/删除三列也会错开；
+        (b) 「等长」的范围是**站点与关键词这两组列表内部**（实测 627.5）：
+            按钮区固定宽度，否则最后一行多一个 `+` 就比别的行窄、上移/下移/删除
+            三列也会错开。**媒体目录不在这个范围内**——它没有按钮区，本来就该是
+            满宽（实测 803.5），别把它也改成 627.5；
         (c) `+` 单独占第四列并往右挪一点；
         (d) 服务端口那两个按钮要压到和该行文字同一字号。
         """
@@ -1050,6 +1052,13 @@ class SiteUrlClassificationTests(unittest.TestCase):
         list_block = list_block[:list_block.index(".jdl-list__row")]
         self.assertIn("padding: 0", list_block, "列表必须清掉主题的内缩")
         self.assertIn("margin: 0", list_block)
+
+        # 媒体目录输入框必须保持满宽：它没有按钮区，跟着列表去「等长」是误改
+        # （上一轮我的提交信息就把这条说错了，这里把范围钉死）
+        self.assertNotIn("#jdl-media {", page, "别给媒体目录输入框加宽度规则")
+        media_tag = page[page.index('id="jdl-media"'):]
+        media_tag = media_tag[:media_tag.index(">")]
+        self.assertNotIn("style=", media_tag, "媒体目录输入框不该有内联宽度")
 
         buttons_block = page[page.index(".jdl-list__buttons {"):]
         buttons_block = buttons_block[:buttons_block.index("}")]
