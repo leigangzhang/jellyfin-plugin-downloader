@@ -25,6 +25,8 @@ Class: simplification
 3. 按域归组：`backend/probe/`、`backend/search/`、`backend/pan/`、`backend/download/`，测试侧是 `tests/backend_probe/`、`tests/backend_sources/`、`tests/backend_retired/`、`tests/kit/`。
 4. 把「位置本身就是合约」的三个文件留在 `backend/` 根：`console_server.py`（插件按这个固定路径启动它）、`build_console.py`（它所在目录同时是脚本查找根与导入根）、`media_download_lib.py`（它所在目录是运行期数据根）。
 
+这次重构的第一部分已经落在本仓库里 —— 上述五个文件、它们的目录，以及 `source-budget` 闸门。第二部分正在另一条工作流里建造，所以本记录仍是 `proposed` 而不是 `implemented`。无论工作被怎样切开，这个文件都是该决策唯一的家：第二部分落地时，它的问题陈述、落选替代与验收标准一并并入本文件 —— 两侧语言在同一次改动里一起动，其标准接着本部分开启的编号往下排（`M1`–`M4` 已被占用），而不是另起一份记录。只有当两部分都建成，本记录才移入 `implemented/simplification/`，且每条标准编号保持不变。
+
 ## 曾考虑的替代方案
 
 **按行号切，而不是按职责切。** 这是唯一能精确命中体积的办法，而且从第一份需求起就摆在桌上，原话是「按行数机械切」。它落选是因为切开函数体会改变行为，而行为是唯一不许变的东西：这里每条验收标准都是相对未拆分的那棵树写的。当边界无法按职责画出时 —— `inject.js` 有一个函数 212 行，拆它就会改变浏览器收到的字节 —— 文件被留在函数规则的线外并记录为例外，而不是被切开。
