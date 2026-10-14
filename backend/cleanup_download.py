@@ -20,6 +20,39 @@ from media_download_lib import (
 )
 
 
+def close_thunder():
+    subprocess.run(
+        ["osascript", "-e", 'quit app "Thunder"'],
+        capture_output=True,
+        check=False,
+    )
+    time.sleep(2)
+    subprocess.run(
+        ["pkill", "-9", "-f", "Thunder"],
+        capture_output=True,
+        check=False,
+    )
+    time.sleep(2)
+
+
+def reopen_thunder():
+    subprocess.run(["open", "-a", "Thunder"], check=False)
+
+
+def cycle_thunder_around_changes(enabled):
+    """删除任务行前后关/开迅雷；`enabled=False` 时一个 OS 动作都不发。
+
+    为什么需要关掉：这是真动宿主 App 的动作（quit + `pkill -9 -f Thunder` + reopen），
+    离线用例只验证 DB/文件判定，不该顺带开关用户的迅雷——2026-10-14 实测
+    `python3 -m unittest discover -s tests` 每跑一次就把迅雷开关一遍
+    （见 `tests/test_backend_cleanup_guard.py`，普通调用方不受影响）。
+    """
+    if not enabled:
+        return
+    close_thunder()
+    reopen_thunder()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("info_hash", nargs="?")
@@ -40,6 +73,15 @@ def main():
         help="Delete orphan Thunder residue while protecting active tasks",
     )
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--no-thunder-restart",
+        dest="thunder_restart",
+        action="store_false",
+        help=(
+            "Do not quit/reopen the Thunder app while cleaning "
+            "(for offline callers such as tests)"
+        ),
+    )
     parser.add_argument(
         "--allow-task-deletion",
         "--force",
@@ -148,18 +190,7 @@ def main():
     if args.dry_run:
         return 0
 
-    subprocess.run(
-        ["osascript", "-e", 'quit app "Thunder"'],
-        capture_output=True,
-        check=False,
-    )
-    time.sleep(2)
-    subprocess.run(
-        ["pkill", "-9", "-f", "Thunder"],
-        capture_output=True,
-        check=False,
-    )
-    time.sleep(2)
+    cycle_thunder_around_changes(args.thunder_restart)
 
     deleted = 0
     removed_files = []
@@ -171,7 +202,6 @@ def main():
         removed_files.extend(cleanup["files"])
         removed_bytes += cleanup["bytes"]
 
-    subprocess.run(["open", "-a", "Thunder"], check=False)
     print(
         "CLEANUP_DONE "
         + json.dumps(
