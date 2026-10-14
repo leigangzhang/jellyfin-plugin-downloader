@@ -74,7 +74,7 @@
 |---|---|
 | Jellyfin | 10.11.x（`targetAbi 10.11.11.0`，实测 v10.11.11） |
 | 操作系统 | **macOS**。迅雷客户端数据库、"下载到本地"、云盘缓存等路径都是 macOS 专属 |
-| Python | **3.9+**，后端只用标准库。插件会自动探测（配置项 → PATH → 常见安装位置），也可以手工指定或一键安装 |
+| Python | **3.9+**，后端只用标准库。插件自动探测：PATH 上的 `python3` → 常见安装位置（Homebrew / python.org 框架 / pyenv / conda / uv）。装了命令行开发者工具时系统那份 `/usr/bin/python3` 通常就够（本机实测 3.9.6）。**探测不到后端起不来**，所以先按「快速开始」第 0 步装好 |
 | .NET SDK | **9.0**，仅构建时需要。`build.sh` 默认使用 Homebrew 的 `dotnet@9` |
 | 迅雷（Thunder） | 桌面客户端，用于提交下载与云盘转存/取回 |
 | aria2c | 抓种子元数据：`brew install aria2` |
@@ -88,9 +88,17 @@
 git clone git@github.com:leigangzhang/jellyfin-plugin-downloader.git
 cd jellyfin-plugin-downloader
 
+# 0. 先确认有 Python（后端是 Python 脚本，插件不会替你装）
+python3 --version
+#    需要 3.9+。没装的话二选一：
+#      xcode-select --install   # 系统手段：装完自带 /usr/bin/python3，不需要 sudo
+#      brew install python      # 已装 Homebrew 时最快（本机 brew info python → python@3.14）
+
 ./build.sh      # dotnet publish → ./out（需要 .NET 9 SDK）
 ./install.sh    # 安装到 Jellyfin 插件目录并重启 Jellyfin
 ```
+
+> Linux / Windows 的安装命令不在这里重复：`apt-get install -y python3` / `dnf install -y python3` / `winget install Python.Python.3.12`（Windows 上记得勾 “Add python.exe to PATH”）写在 [PythonInstaller.cs](Jellyfin.Plugin.JellyfinDownloader/PythonInstaller.cs)，那里是这套引导的唯一出处。
 
 `install.sh` 会：先停掉 Jellyfin → 复制 DLL / `meta.json` / `icon.png` / `backend/` → 保留原有的 `backend/state/`（历史快照与标记不丢）→ `open -n /Applications/Jellyfin.app` 重新拉起。
 
@@ -112,12 +120,12 @@ https://raw.githubusercontent.com/leigangzhang/jellyfin-plugin-downloader/main/m
 
 | 配置项 | 默认 | 说明 |
 |---|---|---|
-| 端口 | `8123` | 后端监听端口（只绑本机）；**被别的进程占用时自动往后试下一个**（不改你的配置，状态里会写实际端口） |
-| Python 解释器 | 留空 | 留空 = 自动探测；也可填绝对路径，或用「安装 / 更换 Python」按钮 |
-| 媒体目录 | 留空 | 留空 = 由插件从 Jellyfin 媒体库配置解析出库根 |
-| 暂存目录 | 留空 | 留空 = 媒体根同盘的 `.staging`（保证归档能同盘原子移动） |
-| 资源站 | 留空 | **每行一个站点地址**。地址含 `{q}` 占位符 = 该站的搜索页（云盘通道入口，只发云盘资源、没有搜索 API 的站就填这种）；其余地址按主机判定入口：内置那两家只填主机名会自动补上接口路径，别的主机则按你填的地址当接口用。留空 = 内置默认的两个站 |
-| L1 关键字组合 | 留空 | 每行一条查询后缀，与片名拼成一条查询并排在搜索阶梯最前。留空 = 内置默认（`高清剧集网`、`DDHDTV`） |
+| 服务端口 | `8123` | 只读展示后端实际监听的端口（只绑本机），同一行还有运行状态与「刷新状态 / 重启后端」。**被别的进程占用时自动往后试下一个**，不会换掉别人的服务 |
+| 媒体目录 | 留空 | 留空 = 由插件从 Jellyfin 媒体库配置解析出库根。下载中/未完成的文件放在媒体根同盘的 `.staging`（保证归档能同盘原子移动），这一项固定，配置页里只回显、不可改 |
+| 资源站 | 内置两家 | **每行一个站点地址**。地址含 `{q}` 占位符 = 该站的搜索页（云盘通道入口，只发云盘资源、没有搜索 API 的站就填这种）；其余地址按主机判定入口：内置那两家只填主机名会自动补上接口路径，别的主机则按你填的地址当接口用。默认显示内置那两家，把行全删掉 = 用内置默认 |
+| 关键词组合 | 内置三条 | 每行一个关键词，与片名拼成一条查询并排在搜索阶梯最前。**一行只放一个词**：搜索站对一行里的多个词是「全部命中」语义，混进一个索引里没有的词，这一行就什么都搜不到（实测过）。默认 `高清剧集网`、`DDHDTV`、`BBHDTV` |
+
+> Python 解释器与暂存目录不在配置页里：解释器装好后由插件自动探测，要指定某个解释器就直接改插件配置 XML 的 `BackendPython`；暂存目录固定为媒体根下的 `.staging`。
 
 > 资源站与关键字由插件写进后端的环境变量（`JMD_BT_SITES` / `JMD_L1_KEYWORDS`），所以**保存后会自动重启后端**才生效。配置坏掉时后端会打印 `SOURCE_CONFIG_ERROR` 并明确失败，不会悄悄用默认值顶替。
 
@@ -212,10 +220,10 @@ Jellyfin 的卸载按钮只删文件，程序集仍在内存里。重启 Jellyfi
 本地插件仓库拉图标失败，纯外观问题，不影响任何功能。
 
 **面板提示后端未运行？**
-看配置页的 Python 解释器与端口；日志在 `plugins/configurations/jellyfin-downloader-backend.log`。端口被占用时换个端口，插件会自动重启后端。
+看配置页「服务端口」那行的运行状态：显示「已停止」就点旁边的 **重启后端**；端口被占用时它会自己往后换。日志在 `plugins/configurations/jellyfin-downloader-backend.log`。
 
 **没装 Python？**
-配置页有「安装 / 更换 Python」按钮；也可以自己 `brew install python`，插件会自动探测到。
+先按「快速开始」第 0 步装好（3.9+），装完回配置页点「刷新状态」。插件自动探测 PATH 与常见安装位置；要指定某个解释器，改插件配置 XML 的 `BackendPython`。
 
 **想让它出现在 Jellyfin 的插件目录里？**
 两个地址都能用：

@@ -85,7 +85,7 @@
 - **卸载后按钮和图标还在**：Jellyfin 的卸载按钮只删文件，程序集仍在内存里；重启 Jellyfin 后消失。
   `./uninstall.sh` 加 `--verify-only` 可给确定结论。
 - **日志反复出现拉图标失败**：本地插件仓库拉图标失败，纯外观问题，不影响功能。
-- **面板提示后端未运行**：看配置页的 Python 解释器与端口；端口被占用时换个端口，插件会自动重启后端。
+- **面板提示后端未运行**：看配置页「服务端口」那行的运行状态徽标，点旁边的「刷新状态 / 重启后端」；端口被占用时插件自己往后换（页面只回显，不可改）。Python 没装或版本低于 3.9 后端起不来，装法见 README「快速开始」第 0 步。
 - **测试覆盖是分层的**：取源打分链有离线契约测试（`tests/test_backend_scoring.py`、`tests/test_backend_sources.py`、`tests/test_backend_probe.py`，跑 `python3 -m unittest discover -s tests`）；下载/验证/归档路径仍靠 `./uninstall.sh` 的自检、Jellyfin 日志、面板快照三者交叉确认。
   （补齐下载/验证路径的自动化测试仍是推荐做法。）
 

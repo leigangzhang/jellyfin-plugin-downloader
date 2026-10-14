@@ -124,7 +124,8 @@ public static class PythonLocator
             return new Candidate { Path = best.Path!, Version = best.Version, Source = best.Source, Ok = true };
         }
 
-        // 找到了解释器但版本都太低 → 展示一个，Ok=false，配置页会露出「安装 Python」
+        // 找到了解释器但版本都太低 → 返回一个并置 Ok=false，调用方（状态接口/配置页）
+        // 据此提示版本过低，安装步骤见 README「快速开始」第 0 步
         if (probes.Count > 0)
         {
             var any = probes[0];

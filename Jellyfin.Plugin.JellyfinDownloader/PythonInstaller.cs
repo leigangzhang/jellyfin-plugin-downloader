@@ -6,7 +6,11 @@ using System.IO;
 namespace Jellyfin.Plugin.JellyfinDownloader;
 
 /// <summary>
-/// 「安装 Python」按钮的后端逻辑：只做**无需 sudo 的引导**，不静默安装、不代跑 sudo。
+/// Python 安装引导（`/JellyfinDownloader/python/status` 与 `/python/install` 背后的
+/// 文案）：只做**无需 sudo 的引导**，不静默安装、不代跑 sudo。
+///
+/// 配置页目前不放安装入口，安装步骤在 README 的「快速开始」第 0 步；这里的文案是
+/// 那些步骤的唯一出处（Linux / Windows 的命令只在这里维护，README 只链接过来）。
 ///
 /// macOS 上最轻的官方途径是命令行开发者工具（自带 /usr/bin/python3）：
 /// 调 `xcode-select --install` 会弹出系统安装对话框，用户确认后即可。
