@@ -7,15 +7,24 @@
   <div id="JellyfinDownloaderConfigPage" data-role="page" class="page type-interior pluginConfigurationPage">
   <style>
     /* 布局节奏：一个配置项 = 一个 .jdl-item，内部固定三行——标题 / 输入 / 说明。
-       行距由这两条统一控制，所以配置项之间的间隔一致，不再松紧不一。 */
-    #JellyfinDownloaderConfigPage .jdl-item + .jdl-item { margin-top: 26px; }
-    #JellyfinDownloaderConfigPage .jdl-row + .jdl-row { margin-top: 8px; }
+       行距由这两条统一控制，所以配置项之间的间隔一致，不再松紧不一。
+       Jellyfin 自己的 .emby-input 内边距偏大，外面再叠行距就会显得松散，所以这里
+       把行距压小、并用 line-height 收紧说明文字。 */
+    #JellyfinDownloaderConfigPage .jdl-item + .jdl-item { margin-top: 16px; }
+    #JellyfinDownloaderConfigPage .jdl-row + .jdl-row { margin-top: 4px; }
 
     #JellyfinDownloaderConfigPage .jdl-row {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       flex-wrap: wrap;
+    }
+
+    /* 输入框统一收紧一档：Jellyfin 默认的 .emby-input 内边距配 100% 宽的整行输入框
+       会显得很空，页面本来就"偏松散"——这里只压内边距与行高，不动字号。 */
+    #JellyfinDownloaderConfigPage .emby-input {
+      padding: 6px 10px;
+      line-height: 1.4;
     }
 
     #JellyfinDownloaderConfigPage .jdl-row .inputLabel {
@@ -24,7 +33,7 @@
     }
 
     #JellyfinDownloaderConfigPage .jdl-row .fieldDescription { margin: 0; }
-    #JellyfinDownloaderConfigPage .jdl-hint { line-height: 1.55; }
+    #JellyfinDownloaderConfigPage .jdl-hint { line-height: 1.5; display: block; }
 
     /* 标题行右侧的状态 / 操作区 */
     #JellyfinDownloaderConfigPage .jdl-row__actions {
@@ -353,18 +362,26 @@
 
       // ---- 资源站点 ----
 
+      // 资源站点行的说明文字：只在**认不出来**的地址上显示。内置/已知站点（diao /
+      // torrents-csv / 带 {q} 的云盘页）在地址里就能看出来，多一行小字只会让页面更松。
       function siteHintFor(address, kind) {
         var value = (address || '').trim();
         var declared = (kind || '').trim();
         if (!value) { return ''; }
-        if (value.indexOf('{q}') >= 0) { return value + ' · 云盘搜索页'; }
+        if (value.indexOf('{q}') >= 0) { return '云盘搜索页'; }
         var host = '';
         try { host = new URL(value).hostname.toLowerCase(); } catch (error) { host = ''; }
-        if (host === 'm.diao.im' || host === 'diao.im') { return 'diao.im · 搜索 API'; }
-        if (host === 'torrents-csv.com' || host === 'www.torrents-csv.com') { return 'torrents-csv · 聚合索引'; }
-        // 自建站（老 XML 里声明过类型的那种）：地址认不出来，但配置里带着类型，照实显示。
+        if (host === 'm.diao.im' || host === 'diao.im') { return ''; }
+        if (host === 'torrents-csv.com' || host === 'www.torrents-csv.com') { return ''; }
+        // 自建站（老 XML 里声明过类型的那种）：地址认不出入口，要把识别结果说清楚。
         if (declared && host) { return host + ' · ' + declared + '（自定义）'; }
         return host ? host + ' · 未能识别' : '';
+      }
+
+      function refreshSiteCaption(row) {
+        var hint = siteHintFor(row._field.input.value, row._kind);
+        row._field.caption.textContent = hint;
+        row._field.caption.style.display = hint ? '' : 'none';
       }
 
       function renderSites(sites) {
@@ -383,10 +400,8 @@
         (items.length ? items : [{ address: '', kind: '' }]).forEach(function (item) {
           var row = appendRow(list, { value: item.address, placeholder: 'https://站点地址/api/search' });
           row._kind = item.kind;
-          row._field.caption.textContent = siteHintFor(item.address, row._kind);
-          row._field.input.addEventListener('input', function () {
-            row._field.caption.textContent = siteHintFor(row._field.input.value, row._kind);
-          });
+          refreshSiteCaption(row);
+          row._field.input.addEventListener('input', function () { refreshSiteCaption(row); });
         });
       }
 

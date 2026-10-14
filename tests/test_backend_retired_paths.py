@@ -737,7 +737,7 @@ class SiteUrlClassificationTests(unittest.TestCase):
         page = (ROOT / "Jellyfin.Plugin.JellyfinDownloader" / "Configuration" / "configPage.html").read_text(encoding="utf-8")
         self.assertIn("row._kind", page, "站点行必须记住后端给的 kind")
         self.assertIn("Kind: item.kind", page, "save 必须把 kind 原样发回")
-        self.assertIn("siteHintFor(item.address, row._kind)", page, "自定义站要按声明类型显示")
+        self.assertIn("refreshSiteCaption(row)", page, "自定义站要按声明类型显示")
 
     def test_the_http_proxy_follows_the_effective_port(self):
         """面板的数据面调用必须走「实际监听端口」，不能走配置里的固定 URL。
