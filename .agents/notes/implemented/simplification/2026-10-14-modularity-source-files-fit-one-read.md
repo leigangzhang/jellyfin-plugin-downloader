@@ -35,7 +35,7 @@ Three mechanisms are what the layout forced, and each is load-bearing:
 - `backend/media_download_lib/paths.py` computes `DATA_ROOT` from the package's parent rather than from `dirname(__file__)`, so the data root is still `backend/state`.
 - Both split test files moved their shared fixtures into an `_`-prefixed helper, because `unittest` collects any `TestCase` subclass a module imports.
 
-The largest file under the gate is now `Jellyfin.Plugin.JellyfinDownloader/Web/inject_05_render.js` at 24565 B and the largest `.py` is `backend/search/search_pool.py` at 25883 B; no tracked `.py` is over 30720 B.
+The largest file under the gate is now `backend/search/search_pool.py` at 25883 B, ahead of the largest shard, `Web/inject_05_render.js` at 24565 B; no tracked `.py` is over 30720 B.
 
 ## Alternatives considered
 
@@ -57,7 +57,7 @@ The largest file under the gate is now `Jellyfin.Plugin.JellyfinDownloader/Web/i
 
 ## Consequences
 
-The band is empty of files. No tracked `.py` is over 30720 B, the largest gated file is a 24565 B `Web/inject_0*.js` shard, and the six targets' 220435 B across six files became 41 files whose largest member is `tools/pairdocs/model.py` at 12523 B. A reader who opens any of the eleven targets now opens one file.
+The band is empty of files. No tracked `.py` is over 30720 B, the largest gated file is `backend/search/search_pool.py` at 25883 B, and the six targets' 220435 B across six files became 41 files whose largest member is `backend/console_server/http_api.py` at 17609 B. A reader who opens any of the eleven targets now opens one file.
 
 **The name collision is the price of the layout.** `backend/console_server.py` and `backend/console_server/` share a name because two contracts each pin one: the plugin starts the file by that exact path, and this decision puts a domain's modules in a directory of that name. Python resolves the directory first, so `backend/console_server/__init__.py` has to redirect `sys.modules` to the entry when the entry is already `__main__`. No other target needed that, and it is the one place in this refactor where a reader must know a mechanism before touching the file.
 
@@ -65,7 +65,7 @@ The band is empty of files. No tracked `.py` is over 30720 B, the largest gated 
 
 **Revisit when a check's scan surface shrinks without anything going red.** This decision moved 22 backend modules and 31 test modules, and three guards silently lost coverage doing it: a stdlib-only guard kept three hard-coded filenames after `search_pool.py` became seven (68% of the bytes outside it), a retired-symbol scan globbed one level, and the syntax gate was a shell glob that reached the root directory only. All three were repaired here, but whether a guard must derive its surface from what it governs — and carry a floor against collapse — is a separate decision with its own rejected alternative, so it is not settled by this record.
 
-**Revisit when the packages this decision creates fall outside a gate.** Already true of `source-budget`: its patterns `backend/*.py` and `tests/*.py` match one level, so `backend/console_server/*.py`, `backend/media_download_lib/*.py`, `backend/candidate_score/*.py`, `tests/backend_probe/test_probe_*.py` and `tools/pairdocs/*.py` are not measured by it at all — the gate that motivated this work cannot see most of what the work produced. Widening it is a change to the `gates` surface, deliberately not taken here.
+**Revisit when source outside the gate's three groups grows.** An earlier draft here claimed `source-budget` matched one level and therefore missed every package this decision created; that was wrong, and a check disproves it. Patterns are matched with `fnmatch`, whose `*` crosses `/`, so the gate measures 104 files at any depth — planting a 60011 B file in `backend/console_server/` fails it by name. The real gap is narrower: source outside the three groups is unmeasured rather than passing, and `tools/*.py` is the largest such body, at `tools/run-evidence.py`, 22344 B. Widening the patterns to cover it is a change to the `gates` surface, deliberately not taken here.
 
 **Revisit when a function, not a file, is the thing over the limit.** The 200-line rule and the byte ceiling can conflict: `openPanel` in `inject.js` is 212 lines and cannot be split without changing the served bytes, which this decision requires to stay identical. It is a known exception that needs its own round with visual verification, not a clause here. The same rule is still unmet elsewhere: 25 tracked `.py` files nest past four levels — `collect` in `backend/search/search_pool.py` at 189 lines / 7 levels and `main` in `backend/download/submit_xunlei.py` at 418 lines / 6 levels among them — and no check measures nesting.
 
@@ -81,11 +81,11 @@ The band is empty of files. No tracked `.py` is over 30720 B, the largest gated 
 
 ## Testing
 
-- [M1] `source-budget` measures UTF-8 bytes over the three pattern groups and fails on any file above 51200 B; the tree passes today, with its largest gated file at 24565 B and its largest `.py` at 25883 B, and the eleven targets gone.
+- [M1] `source-budget` measures UTF-8 bytes over the three pattern groups — 104 files, at any depth — and fails on any file above 51200 B; the tree passes today, with its largest gated file at 25883 B (`backend/search/search_pool.py`), and the eleven targets gone.
 - [M2] `tests` — `python3 -m unittest discover -s tests` is green, with the same case names as before the split and no case deleted, skipped or weakened.
 - [M3] `source` — `python3 -m compileall -q backend` and `./build.sh` pass, and every entry script the launcher names still runs when invoked through the console's own launcher: eight of eight return rc=0.
 - [M4] `packaging` — the script the built DLL serves is byte-identical to the pre-split file (`sha256 b8feedab…c206b6`, 81462 B), so the one target that is delivered rather than imported is proven rather than asserted.
 - [M5] `tests` — the two split test files keep their case identifiers: the `Class.method` multiset reported by `python3 -m unittest discover -s tests` is identical before and after, and the run still reports `Ran 315 tests`. That count is what makes the alternative of a re-export aggregator a failure rather than a style choice.
-- [M6] `source` — every file in the six targets' new homes is ≤30720 B: 41 files, largest `tools/pairdocs/model.py` at 12523 B. **unpinned**: nothing measures the 30 KB band — `source-budget` fires only above 51200 B — and nothing measures nesting at all, so this was verified by an ad-hoc AST scan that no gate repeats.
+- [M6] `source` — every file in the six targets' new homes is ≤30720 B: 38 new files plus the three retained entries, largest `backend/console_server/http_api.py` at 17609 B. **unpinned**: nothing measures the 30 KB band — `source-budget` fires only above 51200 B — and nothing measures nesting at all, so this was verified by an ad-hoc AST scan that no gate repeats.
 - [M7] `source` — the entry contracts still hold: `python3 backend/console_server.py --port <free>` answers `GET /api/snapshot` with `"service": "jellyfin-downloader-backend"`; `python3 -c "import sys; sys.path.insert(0, 'backend'); import console_server"` exposes one module object, starts no service and reads no state; `python3 backend/candidate_score.py --help` exits 0; `python3 tools/pair-docs.py --check` reports every pair in step. The manual Jellyfin smoke path on the `source` surface is what owns the first of these over time.
 - [M8] `packaging` — the plugin ships `backend/` as a tree, so `backend/console_server/`, `backend/media_download_lib/` and `backend/candidate_score/` travel with the DLL and `install.sh`'s `cp -R backend` carries them. **unverified**: `install.sh` itself was not run, so no run proves the copied tree works in place.

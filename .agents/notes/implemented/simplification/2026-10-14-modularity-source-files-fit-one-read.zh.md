@@ -35,7 +35,7 @@ Class: simplification
 - `backend/media_download_lib/paths.py` 从包的父目录推导 `DATA_ROOT`，而不是从 `dirname(__file__)`，所以数据根仍然是 `backend/state`。
 - 两个被拆的测试文件都把共享夹具搬进了下划线前缀的 helper，因为 `unittest` 会收集一个模块 import 进来的任何 `TestCase` 子类。
 
-闸门之下最大的文件现在是 `Jellyfin.Plugin.JellyfinDownloader/Web/inject_05_render.js`（24565 B），最大的 `.py` 是 `backend/search/search_pool.py`（25883 B）；没有任何 tracked `.py` 超过 30720 B。
+闸门之下最大的文件现在是 `backend/search/search_pool.py`（25883 B），其次才是最大的分片 `Web/inject_05_render.js`（24565 B）；没有任何 tracked `.py` 超过 30720 B。
 
 ## 曾考虑的替代方案
 
@@ -57,7 +57,7 @@ Class: simplification
 
 ## 后果
 
-警戒带里已经没有文件。没有任何 tracked `.py` 超过 30720 B，闸门之下最大的文件是一片 24565 B 的 `Web/inject_0*.js` 分片，而六个目标原来的 220435 B / 六个文件变成了 41 个文件、其中最大者是 `tools/pairdocs/model.py`（12523 B）。现在打开那十一个目标中任何一个的读者，只打开一个文件。
+警戒带里已经没有文件。没有任何 tracked `.py` 超过 30720 B，闸门之下最大的文件是 `backend/search/search_pool.py`（25883 B），而六个目标原来的 220435 B / 六个文件变成了 41 个文件、其中最大者是 `backend/console_server/http_api.py`（17609 B）。现在打开那十一个目标中任何一个的读者，只打开一个文件。
 
 **同名冲撞是这套布局的价码。** `backend/console_server.py` 与 `backend/console_server/` 同名，是因为两条合约各钉住一个：插件按那个确切路径启动文件，而本决策把一个域的模块放进同名目录。Python 先解析目录，于是当入口已经作为 `__main__` 运行时，`backend/console_server/__init__.py` 必须把 `sys.modules` 重定向到入口。其余目标都不需要这一手，而这是整次重构里唯一一处「读者动文件之前必须先知道某个机制」的地方。
 
@@ -65,7 +65,7 @@ Class: simplification
 
 **当某道检查的扫描面悄悄缩小却没有东西变红时，重新审视。** 这次决策搬动了 22 个后端模块与 31 个测试模块，过程中有三道守卫静默失去覆盖：一道 stdlib-only 守卫在 `search_pool.py` 变成七个文件后仍守着三个写死的文件名（68% 的字节在它之外）、一道退役符号扫描只扫一层、语法闸门是个只够到根目录的 shell glob。三处都在这里修好了，但「守卫是否必须从它治理的对象推导扫描面、并为塌陷带上限」是一个独立决策、有它自己的落选替代，因此不由本记录裁定。
 
-**当本决策造出来的包落在某道闸门的扫描面之外时，重新审视。** 对 `source-budget` 这已经是事实：它的 patterns 是 `backend/*.py` 与 `tests/*.py`，只匹配一层，所以 `backend/console_server/*.py`、`backend/media_download_lib/*.py`、`backend/candidate_score/*.py`、`tests/backend_probe/test_probe_*.py` 与 `tools/pairdocs/*.py` 完全不在它度量的范围内 —— 促成这次工作的那道闸门，看不见这次工作产出的大部分。把它加宽是 `gates` 面上的改动，本记录有意不取。
+**当三组 pattern 之外的源码长大时，重新审视。** 这里早先的草稿声称 `source-budget` 只匹配一层、因此漏掉了本决策造出来的每一个包；那是错的，一条检查就能推翻它。pattern 用 `fnmatch` 匹配，而它的 `*` 跨越 `/`，所以这道闸门度量的是 104 个文件、任意深度 —— 往 `backend/console_server/` 里放一个 60011 B 的文件，它会被按名点出。真正的缺口更窄：三组之外的源码是「未被度量」，而不是「通过」；`tools/*.py` 是其中最大的一块，最大的成员是 `tools/run-evidence.py`，22344 B。把 patterns 扩到它属于 `gates` 面上的改动，本记录有意不取。
 
 **当超线的是函数而不是文件时，重新审视。** 200 行规则与字节上限会冲突：`inject.js` 里的 `openPanel` 是 212 行，而拆它就会改变交付字节，而本决策要求这些字节保持不变。它是已知例外，需要单独一轮带视觉验证，不是这里的一个条款。同一条规则在别处也仍未满足：25 个 tracked `.py` 嵌套超过四层 —— 其中 `backend/search/search_pool.py` 的 `collect` 是 189 行 / 7 层、`backend/download/submit_xunlei.py` 的 `main` 是 418 行 / 6 层 —— 而没有任何检查度量嵌套。
 
@@ -81,11 +81,11 @@ Class: simplification
 
 ## 验证
 
-- [M1] `source-budget` 对三个 pattern 组度量 UTF-8 字节，任一文件超过 51200 B 即失败；当前树通过，最大的受闸文件是 24565 B、最大的 `.py` 是 25883 B，那十一个目标已经不在了。
+- [M1] `source-budget` 对三个 pattern 组度量 UTF-8 字节 —— 104 个文件、任意深度 —— 任一文件超过 51200 B 即失败；当前树通过，最大的受闸文件是 25883 B（`backend/search/search_pool.py`），那十一个目标已经不在了。
 - [M2] `tests` —— `python3 -m unittest discover -s tests` 全绿，用例名与拆分前相同，没有用例被删除、跳过或放宽。
 - [M3] `source` —— `python3 -m compileall -q backend` 与 `./build.sh` 通过，且启动器点名的每个入口脚本仍能跑起来：走控制台自己的启动器调用时，8 个全部 rc=0。
 - [M4] `packaging` —— 构建出的 DLL 所交付的脚本与拆分前逐字节相同（`sha256 b8feedab…c206b6`，81462 B），即那个「被交付而非被导入」的目标是被证明的，不是被声称的。
 - [M5] `tests` —— 两个被拆的测试文件保住了各自的用例标识：`python3 -m unittest discover -s tests` 报出的 `Class.method` 多重集在拆分前后完全相同，且仍然报 `Ran 315 tests`。正是这个数量让「再导出聚合入口」成为失败而不是风格选择。
-- [M6] `source` —— 六个目标新落点里的每个文件都 ≤30720 B：41 个文件，最大者 `tools/pairdocs/model.py` 12523 B。**unpinned**：没有任何东西度量 30 KB 警戒带 —— `source-budget` 只在超过 51200 B 时响 —— 也没有任何东西度量嵌套，所以这一条是用一次临时 AST 扫描验证的，没有闸门会重复它。
+- [M6] `source` —— 六个目标新落点里的每个文件都 ≤30720 B：38 个新增文件加 3 个保留入口，最大者 `backend/console_server/http_api.py` 17609 B。**unpinned**：没有任何东西度量 30 KB 警戒带 —— `source-budget` 只在超过 51200 B 时响 —— 也没有任何东西度量嵌套，所以这一条是用一次临时 AST 扫描验证的，没有闸门会重复它。
 - [M7] `source` —— 入口合约仍成立：`python3 backend/console_server.py --port <free>` 应答 `GET /api/snapshot`，返回 `"service": "jellyfin-downloader-backend"`；`python3 -c "import sys; sys.path.insert(0, 'backend'); import console_server"` 拿到的是**同一个模块对象**，不起服务、不读状态；`python3 backend/candidate_score.py --help` 退出码 0；`python3 tools/pair-docs.py --check` 报所有对同步。这三条里第一条的长期归属是 `source` 面上那条人工 Jellyfin 冒烟路径。
 - [M8] `packaging` —— 插件把 `backend/` 按树交付，所以 `backend/console_server/`、`backend/media_download_lib/` 与 `backend/candidate_score/` 随 DLL 一起走，`install.sh` 的 `cp -R backend` 会把它们带上。**未核实**：`install.sh` 本身没跑，因此没有哪次运行证明被复制过去的树在原地可用。
