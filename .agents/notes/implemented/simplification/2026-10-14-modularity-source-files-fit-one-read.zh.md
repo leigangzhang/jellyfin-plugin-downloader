@@ -53,7 +53,7 @@ Class: simplification
 
 **给两个测试文件新建同名嵌套包。** `a241dab` 已经按被测模块把 `tests/` 分了组，两个文件也已经在 `tests/backend_probe/` 里、而 `unittest discover` 会递归进去；兄弟模块保住了这个分组，新开一个 `tests/test_backend_probe/` 反而会把它撤掉。
 
-**让 `backend/console_server/` 不带 `__init__.py`。** 这是本次工作前半段建造时记在案的替代：那样 `import console_server` 会直接解析到入口文件，根本不需要别名。它落选是因为包内模块将不得不以通用顶层名 —— `jobs`、`service`、`http_api` —— 进入 `backend/` 的导入命名空间，而那正是前半段要消掉的扁平树。
+**让 `backend/console_server/` 不带 `__init__.py`。** 这是本次工作前半段建造时记在案的替代：那样 `import console_server` 会直接解析到入口文件，根本不需要别名。它落选是因为本决策把一个域的模块放进包目录，而少了 `__init__.py` 那个目录就不成其为包：包内模块将不得不以通用顶层名 —— `jobs`、`service`、`http_api` —— 进入 `backend/` 的导入命名空间，而那正是前半段要消掉的扁平树。
 
 ## 后果
 
@@ -87,5 +87,5 @@ Class: simplification
 - [M4] `packaging` —— 构建出的 DLL 所交付的脚本与拆分前逐字节相同（`sha256 b8feedab…c206b6`，81462 B），即那个「被交付而非被导入」的目标是被证明的，不是被声称的。
 - [M5] `tests` —— 两个被拆的测试文件保住了各自的用例标识：`python3 -m unittest discover -s tests` 报出的 `Class.method` 多重集在拆分前后完全相同，且仍然报 `Ran 315 tests`。正是这个数量让「再导出聚合入口」成为失败而不是风格选择。
 - [M6] `source` —— 六个目标新落点里的每个文件都 ≤30720 B：41 个文件，最大者 `tools/pairdocs/model.py` 12523 B。**unpinned**：没有任何东西度量 30 KB 警戒带 —— `source-budget` 只在超过 51200 B 时响 —— 也没有任何东西度量嵌套，所以这一条是用一次临时 AST 扫描验证的，没有闸门会重复它。
-- [M7] `source` —— 入口合约仍成立：`python3 backend/console_server.py --port <空闲端口>` 应答 `GET /api/snapshot`，返回 `"service": "jellyfin-downloader-backend"`；`python3 -c "import sys; sys.path.insert(0, 'backend'); import console_server"` 拿到的是**同一个模块对象**，不起服务、不读状态；`python3 backend/candidate_score.py --help` 退出码 0；`python3 tools/pair-docs.py --check` 报所有对同步。这三条里第一条的长期归属是 `source` 面上那条人工 Jellyfin 冒烟路径。
+- [M7] `source` —— 入口合约仍成立：`python3 backend/console_server.py --port <free>` 应答 `GET /api/snapshot`，返回 `"service": "jellyfin-downloader-backend"`；`python3 -c "import sys; sys.path.insert(0, 'backend'); import console_server"` 拿到的是**同一个模块对象**，不起服务、不读状态；`python3 backend/candidate_score.py --help` 退出码 0；`python3 tools/pair-docs.py --check` 报所有对同步。这三条里第一条的长期归属是 `source` 面上那条人工 Jellyfin 冒烟路径。
 - [M8] `packaging` —— 插件把 `backend/` 按树交付，所以 `backend/console_server/`、`backend/media_download_lib/` 与 `backend/candidate_score/` 随 DLL 一起走，`install.sh` 的 `cp -R backend` 会把它们带上。**未核实**：`install.sh` 本身没跑，因此没有哪次运行证明被复制过去的树在原地可用。

@@ -12,11 +12,11 @@
   en: 565f9073856fce1d
   zh: 2a9829380244982c
 /decision-modularity-one-source-file-fits-one-read-one-domain-gets-one-directory/alternatives-considered:
-  en: f527ce8cc21f1dfd
-  zh: bade76a407dabc94
+  en: d3a872526de41f66
+  zh: 43fa2c5174f38ed5
 /decision-modularity-one-source-file-fits-one-read-one-domain-gets-one-directory/consequences:
   en: b2a45a1c6ac9e298
   zh: 456a02bff63cd392
 /decision-modularity-one-source-file-fits-one-read-one-domain-gets-one-directory/testing:
   en: a8f0054b7d7c562a
-  zh: 310f6452c83075bd
+  zh: 1558377976e78044

@@ -53,7 +53,7 @@ The largest file under the gate is now `Jellyfin.Plugin.JellyfinDownloader/Web/i
 
 **A nested same-named package for the two test files.** `a241dab` had already grouped `tests/` by the module under test, and both files already lived in `tests/backend_probe/`, which `unittest discover` recurses into; sibling modules keep that grouping, where a fresh `tests/test_backend_probe/` directory would have undone it.
 
-**Leaving `backend/console_server/` without an `__init__.py`.** Recorded while the first half of this work was built: `import console_server` would then resolve to the entry file and no aliasing would be needed at all. It lost because the package's modules would have to enter `backend/`'s import namespace under generic top-level names — `jobs`, `service`, `http_api` — which is the flat tree the first half set out to remove.
+**Leaving `backend/console_server/` without an `__init__.py`.** Recorded while the first half of this work was built: `import console_server` would then resolve to the entry file and no aliasing would be needed at all. It lost because this decision puts a domain's modules in a package directory, and without an `__init__.py` that directory is not one: the modules would have to enter `backend/`'s import namespace under generic top-level names — `jobs`, `service`, `http_api` — which is the flat tree the first half set out to remove.
 
 ## Consequences
 
