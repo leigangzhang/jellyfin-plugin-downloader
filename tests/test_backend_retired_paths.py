@@ -1028,6 +1028,10 @@ class SiteUrlClassificationTests(unittest.TestCase):
         self.assertIn("BTHDTV", backend, "实测有效的那个词也要留痕")
         # 默认值里出现 BBHDTV 这件事本身要有一句「是使用方指定的」说明
         self.assertIn("使用方指定", backend)
+        # 旧话术不能再回来：默认值不是「实测有效的那两条」了（现在是一条三词，
+        # 而且含一个实测 0 命中的词）。这句是上一轮复核逐字点出来的矛盾。
+        self.assertNotIn("实测有效的那两条", backend,
+                         "默认值早就不是「实测有效的那两条」，别再这么写")
 
     def test_describe_site_states_the_kind_the_page_shows(self):
         described = source_config.describe_site({
