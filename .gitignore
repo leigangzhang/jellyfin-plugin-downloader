@@ -24,3 +24,6 @@ backups/
 
 # Marklingo
 .marklingo/
+
+# 并行重构用的临时 git worktree（队长独占建/删，不入库）
+.worktrees/
