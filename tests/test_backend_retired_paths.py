@@ -1032,6 +1032,10 @@ class SiteUrlClassificationTests(unittest.TestCase):
         # 而且含一个实测 0 命中的词）。这句是上一轮复核逐字点出来的矛盾。
         self.assertNotIn("实测有效的那两条", backend,
                          "默认值早就不是「实测有效的那两条」，别再这么写")
+        # 2026-10-14 复测出来的 AND 语义与「整条 0 命中」这个事实必须留在代码里：
+        # 它是「为什么不能把不确定的词塞进同一条组合」的唯一依据。
+        self.assertIn("AND 语义", backend)
+        self.assertIn("BBHDTV`       -> **0 条**", backend)
 
     def test_describe_site_states_the_kind_the_page_shows(self):
         described = source_config.describe_site({
