@@ -98,7 +98,7 @@
             <div class="inputContainer">
               <div class="jdl-list" id="jdl-keywords"></div>
               <div class="fieldDescription">
-                添加固定关键词全局优化搜索资源的质量，对所有下载生效，比如添加资源来源、画质等关键词。同一个关键词组合支持多个关键词，通过空格分隔；多组关键词按先后顺序依次搜索。不建议添加电影名、导演等仅绑定特定有限资源的关键词。一行都没有时用内置默认。
+                添加固定关键词全局优化搜索资源的质量，对所有下载生效，比如添加资源来源、画质等关键词。一行一个关键词，多行按先后顺序依次搜索。不建议把多个词写在同一行——搜索站对一行里的词是「全部命中」语义，只要有一个词不在索引里，这一行就什么都搜不到。不建议添加电影名、导演等仅绑定特定有限资源的关键词。一行都没有时用内置默认。
               </div>
             </div>
 
@@ -372,7 +372,7 @@
       // ---- 关键词组合 ----
 
       function renderKeywords(keywords) {
-        seedList(q('jdl-keywords'), keywords || [], '如：高清剧集网 DDHDTV BBHDTV', '关键词组合');
+        seedList(q('jdl-keywords'), keywords || [], '如：高清剧集网', '关键词组合');
       }
 
       function readKeywords() {

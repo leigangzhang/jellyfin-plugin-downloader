@@ -1009,12 +1009,32 @@ class SiteUrlClassificationTests(unittest.TestCase):
     def test_placeholders_follow_the_current_defaults(self):
         """输入框的示例文案要跟当前默认值一致，否则用户看到的「默认」是过期的。"""
         page = (ROOT / "Jellyfin.Plugin.JellyfinDownloader" / "Configuration" / "configPage.html").read_text(encoding="utf-8")
-        self.assertIn("如：高清剧集网 DDHDTV BBHDTV", page)
+        self.assertIn("如：高清剧集网", page)
+        import source_config
+
+        self.assertIn(source_config.DEFAULT_ANCHOR_KEYWORDS[0], page,
+                      "示例文案要取默认里的第一个关键词")
+
+    def test_keyword_defaults_are_one_word_per_row(self):
+        """默认关键词必须一条一个词——使用方拍板「不要多词组合」。
+
+        依据是 2026-10-14 的实测：该索引对一行里的多个词是 AND 语义，混进一个不在
+        索引里的词（例如 BBHDTV）会让整行 0 命中；拆成单行则只有那一行空转。
+        这条同时钉住 C# 与 Python 两侧的默认值形态。
+        """
         import source_config
 
         for keyword in source_config.DEFAULT_ANCHOR_KEYWORDS:
-            self.assertIn(keyword, page,
-                          f"默认关键词 {keyword!r} 至少要在页面示例里出现一次")
+            self.assertNotIn(" ", keyword,
+                             f"默认关键词 {keyword!r} 是多个词，会触发 AND 语义的整行空转")
+
+        controller = (ROOT / "Jellyfin.Plugin.JellyfinDownloader" / "Controllers"
+                      / "JellyfinDownloaderController.cs").read_text(encoding="utf-8")
+        keywords_block = controller[controller.index("DefaultKeywords"):]
+        cs_keywords = re.findall(r'"([^"]+)"', keywords_block[:keywords_block.index("};")])
+        self.assertEqual(cs_keywords, list(source_config.DEFAULT_ANCHOR_KEYWORDS))
+        for keyword in cs_keywords:
+            self.assertNotIn(" ", keyword, f"C# 默认关键词 {keyword!r} 也是多词组合")
 
     def test_the_keyword_default_documents_its_measured_caveat(self):
         """BBHDTV 是使用方指定的值，而实测 0 命中——这个矛盾必须写在代码里。
@@ -1024,14 +1044,18 @@ class SiteUrlClassificationTests(unittest.TestCase):
         """
         backend = (BACKEND / "source_config.py").read_text(encoding="utf-8")
         self.assertIn("BBHDTV", backend)
-        self.assertIn("BBHDTV -> 0 命中", backend, "实测备注必须留着")
         self.assertIn("BTHDTV", backend, "实测有效的那个词也要留痕")
-        # 默认值里出现 BBHDTV 这件事本身要有一句「是使用方指定的」说明
-        self.assertIn("使用方指定", backend)
-        # 旧话术不能再回来：默认值不是「实测有效的那两条」了（现在是一条三词，
-        # 而且含一个实测 0 命中的词）。这句是上一轮复核逐字点出来的矛盾。
+        # 逐词实测那一行（BBHDTV 0 命中）必须留着
+        self.assertIn("BBHDTV`      -> 0 命中", backend, "逐词实测备注必须留着")
+        # 默认值里出现 BBHDTV 这件事要有一句「使用方的决定」说明
+        self.assertIn("使用方拍板", backend)
+        # 旧话术不能再回来：默认值不是「实测有效的那两条」了。这句是复核逐字点出来的矛盾。
         self.assertNotIn("实测有效的那两条", backend,
                          "默认值早就不是「实测有效的那两条」，别再这么写")
+        # 2026-10-14 复测出来的 AND 语义与「整行 0 命中」这个事实必须留在代码里：
+        # 它是「一条一个词」这条默认形态的唯一依据，丢了就等于没理由。
+        self.assertIn("AND 语义", backend)
+        self.assertIn("BBHDTV`       -> **0 条**", backend)
         # 2026-10-14 复测出来的 AND 语义与「整条 0 命中」这个事实必须留在代码里：
         # 它是「为什么不能把不确定的词塞进同一条组合」的唯一依据。
         self.assertIn("AND 语义", backend)

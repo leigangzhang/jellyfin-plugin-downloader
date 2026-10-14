@@ -46,7 +46,7 @@ public class JellyfinDownloaderController : ControllerBase
         "https://torrents-csv.com",
     };
 
-    private static readonly string[] DefaultKeywords = { "高清剧集网 DDHDTV BBHDTV" };
+    private static readonly string[] DefaultKeywords = { "高清剧集网", "DDHDTV", "BBHDTV" };
 
     /// <summary>Gets the injected client script.</summary>
     [HttpGet("script")]
