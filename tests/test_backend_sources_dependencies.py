@@ -18,9 +18,12 @@ class DependencyTests(unittest.TestCase):
         allowed = set(sys.stdlib_module_names) | {"media_download_lib",
                                                   "torrents_csv_source",
                                                   "search_pool",
-                                                  "source_config"}
-        for name in ("search_pool.py", "torrents_csv_source.py", "source_config.py"):
-            tree = ast.parse((BACKEND / name).read_text(encoding="utf-8"))
+                                                  "source_config"} | {
+            path.name[:-3] for path in BACKEND.glob("search_pool*.py")}
+        for path in sorted(BACKEND.glob("search_pool*.py")) + [
+                BACKEND / "torrents_csv_source.py", BACKEND / "source_config.py"]:
+            name = path.name
+            tree = ast.parse(path.read_text(encoding="utf-8"))
             roots = set()
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
