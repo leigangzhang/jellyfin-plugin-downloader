@@ -984,16 +984,30 @@ class SiteUrlClassificationTests(unittest.TestCase):
         self.assertIn('TryGetProperty("service", out var service)', manager)
 
     def test_the_port_row_still_reports_a_stopped_backend(self):
-        """删掉状态行之后，「后端未运行」必须有别的去处。
+        """服务端口那一行：标签 + 端口 + 运行状态 + 两个按钮，同一行；状态不许带 pid。
 
-        原来那行「正在运行 · pid … · 插件管理」是唯一显示运行状态的地方；删掉之后
-        如果只留 `localhost:8123`，后端崩了用户会以为一切正常。
+        原来那行「正在运行 · pid …」被删掉之后，运行状态改成了端口行里的徽标
+        （运行中 / 已停止 / 启动中）。使用方明确要求不带 pid 这类冗余字段，
+        所以页面里不许再渲染它。
         """
         page = (ROOT / "Jellyfin.Plugin.JellyfinDownloader" / "Configuration" / "configPage.html").read_text(encoding="utf-8")
         self.assertIn("status.running === false", page)
         self.assertIn("后端未运行", page)
         # 端口被顶替的说明也还在（同一个说明位的另一档）
         self.assertIn("已被占用，实际监听", page)
+        # 三种状态文案都要在
+        for state in ("运行中", "已停止", "启动中"):
+            self.assertIn(state, page, f"状态徽标缺少「{state}」")
+        # 同一行：标签、端口值、状态徽标、按钮都在 .jdl-port-row 里
+        row = page[page.index('class="jdl-port-row"'):]
+        row = row[:row.index("jdl-port-hint")]
+        for token in ("服务端口", "jdl-port-value", "jdl-status",
+                      "jdl-backend-refresh", "jdl-backend-restart"):
+            self.assertIn(token, row, f"服务端口行里缺少 {token}")
+        # 不再单独占一行标题
+        self.assertNotIn('<h2 class="sectionTitle">服务端口</h2>', page)
+        # 不渲染 pid 等冗余字段
+        self.assertNotIn("status.pid", page, "运行状态不许带 pid")
 
     def test_station_rows_keep_their_live_hint_slot(self):
         """站点行的实时识别提示不能只在渲染时非空才创建。

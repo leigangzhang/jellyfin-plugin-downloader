@@ -42,18 +42,57 @@
 
     #JellyfinDownloaderConfigPage .jdl-icon-btn .material-icons { font-size: 20px; }
 
+    /* 服务端口：标签 + 端口值 + 运行状态 + 两个按钮，全在同一行。
+       flex-wrap 只为极窄屏兜底，正常宽度下永远是一行。 */
     #JellyfinDownloaderConfigPage .jdl-port-row {
       display: flex;
       align-items: center;
       gap: 10px;
       flex-wrap: wrap;
+      min-height: 40px;
+    }
+
+    #JellyfinDownloaderConfigPage .jdl-port-row__label {
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    #JellyfinDownloaderConfigPage .jdl-port-row__value {
+      white-space: nowrap;
     }
 
     #JellyfinDownloaderConfigPage .jdl-port-row__actions {
       margin-left: auto;
       display: inline-flex;
+      align-items: center;
       gap: 8px;
     }
+
+    /* 运行状态：小圆点 + 文字。颜色用中性语义色，明暗主题下都能看清。 */
+    #JellyfinDownloaderConfigPage .jdl-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 10px;
+      border-radius: 10px;
+      border: 1px solid currentColor;
+      font-size: 0.9em;
+      line-height: 1.6;
+      white-space: nowrap;
+    }
+
+    #JellyfinDownloaderConfigPage .jdl-status__dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      flex: 0 0 auto;
+    }
+
+    #JellyfinDownloaderConfigPage .jdl-status--running { color: #2e9e4f; }
+    #JellyfinDownloaderConfigPage .jdl-status--stopped { color: #d9534f; }
+    #JellyfinDownloaderConfigPage .jdl-status--starting { color: #d79b00; }
+    #JellyfinDownloaderConfigPage .jdl-status--unknown { color: inherit; opacity: 0.6; }
 
     #JellyfinDownloaderConfigPage .jdl-list__hint { margin-top: 2px; }
 
@@ -103,20 +142,22 @@
             </div>
 
             <!-- ④ 服务端口 -->
-            <div class="sectionTitleContainer flex align-items-center">
-              <h2 class="sectionTitle">服务端口</h2>
-            </div>
             <div class="inputContainer">
               <div class="jdl-port-row">
-                <span id="jdl-port-value">—</span>
-                <span id="jdl-port-note" class="fieldDescription"></span>
+                <span class="jdl-port-row__label">服务端口</span>
+                <span id="jdl-port-value" class="jdl-port-row__value">—</span>
+                <span id="jdl-status" class="jdl-status jdl-status--unknown">
+                  <span class="jdl-status__dot" aria-hidden="true"></span>
+                  <span id="jdl-status-text">状态未知</span>
+                </span>
                 <span class="jdl-port-row__actions">
                   <button id="jdl-backend-refresh" type="button" is="emby-button" class="raised button-alt">刷新状态</button>
                   <button id="jdl-backend-restart" type="button" is="emby-button" class="raised button-alt">重启后端</button>
                 </span>
               </div>
               <div class="fieldDescription">
-                后端在本机监听的端口，默认 8123；启动时若端口被占用会自动往后取（8123 → 8124 → …）。
+                <span id="jdl-port-note"></span>
+                <span id="jdl-port-hint">后端在本机监听的端口，默认 8123；启动时若端口被占用会自动往后取（8123 → 8124 → …）。</span>
               </div>
             </div>
 
@@ -386,21 +427,38 @@
         if (node) { node.textContent = message || ''; }
       }
 
-      // 端口值 + 一行说明。说明的优先级：未运行 > 端口被顶替 > 空。
-      // 「后端已停止」必须有地方说——原来那行状态文本删掉之后，不提示的话用户
-      // 只看到 localhost:8123，以为一切正常。
+      // 运行状态徽标：只显示 运行中 / 已停止 / 启动中（以及拿不到状态时的「状态未知」），
+      // 不带 pid、脚本路径这类冗余字段。
+      var STATUS_TEXT = {
+        running: '运行中',
+        stopped: '已停止',
+        starting: '启动中',
+        unknown: '状态未知'
+      };
+
+      function setStatus(state) {
+        var badge = q('jdl-status');
+        var text = q('jdl-status-text');
+        if (!badge || !text) { return; }
+        badge.className = 'jdl-status jdl-status--' + state;
+        text.textContent = STATUS_TEXT[state] || STATUS_TEXT.unknown;
+      }
+
+      // 端口值 + 状态徽标 + 一行说明。说明的优先级：未运行 > 端口被顶替 > 空。
       function renderStatus(status) {
         var value = q('jdl-port-value');
         if (!value) { return; }
         if (!status) {
-          showNote('状态未知');
+          setStatus('unknown');
+          showNote('');
           return;
         }
         var port = status.port || status.backendPort || 8123;
         var host = window.location && window.location.hostname ? window.location.hostname : '127.0.0.1';
         value.textContent = host + ':' + port;
+        setStatus(status.running === false ? 'stopped' : 'running');
         if (status.running === false) {
-          showNote('后端未运行，点「重启后端」启动');
+          showNote('后端未运行，点「重启后端」启动。');
         } else if (status.portRequested && status.portRequested !== port) {
           showNote('（' + status.portRequested + ' 已被占用，实际监听 ' + port + '）');
         } else {
@@ -413,6 +471,7 @@
 
       function refreshStatus() {
         return ajax('GET', 'backend/status').then(renderStatus).catch(function (error) {
+          setStatus('unknown');
           showNote('状态读取失败：' + (error && error.status ? error.status : '网络错误'));
         });
       }
@@ -449,7 +508,9 @@
       }
 
       q('jdl-save').addEventListener('click', function () {
-        showNote('正在保存…');
+        // 保存必然重启后端，中间这段就显示「启动中」——比让徽标停在旧状态诚实。
+        showNote('');
+        setStatus('starting');
         save().then(function (result) {
           if (window.Dashboard && Dashboard.processPluginConfigurationUpdateResult) {
             Dashboard.processPluginConfigurationUpdateResult();
@@ -463,6 +524,7 @@
           var message = '保存失败：' + errorText(error, '');
           showNote(message);
           note(message);
+          setStatus('unknown');
         });
       });
 
@@ -472,7 +534,8 @@
       });
 
       q('jdl-backend-restart').addEventListener('click', function () {
-        showNote('正在重启…');
+        setStatus('starting');
+        showNote('');
         ajax('POST', 'backend/restart', {}).then(function (result) {
           if (result && result.detail) { note(result.detail); }
           showNote('');
@@ -481,7 +544,7 @@
           var message = '重启失败：' + (error && error.status ? error.status : '网络错误');
           showNote(message);
           note(message);
-          refreshStatus();
+          setStatus('unknown');
         });
       });
 
