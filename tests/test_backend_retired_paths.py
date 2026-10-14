@@ -1086,6 +1086,15 @@ class SiteUrlClassificationTests(unittest.TestCase):
         icon_btn = icon_btn[:icon_btn.index("}")]
         self.assertIn("margin: 0", icon_btn, "图标按钮必须清掉主题外边距")
 
+        # 服务端口标签的字号必须与媒体目录/资源站点一致：靠「同一个元素 + 同一个类」
+        # 保证（h2.sectionTitle），不是抄一个 1.5em 的数字——另一套主题的 h2 是 1.8em。
+        self.assertIn('<h2 id="jdl-port-label" class="sectionTitle jdl-port-row__label">服务端口</h2>',
+                      page, "端口标签要用与其它小节标题相同的元素与类")
+        label_rule = page[page.index(".jdl-port-row__label {"):]
+        label_rule = label_rule[:label_rule.index("}")]
+        self.assertNotIn("font-size", label_rule, "不要给端口标签写死字号，交给主题的 h2 规则")
+        self.assertNotIn("font-weight", label_rule, "不要覆盖字重，否则与其它标题不一致")
+
         port_btn = page[page.index(".jdl-port-btn {"):]
         port_btn = port_btn[:port_btn.index("}")]
         self.assertIn("font-size: 1em", port_btn, "端口按钮字号要与该行文字一致")
