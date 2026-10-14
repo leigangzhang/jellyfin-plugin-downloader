@@ -1009,6 +1009,32 @@ class SiteUrlClassificationTests(unittest.TestCase):
         # 不渲染 pid 等冗余字段
         self.assertNotIn("status.pid", page, "运行状态不许带 pid")
 
+    def test_status_badge_palette_passes_wcag_aa(self):
+        """状态徽标的配色必须过 WCAG AA（白字对底色 ≥ 4.5:1）。
+
+        只给文字着色的方案在浅色主题下不达标（绿 3.43:1、琥珀 2.45:1），所以徽标改成
+        实心胶囊 + 白字——这样对比度由胶囊自身保证，明暗主题下都成立。这条守卫把
+        「过 AA」从口头承诺变成会红的检查：改配色改到不达标就失败。
+        """
+        page = (ROOT / "Jellyfin.Plugin.JellyfinDownloader" / "Configuration" / "configPage.html").read_text(encoding="utf-8")
+        palette = dict(re.findall(r"\.jdl-status--(\w+) \{ background: (#[0-9a-fA-F]{6}); \}", page))
+        self.assertEqual(set(palette), {"running", "stopped", "starting", "unknown"},
+                         f"四种状态的底色都要定义：{sorted(palette)}")
+
+        def luminance(color: str) -> float:
+            channels = [int(color[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+            linear = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+                      for c in channels]
+            return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+        for state, background in sorted(palette.items()):
+            light, dark = luminance("#ffffff"), luminance(background)
+            ratio = (max(light, dark) + 0.05) / (min(light, dark) + 0.05)
+            self.assertGreaterEqual(round(ratio, 2), 4.5,
+                                    f"{state} 的白字对比度只有 {ratio:.2f}:1，不到 AA")
+        # 别退回「只给文字着色」的老方案
+        self.assertNotIn("jdl-status--running { color:", page)
+
     def test_station_rows_keep_their_live_hint_slot(self):
         """站点行的实时识别提示不能只在渲染时非空才创建。
 
