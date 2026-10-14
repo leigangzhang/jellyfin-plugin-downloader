@@ -346,14 +346,14 @@
         (items.length ? items : [{ address: '', kind: '' }]).forEach(function (item) {
           var row = appendRow(list, { value: item.address, placeholder: 'https://站点地址', label: '资源站点' });
           row._kind = item.kind;
-          if (siteHintFor(item.address, item.kind)) {
-            var hint = document.createElement('div');
-            hint.className = 'fieldDescription jdl-list__hint';
-            row._field.wrap.appendChild(hint);
-            row._field.caption = hint;
-            refreshSiteHint(row);
-            row._field.input.addEventListener('input', function () { refreshSiteHint(row); });
-          }
+          // 说明元素**总是**建出来（空的时候隐藏）：只在渲染时非空才建的话，用户把一个
+          // 已知站点改成认不出的地址时就再也拿不到「未能识别」的实时提示了。
+          var hint = document.createElement('div');
+          hint.className = 'fieldDescription jdl-list__hint';
+          row._field.wrap.appendChild(hint);
+          row._field.caption = hint;
+          refreshSiteHint(row);
+          row._field.input.addEventListener('input', function () { refreshSiteHint(row); });
         });
       }
 
@@ -372,7 +372,7 @@
       // ---- 关键词组合 ----
 
       function renderKeywords(keywords) {
-        seedList(q('jdl-keywords'), keywords || [], '如：高清剧集网 DDHDTV', '关键词组合');
+        seedList(q('jdl-keywords'), keywords || [], '如：高清剧集网 DDHDTV BBHDTV', '关键词组合');
       }
 
       function readKeywords() {
@@ -386,23 +386,26 @@
         if (node) { node.textContent = message || ''; }
       }
 
-      function renderPort(status) {
+      // 端口值 + 一行说明。说明的优先级：未运行 > 端口被顶替 > 空。
+      // 「后端已停止」必须有地方说——原来那行状态文本删掉之后，不提示的话用户
+      // 只看到 localhost:8123，以为一切正常。
+      function renderStatus(status) {
         var value = q('jdl-port-value');
         if (!value) { return; }
-        var port = status && (status.port || status.backendPort) ? (status.port || status.backendPort) : 8123;
-        var requested = status && status.portRequested;
+        if (!status) {
+          showNote('状态未知');
+          return;
+        }
+        var port = status.port || status.backendPort || 8123;
         var host = window.location && window.location.hostname ? window.location.hostname : '127.0.0.1';
         value.textContent = host + ':' + port;
-        if (requested && requested !== port) {
-          showNote('（' + requested + ' 已被占用，实际监听 ' + port + '）');
-        } else if (!status) {
+        if (status.running === false) {
+          showNote('后端未运行，点「重启后端」启动');
+        } else if (status.portRequested && status.portRequested !== port) {
+          showNote('（' + status.portRequested + ' 已被占用，实际监听 ' + port + '）');
+        } else {
           showNote('');
         }
-      }
-
-      function renderStatus(status) {
-        if (!status) { return; }
-        renderPort(status);
         if (status.scriptExists === false) {
           note('后端脚本不存在：' + (status.script || '?'));
         }

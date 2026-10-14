@@ -983,6 +983,52 @@ class SiteUrlClassificationTests(unittest.TestCase):
         self.assertIn('{**obj, "service": SERVICE_ID}', backend)
         self.assertIn('TryGetProperty("service", out var service)', manager)
 
+    def test_the_port_row_still_reports_a_stopped_backend(self):
+        """删掉状态行之后，「后端未运行」必须有别的去处。
+
+        原来那行「正在运行 · pid … · 插件管理」是唯一显示运行状态的地方；删掉之后
+        如果只留 `localhost:8123`，后端崩了用户会以为一切正常。
+        """
+        page = (ROOT / "Jellyfin.Plugin.JellyfinDownloader" / "Configuration" / "configPage.html").read_text(encoding="utf-8")
+        self.assertIn("status.running === false", page)
+        self.assertIn("后端未运行", page)
+        # 端口被顶替的说明也还在（同一个说明位的另一档）
+        self.assertIn("已被占用，实际监听", page)
+
+    def test_station_rows_keep_their_live_hint_slot(self):
+        """站点行的实时识别提示不能只在渲染时非空才创建。
+
+        用户把一个已知站点改成认不出的地址时，得有地方实时显示「未能识别」；
+        元素只在渲染时非空才建的话，这一路反馈就没了（保存仍会被拒，但用户看不到原因）。
+        """
+        page = (ROOT / "Jellyfin.Plugin.JellyfinDownloader" / "Configuration" / "configPage.html").read_text(encoding="utf-8")
+        self.assertNotIn("if (siteHintFor(item.address, item.kind)) {", page,
+                         "说明元素必须无条件创建，空的时候隐藏")
+        self.assertIn("row._field.caption = hint;", page)
+
+    def test_placeholders_follow_the_current_defaults(self):
+        """输入框的示例文案要跟当前默认值一致，否则用户看到的「默认」是过期的。"""
+        page = (ROOT / "Jellyfin.Plugin.JellyfinDownloader" / "Configuration" / "configPage.html").read_text(encoding="utf-8")
+        self.assertIn("如：高清剧集网 DDHDTV BBHDTV", page)
+        import source_config
+
+        for keyword in source_config.DEFAULT_ANCHOR_KEYWORDS:
+            self.assertIn(keyword, page,
+                          f"默认关键词 {keyword!r} 至少要在页面示例里出现一次")
+
+    def test_the_keyword_default_documents_its_measured_caveat(self):
+        """BBHDTV 是使用方指定的值，而实测 0 命中——这个矛盾必须写在代码里。
+
+        不然下一个人读注释只看「实测命中率」，会以为默认值是挑过的最优解；
+        或者反过来把使用方要的值当成笔误直接删掉。
+        """
+        backend = (BACKEND / "source_config.py").read_text(encoding="utf-8")
+        self.assertIn("BBHDTV", backend)
+        self.assertIn("BBHDTV -> 0 命中", backend, "实测备注必须留着")
+        self.assertIn("BTHDTV", backend, "实测有效的那个词也要留痕")
+        # 默认值里出现 BBHDTV 这件事本身要有一句「是使用方指定的」说明
+        self.assertIn("使用方指定", backend)
+
     def test_describe_site_states_the_kind_the_page_shows(self):
         described = source_config.describe_site({
             "name": "", "kind": "", "base_url": "https://torrents-csv.com",
