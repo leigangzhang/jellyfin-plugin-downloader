@@ -7,47 +7,46 @@ API：/api/snapshot /api/search /api/submit /api/watch /api/cleanup
 
 所有写动作都委托给主 skill 脚本（subprocess）或复用其库函数（import），本服务
 本身不改主 skill 的 pool 与迅雷数据库。
+
+本文件是入口，也是契约面 + 组合根：路径被外部契约钉死（插件的 BackendManager 按
+`<插件目录>/backend/console_server.py` 启动、uninstall.sh 按 `console_server.py`
+认这个进程、测试按这条路径读源码做断言），所以常量、状态映射、service 信封与端口
+默认值留在本文件；实现按主题拆在 `backend/console_server/` 包里（HTTP 面 / 搜索任务 /
+快照 / 进程），由下面的导入与 `_wire_http_api()` 接起来 —— 包内不复制这些定量，
+也不 import 入口（脚本方式运行时入口叫 `__main__`，再 import 一次会让状态分身）。
 """
 from __future__ import annotations
 
 import argparse
 import atexit
-import glob
-import json
 import os
-import re
-import shutil
 import signal
-import subprocess
 import sys
 import threading
-import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from http.server import ThreadingHTTPServer
 
 import build_console as bc
-import source_config
-from media_download_lib import MEDIA_ROOT, STAGING_ROOT, path_is_within  # noqa: E402
+import console_server.http_api as http_api
 
-MAIN_SCRIPTS = bc.MAIN_SCRIPTS
-WEB_DIR = bc.WEB_DIR
-PUBLISH_HISTORY = bc.PUBLISH_HISTORY
-PID_FILE = os.path.join(bc.CONSOLE_STATE_DIR, "console_server.pid")
-
-# 所有还在跑的子进程（search_pool / probe_magnets / pan_* …）。它们都在自己的
-# 进程组里，关闭服务时按组整体 SIGKILL，连带把它们的孙进程（aria2c）一起收掉，
-# 避免搜索超时或后端被重启后残留一堆孤儿 aria2c。
-_ACTIVE_PROCS = set()
-_PROCS_LOCK = threading.Lock()
-
-MIME = {
-    ".html": "text/html; charset=utf-8",
-    ".js": "application/javascript; charset=utf-8",
-    ".css": "text/css; charset=utf-8",
-    ".json": "application/json; charset=utf-8",
-    ".png": "image/png",
-    ".svg": "image/svg+xml",
-}
+# 下面这一组导入同时是「再导出」：拆分前 `console_server.<name>` 能取到的符号，
+# 入口仍然取得到（测试、以及任何按模块用的地方都照旧）。
+from console_server import jobs, probe_state, service
+from console_server.http_api import (
+    MIME, WEB_DIR, _body_inner, render_index, valid_target_dir,
+)
+from console_server.jobs import (
+    JOBS, JOBS_LOCK, _JOB_SEQ, _job_add, _job_finish, _new_job, episode_hints,
+    season_hints,
+)
+from console_server.probe_state import (
+    PUBLISH_HISTORY, _build_snapshot, _file_written_since, _parse_exists,
+    _probe_partial, _snapshot_history,
+)
+from console_server.service import (
+    MAIN_SCRIPTS, PID_FILE, _ACTIVE_PROCS, _PROCS_LOCK, _handle_signal, _kill_group,
+    _pidfile_alive, _remove_pidfile, _shutdown_children, _track, _untrack,
+    _write_pidfile, run_cli, run_cli_stream,
+)
 
 # 自身标识：插件侧的 BackendManager.Reachable() 靠它区分「我们的后端」与「恰好占着
 # 这个端口的外来 HTTP 服务」。两边的字面量是同一个契约——改一处必须改另一处，
@@ -79,738 +78,63 @@ VERIFY_TIMEOUT = 60
 L1_MAX_QUERIES = 12
 L1_KEYWORD_BUDGET_SECS = 36
 
-
-def _track(proc):
-    with _PROCS_LOCK:
-        _ACTIVE_PROCS.add(proc)
-    return proc
-
-
-def _untrack(proc):
-    with _PROCS_LOCK:
-        _ACTIVE_PROCS.discard(proc)
+# probe 的预算参数。`"--budget-secs"` 这个字面量只有入口这一个生产者（原来它内联在
+# 搜索任务的 probe_cmd 里），取出来是为了让「预算常量 + 参数名」一起留在契约面上：
+# 测试按文件路径读入口源码断言这两样。
+PROBE_ARGV = ("--budget-secs", str(PROBE_BUDGET_SECS))
 
 
-def _kill_group(proc, grace=2.0):
-    """按进程组整体终止（含孙进程），先 SIGTERM 再 SIGKILL，并回收避免僵尸。"""
-    try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-    except (ProcessLookupError, PermissionError, OSError):
-        pass
-    try:
-        proc.wait(timeout=grace)
-        return
-    except Exception:
-        pass
-    try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-    except (ProcessLookupError, PermissionError, OSError):
-        pass
-    try:
-        proc.wait(timeout=2)
-    except Exception:
-        pass
+def build_search_cmd(p):
+    """L1 搜索（资源站磁力）的 argv。
 
-
-def _shutdown_children():
-    with _PROCS_LOCK:
-        procs = list(_ACTIVE_PROCS)
-    for proc in procs:
-        _kill_group(proc)
-
-
-def run_cli(argv, timeout=600):
-    """运行主 skill 的一个 CLI 脚本，返回 (returncode, stdout, stderr)。
-
-    子进程放进独立进程组（start_new_session），超时/异常时按组整体杀掉，
-    连它 spawn 出来的 aria2c 一起收，不会留下孤儿进程。
+    阶梯上界（L1_MAX_QUERIES / L1_KEYWORD_BUDGET_SECS）只有入口这一份，所以 argv
+    在入口拼；由 `_run_search_job` 作为接线传给包内的搜索任务。
     """
-    cmd = [sys.executable, os.path.join(MAIN_SCRIPTS, argv[0]), *argv[1:]]
-    proc = _track(subprocess.Popen(
-        cmd, cwd=MAIN_SCRIPTS, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, start_new_session=True,
-    ))
-    try:
-        out, err = proc.communicate(timeout=timeout)
-        return proc.returncode, out or "", err or ""
-    except subprocess.TimeoutExpired:
-        _kill_group(proc)
-        return 124, "", "timeout"
-    except Exception as exc:  # noqa: BLE001
-        _kill_group(proc)
-        return 125, "", str(exc)
-    finally:
-        _untrack(proc)
-
-
-def run_cli_stream(argv, on_line=None, timeout=600):
-    """实时运行主 skill 的一个 CLI，逐行回调 on_line；返回 (returncode, lines)。
-
-    用 `-u` 强制无缓冲，让主 skill 脚本的 print 逐行即时可读，用于进度滚动。
-    同样放进独立进程组，超时时连孙进程一起杀掉并回收。
-    """
-    cmd = [sys.executable, "-u", os.path.join(MAIN_SCRIPTS, argv[0]), *argv[1:]]
-    proc = _track(subprocess.Popen(
-        cmd, cwd=MAIN_SCRIPTS, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, bufsize=1, start_new_session=True,
-    ))
-    collected = []
-
-    def _reader():
-        try:
-            for raw in proc.stdout:
-                line = raw.rstrip("\r\n")
-                collected.append(line)
-                if on_line:
-                    try:
-                        on_line(line)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-
-    thread = threading.Thread(target=_reader, daemon=True)
-    thread.start()
-    try:
-        rc = proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        _kill_group(proc)
-        rc = 124
-    finally:
-        thread.join(timeout=5)
-        _untrack(proc)
-    return rc, collected
-
-
-# 搜索任务注册表：job_id -> {done, lines, snapshot, slug, search_status, error}
-JOBS = {}
-JOBS_LOCK = threading.Lock()
-_JOB_SEQ = [0]
-
-
-def _new_job():
-    with JOBS_LOCK:
-        _JOB_SEQ[0] += 1
-        jid = str(_JOB_SEQ[0])
-        JOBS[jid] = {
-            "done": False, "lines": [], "snapshot": None,
-            "slug": "", "search_status": "", "error": "",
-        }
-        if len(JOBS) > 50:
-            for old in sorted(JOBS, key=int)[:-50]:
-                JOBS.pop(old, None)
-        return jid
-
-
-def _job_add(jid, line):
-    with JOBS_LOCK:
-        job = JOBS.get(jid)
-        if job is None:
-            return
-        job["lines"].append(line)
-        if len(job["lines"]) > 800:
-            job["lines"] = job["lines"][-500:]
-
-
-def _job_finish(jid, snapshot=None, slug="", search_status="", error=""):
-    with JOBS_LOCK:
-        job = JOBS.get(jid)
-        if job is None:
-            return
-        job.update({
-            "done": True, "snapshot": snapshot, "slug": slug,
-            "search_status": search_status, "error": error,
-        })
-
-
-def valid_target_dir(value) -> bool:
-    if not isinstance(value, str) or not value:
-        return False
-    real = os.path.realpath(value)
-    return path_is_within(real, STAGING_ROOT) or path_is_within(real, MEDIA_ROOT)
-
-
-def render_index(css: str, body_html: str) -> str:
-    return (
-        "<!doctype html>\n<html lang=\"zh-CN\">\n<head>\n"
-        "<meta charset=\"utf-8\">\n"
-        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
-        "<title>Jellyfin 下载控制台</title>\n"
-        "<style>\n" + (css or "") + "\n</style>\n"
-        "</head>\n<body>\n" + (body_html or "") + "\n"
-        "<script src=\"/app.js\"></script>\n</body>\n</html>\n"
-    )
-
-
-def _body_inner(html: str) -> str:
-    """GrapesJS 的 getHtml() 可能带 <body> 包裹，这里剥离成纯 body 内容。"""
-    m = re.search(r"<body[^>]*>(.*)</body>", html, re.S | re.I)
-    return m.group(1) if m else html
-
-
-class Handler(BaseHTTPRequestHandler):
-    server_version = "JMDConsole/1.0"
-
-    # ---- helpers ----------------------------------------------------------
-    def _send(self, status, payload, content_type="application/json; charset=utf-8"):
-        if isinstance(payload, (dict, list)):
-            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        else:
-            body = payload if isinstance(payload, bytes) else str(payload).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _ok(self, obj):
-        # 每个 JSON 响应都带上自身标识（只加一个 key，不改已有字段）：
-        # 插件侧据此确认「这个端口上坐着的是我们的后端」。
-        if isinstance(obj, dict) and "service" not in obj:
-            obj = {**obj, "service": SERVICE_ID}
-        self._send(200, obj)
-
-    def _bad(self, msg):
-        self._send(400, {"error": msg})
-
-    def _body(self):
-        try:
-            length = int(self.headers.get("Content-Length") or 0)
-        except ValueError:
-            length = 0
-        if length <= 0:
-            return {}
-        raw = self.rfile.read(length)
-        try:
-            return json.loads(raw.decode("utf-8"))
-        except Exception:
-            return None
-
-    def log_message(self, fmt, *args):  # 静默默认访问日志
-        return
-
-    # ---- routing ----------------------------------------------------------
-    def do_GET(self):
-        parsed = urlparse(self.path)
-        path = parsed.path
-        if path in ("/", "/index.html"):
-            return self._serve_static("index.html")
-        if path == "/editor.html":
-            return self._serve_static("editor.html")
-        if path == "/app.js":
-            return self._serve_static("app.js")
-        if path == "/console.css":
-            return self._serve_static("console.css")
-        if path.startswith("/vendor/"):
-            name = os.path.basename(path)
-            if name in ("grapes.min.js", "grapes.min.css"):
-                return self._serve_static(os.path.join("vendor", name))
-        if path == "/api/snapshot":
-            return self._get_snapshot(parsed)
-        if path == "/api/search/status":
-            return self._get_search_status(parsed)
-        return self._send(404, {"error": "not found"})
-
-    def do_POST(self):
-        parsed = urlparse(self.path)
-        path = parsed.path
-        body = self._body()
-        if body is None:
-            return self._bad("invalid json body")
-        if path == "/api/search":
-            return self._api_search(body)
-        if path == "/api/submit":
-            return self._api_submit(body)
-        if path == "/api/watch":
-            return self._api_watch(body)
-        if path == "/api/cleanup":
-            return self._api_cleanup(body)
-        if path == "/api/mark":
-            return self._api_mark(body)
-        if path == "/api/publish":
-            return self._api_publish(body)
-        if path == "/api/publish/rollback":
-            return self._api_publish_rollback()
-        if path.startswith("/api/pan/"):
-            sub = path[len("/api/pan/"):]
-            return self._api_pan(sub, body)
-        return self._send(404, {"error": "not found"})
-
-    # ---- static -----------------------------------------------------------
-    def _serve_static(self, rel):
-        full = os.path.normpath(os.path.join(WEB_DIR, rel))
-        if not full.startswith(os.path.normpath(WEB_DIR)):
-            return self._send(403, {"error": "forbidden"})
-        if not os.path.isfile(full):
-            return self._send(404, {"error": "not found"})
-        ext = os.path.splitext(full)[1].lower()
-        with open(full, "rb") as fh:
-            data = fh.read()
-        return self._send(200, data, MIME.get(ext, "application/octet-stream"))
-
-    # ---- snapshot ---------------------------------------------------------
-    def _get_snapshot(self, parsed):
-        q = parse_qs(parsed.query)
-        slug = (q.get("slug") or [""])[0]
-        title = (q.get("title") or [""])[0]
-        season = (q.get("season") or [""])[0]
-        if not slug and title:
-            slug = bc.slugify(title)
-        if not slug:
-            return self._ok(bc.build_snapshot("pool", probe={}, ctx={}))
-        if not bc.valid_slug(slug):
-            return self._bad("invalid slug")
-        # 季级快照：选了季就读该季的文件，未选季读整剧文件
-        key = bc.snapshot_key(slug, season)
-        if not bc.valid_slug(key):
-            return self._bad("invalid slug")
-        return self._ok(_build_snapshot(key))
-
-    # ---- search -----------------------------------------------------------
-    def _api_search(self, body):
-        title = (body.get("title") or "").strip()
-        kind = body.get("kind") or "episode"
-        if not title:
-            return self._bad("title is required")
-        if kind not in bc.VALID_KINDS:
-            return self._bad("invalid kind")
-        slug = bc.slugify(title)
-        duration = float(body.get("duration_minutes") or bc.DEFAULT_DURATION[kind])
-        year = str(body.get("year") or "")
-        alt_title = body.get("alt_title") or []
-        season = body.get("season")
-        episode = body.get("episode")
-        # 抓取来源：magnet（仅资源站磁力）/ pan（仅云盘）/ both（两者）。
-        # 本地 Pansou 已删除，所以云盘候选只能来自「站点网页搜索地址」，见
-        # `_run_search_job` 的云盘阶段。
-        sources = str(body.get("sources") or "").lower()
-        if sources not in ("magnet", "pan", "both"):
-            sources = "pan" if body.get("allow_pan") else "magnet"
-        # 原始片名（英文名等）：既提升召回，也用于「同名噪音」判定
-        original_title = str(body.get("original_title") or "")
-        # 严格按季：只跑季关键词，不带基础片名（默认开；关掉则整剧+季词都跑）
-        strict_season = bool(body.get("strict_season", True))
-        # 单源：只跑配置的 L1 关键字档（发布者署名），并只保留该源候选。
-        # **默认开**（2026-10-13 使用者要求「开启单源」）：候选面收窄成一家源。
-        # 仍可用 body 里的 "publisher_only": false 单次关掉——关键字没有资源的片名
-        # 会搜不到候选，所以保留这个退路，且空结果会被打印成 PUBLISHER_ONLY_EMPTY。
-        publisher_only = bool(body.get("publisher_only", True))
-        final_dir = body.get("final_dir") or bc.derive_final_dir(title, kind, year)
-        if not valid_target_dir(final_dir):
-            return self._bad("final_dir must be inside staging or Media")
-
-        # 候选文件按**本轮**命名：同名标题连开两轮（同一季重搜、或不同季但同一个 slug）
-        # 不会互相读到对方的候选。原来固定 `/tmp/<slug>.magnets`，只能靠 mtime 判断
-        # 「是不是本轮写的」，而两个写者并发时那条判定就失效了（复核第二轮 F3）。
-        jid = _new_job()
-        params = {
-            "title": title, "kind": kind, "slug": slug, "duration": duration,
-            "year": year, "alt_title": alt_title, "season": season, "episode": episode,
-            "sources": sources,
-            "original_title": original_title, "strict_season": strict_season,
-            "publisher_only": publisher_only,
-            "final_dir": final_dir,
-            "category": bc.KIND_TO_CATEGORY[kind],
-            "probe_kind": bc.PROBE_KIND[kind],
-            "pool_file": os.path.join(bc.POOL_DIR, f"{slug}.json"),
-            "cand_file": os.path.join("/tmp", f"{slug}.{jid}.magnets"),
-            # 季级命名空间：各季结果分开存，互不覆盖
-            "key": bc.snapshot_key(slug, season),
-        }
-        params["probe_out"] = os.path.join(bc.SNAPSHOTS_DIR, f"{params['key']}.probe.json")
-        threading.Thread(target=_run_search_job, args=(jid, params), daemon=True).start()
-        return self._ok({"job_id": jid, "slug": slug, "done": False})
-
-    def _get_search_status(self, parsed):
-        q = parse_qs(parsed.query)
-        jid = (q.get("job") or [""])[0]
-        with JOBS_LOCK:
-            job = JOBS.get(jid)
-            if job is None:
-                return self._send(404, {"error": "unknown job"})
-            resp = dict(job)
-        return self._ok(resp)
-
-    # ---- verify -----------------------------------------------------------
-    def _api_submit(self, body):
-        ih = (body.get("ih") or "").strip()
-        final_dir = body.get("final_dir") or ""
-        kind = body.get("kind") or "episode"
-        if not bc.valid_ih(ih):
-            return self._bad("invalid info hash")
-        category = (body.get("category") or "").strip()
-        if category:
-            if category not in bc.CATEGORIES:
-                return self._bad("invalid category")
-            final_dir = bc.derive_final_dir(
-                (body.get("series_name") or "").strip(),
-                kind,
-                str(body.get("year") or ""),
-                category,
-            )
-        if not valid_target_dir(final_dir):
-            return self._bad("final_dir must be inside staging or Media")
-        probe_kind = bc.PROBE_KIND.get(kind, "episode")
-        eta = float(body.get("eta_max_hours") or 4.0)
-        cmd = [
-            "download/submit_xunlei.py", ih, final_dir,
-            "--kind", probe_kind,
-            "--eta-max-hours", str(eta),
-            "--no-watch",
-        ]
-        if body.get("series_name"):
-            cmd += ["--series-name", body["series_name"]]
-        if body.get("year"):
-            cmd += ["--year", str(body["year"])]
-        rc, out, err = run_cli(cmd, 900)
-        return self._ok({"ok": rc == 0, "rc": rc, "stdout": out, "stderr": err})
-
-    def _api_watch(self, body):
-        ih = (body.get("ih") or "").strip()
-        final_dir = body.get("final_dir") or ""
-        if not bc.valid_ih(ih):
-            return self._bad("invalid info hash")
-        category = (body.get("category") or "").strip()
-        if category:
-            if category not in bc.CATEGORIES:
-                return self._bad("invalid category")
-            final_dir = bc.derive_final_dir(
-                (body.get("series_name") or "").strip(),
-                body.get("kind") or "episode",
-                str(body.get("year") or ""),
-                category,
-            )
-        if not valid_target_dir(final_dir):
-            return self._bad("final_dir must be inside staging or Media")
-        interval = int(body.get("interval") or 900)
-        cmd = ["download/watch_download.py", ih, final_dir, "--detach", "--interval", str(interval)]
-        if body.get("series_name"):
-            cmd += ["--series-name", body["series_name"]]
-        if body.get("year"):
-            cmd += ["--year", str(body["year"])]
-        rc, out, err = run_cli(cmd, 60)
-        return self._ok({"ok": rc == 0, "rc": rc, "stdout": out, "stderr": err})
-
-    def _api_cleanup(self, body):
-        target = body.get("dir") or ""
-        mode = body.get("mode") or "audit"
-        if not valid_target_dir(target):
-            return self._bad("dir must be inside staging or Media")
-        if mode not in ("audit", "prune-orphans"):
-            return self._bad("invalid mode")
-        flag = "--audit" if mode == "audit" else "--prune-orphans"
-        rc, out, err = run_cli(["download/cleanup_download.py", "", target, flag], 300)
-        return self._ok({"ok": rc == 0, "rc": rc, "stdout": out, "stderr": err})
-
-    # ---- pan --------------------------------------------------------------
-    def _api_pan(self, sub, body):
-        allowed = {"plan", "verify-transfer", "set-save-path", "verify-retrieve", "watch", "status"}
-        if sub not in allowed:
-            return self._bad("invalid pan subcommand")
-        title = (body.get("title") or "").strip()
-        if not title:
-            return self._bad("title is required")
-        cmd = ["pan/pan_transfer.py", sub, "--title", title]
-        if body.get("final_dir"):
-            cmd += ["--final-dir", body["final_dir"]]
-        if body.get("series_name"):
-            cmd += ["--series-name", body["series_name"]]
-        if body.get("year"):
-            cmd += ["--year", str(body["year"])]
-        if body.get("season"):
-            cmd += ["--season", str(int(body["season"]))]
-        if body.get("share_url"):
-            cmd += ["--share-url", body["share_url"]]
-        if body.get("pass_code"):
-            cmd += ["--pass-code", body["pass_code"]]
-        if sub == "watch":
-            cmd += ["--detach"]
-        rc, out, err = run_cli(cmd, 600)
-        return self._ok({"ok": rc == 0, "rc": rc, "stdout": out, "stderr": err})
-
-    # ---- mark -------------------------------------------------------------
-    def _api_mark(self, body):
-        slug = body.get("slug") or ""
-        key = body.get("key") or body.get("ih") or ""
-        mark = body.get("mark") or ""
-        if not bc.valid_slug(slug):
-            return self._bad("invalid slug")
-        if not key:
-            return self._bad("key is required")
-        if mark not in bc.MARK_SET:
-            return self._bad("invalid mark")
-        marks = bc.read_marks(slug)
-        marks[key] = mark
-        bc.write_marks(slug, marks)
-        return self._ok({"ok": True, "key": key, "mark": mark, "marks": marks})
-
-    # ---- publish ----------------------------------------------------------
-    def _api_publish(self, body):
-        html = _body_inner(body.get("html") or "")
-        css = body.get("css") or ""
-        final = render_index(css, html)
-        index_path = os.path.join(WEB_DIR, "index.html")
-        _snapshot_history(index_path)
-        with open(index_path, "w", encoding="utf-8") as fh:
-            fh.write(final)
-        return self._ok({"ok": True, "published": True})
-
-    def _api_publish_rollback(self):
-        index_path = os.path.join(WEB_DIR, "index.html")
-        history = sorted(glob.glob(os.path.join(PUBLISH_HISTORY, "index-*.html")))
-        if not history:
-            return self._send(404, {"error": "no history"})
-        latest = history[-1]
-        with open(latest, encoding="utf-8") as fh:
-            content = fh.read()
-        with open(index_path, "w", encoding="utf-8") as fh:
-            fh.write(content)
-        try:
-            os.remove(latest)
-        except OSError:
-            pass
-        return self._ok({"ok": True, "rolled_back": os.path.basename(latest)})
-
-
-def season_hints(season: int) -> list:
-    """把「第 N 季」的常见写法交给 search_pool 的整包关键词档位。"""
-    hints = [f"第{season}季"]
-    numeral = bc.CN_NUMERALS.get(season)
-    if numeral:
-        hints.append(f"第{numeral}季")
-    hints.append(f"S{season:02d}")
-    return hints
-
-
-def episode_hints(season: int, episode: int) -> list:
-    """把「第 N 集」的常见写法交给搜索阶梯（单集页专用）。
-
-    没有这一档，单集页只能搜到季包：索引上单集资源的名字是
-    `[第01集]` / `S01E01` 这种写法，靠「第1季」是搜不出来的。
-    """
-    return [f"第{episode:02d}集", f"第{episode}集", f"S{season:02d}E{episode:02d}"]
-
-
-def _run_search_job(jid, p):
-    """后台执行搜索任务，逐步把进度行追加到 job，完成后写入快照。"""
-    def log(line):
-        _job_add(jid, line)
-
-    try:
-        # probe 会直接往 state/snapshots/<slug>.probe.json 写 --json-out，
-        # 目录必须先存在（独立后端首次运行时 state/ 是空的）。
-        bc.ensure_dirs()
-
-        log(f"查重：{p['title']}（{p['category']}）")
-        rc, out, err = run_cli(["download/check_exists.py", p["title"], p["category"]], 120)
-        exists = _parse_exists(out)
-        log("  " + (exists.get("detail") or exists.get("status") or "OK"))
-
-        sources = p.get("sources", "magnet")
-        want_magnet = sources in ("magnet", "both")
-        want_pan = sources in ("pan", "both")
-        # 本轮 L1 搜索是否真的写出了候选文件。候选文件按轮命名（见 _api_search），
-        # 所以「读到上一轮」已经不可能；这里判的是更基本的一件事：want_magnet 为假、
-        # 或 search_pool 早退（没有磁力入口 / 站点配置不可用）时，它根本不会写出这个文件。
-        cand_written = False
-
-        if want_magnet:
-            sites, _ = source_config.load_sites()
-            if sites:
-                log("L1 搜索（资源站：{}）…".format("、".join(s["name"] for s in sites)))
-            else:
-                log("L1 搜索：资源站配置为空或不可用，search_pool 会报 SOURCE_CONFIG_ERROR")
-            search_cmd = [
-                "search/search_pool.py", p["title"],
-                "--pool-file", p["pool_file"],
-                "--candidates-out", p["cand_file"],
-                "--json-out", os.path.join("/tmp", f"{p['slug']}_search.json"),
-            ]
-            if p["year"]:
-                search_cmd += ["--year", p["year"]]
-            for a in p["alt_title"]:
-                if a:
-                    search_cmd += ["--alt-title", a]
-            if p.get("original_title") and p["original_title"] not in p["alt_title"]:
-                search_cmd += ["--alt-title", p["original_title"]]
-            if p["season"]:
-                season_number = int(p["season"])
-                search_cmd += ["--season", str(season_number)]
-                # 单集页：集级关键词排在最前，先抓「只含本集」的种子
-                #（strict 模式按顺序跑，整包词排在后面兜底 —— 整包也覆盖本集）
-                hints = []
-                if p.get("episode"):
-                    hints += episode_hints(season_number, int(p["episode"]))
-                # 把「第 N 季」的各种写法喂给「整包关键词」档位，让搜索指向该季
-                hints += season_hints(season_number)
-                for hint in hints:
-                    search_cmd += ["--collection-hint", hint]
-                if p.get("strict_season", True):
-                    # 严格按季：跳过基础片名/年份/平台档位，只用季关键词，
-                    # 避免基础片名把整部剧（其它季 + 同名片）都带进来
-                    search_cmd += ["--strict-match"]
-                # 跑满阶梯：默认 --enough 12 会让基础片名查询提前收工。
-                # 上界见 L1_MAX_QUERIES / L1_KEYWORD_BUDGET_SECS 的注释（≤450s）。
-                search_cmd += [
-                    "--enough", "40",
-                    "--max-queries", str(L1_MAX_QUERIES),
-                    "--page-budget-secs", str(L1_KEYWORD_BUDGET_SECS),
-                ]
-            if p.get("publisher_only"):
-                search_cmd += ["--publisher-only"]
-            search_started_at = time.time()
-            run_cli_stream(search_cmd, log, SEARCH_POOL_TIMEOUT)
-            # 只有本轮真的写出过才把它喂给 probe：路径虽然按轮唯一，但文件可能压根
-            # 没被写出来（没有磁力入口 / 配置不可用），那时传一个不存在的路径会让 probe
-            # 以 CANDIDATE_FILE_ERROR 整轮退出，连带把云盘候选一起丢掉。
-            cand_written = _file_written_since(p["cand_file"], search_started_at)
-            if not cand_written:
-                log("本轮没有写出候选磁力文件（没有磁力入口或配置不可用）→ 不拿上一轮的文件喂 probe")
-
-        pan_cand = ""
-        if want_pan:
-            # 云盘通道 = 各资源站自己的「网页搜索地址」（插件配置的 web_search_url）。
-            # 一个站点都没填时，必须明说「没有入口」——空候选和「搜了但没链接」是两件事。
-            sites, _ = source_config.load_sites()
-            web_urls = source_config.web_search_urls(p["title"], sites)
-            if not web_urls:
-                log("云盘通道没有入口：插件配置里没有任何资源站填了「网页搜索地址」（需含 {q} 占位符）")
-            else:
-                pan_cand = os.path.join("/tmp", f"{p['slug']}_pan.json")
-                pan_cmd = ["pan/pan_search.py", p["title"]]
-                for site_name, url in web_urls:
-                    log(f"  网页搜索（{site_name}）")
-                    pan_cmd += ["--page", url]
-                pan_cmd += ["--candidates-out", pan_cand]
-                run_cli_stream(pan_cmd, log, 300)
-                # 保留云盘候选（含提取码），供快照富化（probe 的 ranked 输出不含 pass_code）
-                if os.path.isfile(pan_cand):
-                    try:
-                        shutil.copyfile(pan_cand, os.path.join(bc.SNAPSHOTS_DIR, f"{p['key']}.pan.json"))
-                    except OSError:
-                        pass
-
-        log("打分 + 校验 metadata（probe）…")
-        probe_cmd = [
-            "probe/probe_magnets.py", p["title"],
-            "--kind", p["probe_kind"],
-            "--duration-minutes", str(p["duration"]),
-            "--pool-file", p["pool_file"],
-            "--json-out", p["probe_out"],
-            "--budget-secs", str(PROBE_BUDGET_SECS),
-        ]
-        if want_magnet and cand_written:
-            probe_cmd += ["--candidate-file", p["cand_file"]]
-        if want_pan and pan_cand and os.path.isfile(pan_cand):
-            probe_cmd += ["--extra-candidates", pan_cand]
-        # 速度实测开关已整体删除（模块、参数、这个调用点）：10s 探针的重复散布
-        # 1.16–8.50×（t3-speed.md §0/§2），排不动候选，却要固定付 8 条 × 20–23s。
-        # metadata 可达性仍走 live-check（不传 --no-live-check 即默认开启）。
-        #
-        # `probe_out` 就是面板读的那份快照文件，而 probe 在「预算用尽 / 超时 /
-        # 无交付候选」时**不写**它（只把 PROBE_PARTIAL 打到 stdout）。所以先记下
-        # 本轮开始时刻，用「文件是不是本轮写过的」决定要不要 save_probe：只看
-        # os.path.isfile 会把上一轮的旧结果当成本轮结果回写、还刷新 mtime（t10/N2）。
-        probe_started_at = time.time()
-        rc, lines = run_cli_stream(probe_cmd, log, SEARCH_TIMEOUT)
-
-        out_text = "\n".join(lines)
-        probe = {}
-        probe_written = _file_written_since(p["probe_out"], probe_started_at)
-        if probe_written:
-            try:
-                with open(p["probe_out"], encoding="utf-8") as fh:
-                    probe = json.load(fh)
-            except (OSError, json.JSONDecodeError):
-                probe = {}
-            bc.save_probe(p["key"], probe)
-        else:
-            # 本轮没有产出：不覆盖、不刷新上一份快照（历史留档），本轮的结果由
-            # 快照里的 probe_round_empty / partial 字段表达，而不是拿旧候选冒充。
-            log("本轮 probe 未写出新结果（超时/预算/无候选）→ 保留上一份快照")
-        partial, timeout_stage = _probe_partial(out_text)
-        # probe 自己写 JSON 的那条路径把 partial/timeout_stage 落在文件里，优先信它；
-        # 没写文件的那条路径只能从 stdout 的 PROBE_PARTIAL 读（见 _probe_partial）。
-        partial = bool(probe.get("partial")) or partial
-        timeout_stage = str(probe.get("timeout_stage") or timeout_stage)
-
-        search_status = _search_status(out_text, probe, rc)
-        ctx = {
-            "title": p["title"], "kind": p["kind"], "year": p["year"],
-            "season": p.get("season"), "episode": p.get("episode"),
-            "duration_minutes": p["duration"], "final_dir": p["final_dir"],
-            "exists": exists, "search_status": search_status, "sources": p.get("sources"),
-            "original_title": p.get("original_title", ""),
-            "strict_season": bool(p.get("strict_season", True)),
-            # 本轮状态写进 context.json（t15/F-T15-4）：否则快照里的
-            # probe_partial/probe_round_empty 只活在这一次 job 的内存里，任何从磁盘
-            # 重建快照的路径（/api/snapshot、/api/submit 之后）都会得到
-            # probe_partial=False + 上一轮候选，与 search_status=probe_partial 自相矛盾。
-            "probe_partial": bool(partial) or not probe_written,
-            "probe_timeout_stage": timeout_stage,
-            "probe_round_empty": not probe_written,
-        }
-        bc.save_context(p["key"], ctx)
-        snapshot = _build_snapshot(p["key"], probe=probe, ctx=ctx)
-        log(f"完成：{len(snapshot['candidates'])} 个候选（状态 {search_status}）")
-        _job_finish(jid, snapshot=snapshot, slug=p["slug"], search_status=search_status)
-    except Exception as exc:  # noqa: BLE001
-        log(f"搜索异常：{exc}")
-        _job_finish(jid, error=str(exc))
-
-
-def _file_written_since(path: str, since: float, slack: float = 1.0) -> bool:
-    """这份文件是不是在 `since` 之后被写过的。
-
-    用 mtime 而不是「文件存在」来判「本轮写过没有」，是为了区分「本轮真产出了
-    结果」与「这里躺着的还是上一轮的文件」。`slack` 给粗粒度文件系统时间戳留
-    一点余量；上一轮与本轮至少隔一次搜索（分钟级），不会被容差吃掉。
-    """
-    try:
-        return os.path.getmtime(path) >= since - slack
-    except OSError:
-        return False
-
-
-def _probe_partial(out_text: str) -> tuple:
-    """从 probe 的 stdout 里取 `PROBE_PARTIAL {...}` → (partial, timeout_stage)。
-
-    probe 在预算耗尽时把原因打到 stdout（JSON 那份只在有交付候选时写），
-    所以控制台必须从日志里读它，才能把「本轮早退」透给面板（t10/N1）。
-    """
-    prefix = "PROBE_PARTIAL"
-    for line in out_text.splitlines():
-        if line.startswith(prefix):
-            payload = line[len(prefix):].strip()
-            try:
-                data = json.loads(payload) if payload else {}
-            except json.JSONDecodeError:
-                data = {}
-            if not isinstance(data, dict):
-                data = {}
-            return True, str(data.get("timeout_stage") or "")
-    return False, ""
-
-
-def _build_snapshot(key, probe=None, ctx=None):
-    """组装快照。本轮状态（partial/timeout/round_empty）与「空轮候选标成上一轮」
-    都在 `build_console.build_snapshot` 里处理——它没拿到显式传参时回落到
-    context.json，所以这里每一个调用点（/api/snapshot、search job）
-    都得到同一结论（t15/F-T15-4）。
-    """
-    ctx = ctx if ctx is not None else bc.read_context(key)
-    return bc.build_snapshot(key, probe=probe, ctx=ctx)
-
-
-def _parse_exists(out: str) -> dict:
-    for line in out.splitlines():
-        if "ALREADY_EXISTS" in line:
-            return {"status": "ALREADY_EXISTS", "detail": line.strip()}
-        if "NEEDS_DOWNLOAD" in line:
-            return {"status": "NEEDS_DOWNLOAD", "detail": line.strip()}
-        if "NOT_FOUND" in line:
-            return {"status": "NOT_FOUND", "detail": line.strip()}
-    return {"status": "UNKNOWN", "detail": out.strip()[:200]}
+    search_cmd = [
+        "search/search_pool.py", p["title"],
+        "--pool-file", p["pool_file"],
+        "--candidates-out", p["cand_file"],
+        "--json-out", os.path.join("/tmp", f"{p['slug']}_search.json"),
+    ]
+    if p["year"]:
+        search_cmd += ["--year", p["year"]]
+    for a in p["alt_title"]:
+        if a:
+            search_cmd += ["--alt-title", a]
+    if p.get("original_title") and p["original_title"] not in p["alt_title"]:
+        search_cmd += ["--alt-title", p["original_title"]]
+    if p["season"]:
+        search_cmd += _season_cmd_args(p)
+    if p.get("publisher_only"):
+        search_cmd += ["--publisher-only"]
+    return search_cmd
+
+
+def _season_cmd_args(p):
+    """季档位：季关键词 + 集级关键词（单集页排在最前）+ 阶梯上界。"""
+    season_number = int(p["season"])
+    # 单集页：集级关键词排在最前，先抓「只含本集」的种子
+    #（strict 模式按顺序跑，整包词排在后面兜底 —— 整包也覆盖本集）
+    hints = []
+    if p.get("episode"):
+        hints += episode_hints(season_number, int(p["episode"]))
+    # 把「第 N 季」的各种写法喂给「整包关键词」档位，让搜索指向该季
+    hints += season_hints(season_number)
+    args = ["--season", str(season_number)]
+    for hint in hints:
+        args += ["--collection-hint", hint]
+    if p.get("strict_season", True):
+        # 严格按季：跳过基础片名/年份/平台档位，只用季关键词，
+        # 避免基础片名把整部剧（其它季 + 同名片）都带进来
+        args += ["--strict-match"]
+    # 跑满阶梯：默认 --enough 12 会让基础片名查询提前收工。
+    # 上界见上面 L1_MAX_QUERIES / L1_KEYWORD_BUDGET_SECS 的注释（≤450s）。
+    args += [
+        "--enough", "40",
+        "--max-queries", str(L1_MAX_QUERIES),
+        "--page-budget-secs", str(L1_KEYWORD_BUDGET_SECS),
+    ]
+    return args
 
 
 def _search_status(out: str, probe: dict, rc: int) -> str:
@@ -841,55 +165,44 @@ def _search_status(out: str, probe: dict, rc: int) -> str:
     return f"rc_{rc}"
 
 
-def _snapshot_history(index_path: str):
-    if not os.path.isfile(index_path):
-        return
-    os.makedirs(PUBLISH_HISTORY, exist_ok=True)
-    stamp = time.strftime("%Y%m%d%H%M%S")
-    with open(index_path, encoding="utf-8") as fh:
-        content = fh.read()
-    with open(os.path.join(PUBLISH_HISTORY, f"index-{stamp}.html"), "w", encoding="utf-8") as fh:
-        fh.write(content)
+def _run_search_job(jid, p):
+    """后台执行一轮搜索（组合根薄壳：接线按入口全局解析，实现与状态在包里）。
+
+    用关键字把入口解析出来的名字交给包内实现：测试用
+    mock.patch.object(console_server, "run_cli" / "run_cli_stream") 替换的正是入口
+    这两个名字，包内自己 import 一份会让替换失去作用。
+    """
+    jobs.run_search_job(
+        jid, p,
+        run_cli=run_cli,
+        run_cli_stream=run_cli_stream,
+        search_status=_search_status,
+        build_search_cmd=build_search_cmd,
+        probe_argv=PROBE_ARGV,
+        search_timeout=SEARCH_TIMEOUT,
+        search_pool_timeout=SEARCH_POOL_TIMEOUT,
+    )
 
 
-def _write_pidfile() -> None:
-    try:
-        bc.ensure_dirs()
-        with open(PID_FILE, "w", encoding="utf-8") as fh:
-            fh.write(str(os.getpid()))
-    except OSError:
-        pass
+def _entry_valid_target_dir(value):
+    """Handler 的目标目录校验：按入口全局解析，替换入口上的这个实现才生效。"""
+    return valid_target_dir(value)
 
 
-def _remove_pidfile() -> None:
-    try:
-        if os.path.isfile(PID_FILE):
-            os.remove(PID_FILE)
-    except OSError:
-        pass
+def _dispatch_search(jid, params):
+    """把一轮搜索丢进后台线程；线程目标同样按入口全局解析（见上）。"""
+    threading.Thread(target=_run_search_job, args=(jid, params), daemon=True).start()
 
 
-def _pidfile_alive() -> int | None:
-    try:
-        with open(PID_FILE, encoding="utf-8") as fh:
-            pid = int(fh.read().strip())
-    except (OSError, ValueError):
-        return None
-    if pid <= 0 or pid == os.getpid():
-        return None
-    try:
-        os.kill(pid, 0)
-        return pid
-    except OSError:
-        return None
+class Handler(http_api.ConsoleHandler):
+    """入口侧的 Handler：把 service 信封钉在入口（与 C# 侧的字面量契约）。"""
 
-
-def _handle_signal(signum, frame):  # noqa: ARG001
-    # 收到 TERM/INT：先按组清掉所有子进程（含 aria2c），再删 pidfile、退出。
-    # 插件侧 Stop() 先发 TERM，给这里留出收尾时间，不直接 SIGKILL。
-    _shutdown_children()
-    _remove_pidfile()
-    raise SystemExit(0)
+    def _envelope(self, obj):
+        # 每个 JSON 响应都带上自身标识（只加一个 key，不改已有字段）：
+        # 插件侧据此确认「这个端口上坐着的是我们的后端」。
+        if isinstance(obj, dict) and "service" not in obj:
+            obj = {**obj, "service": SERVICE_ID}
+        return obj
 
 
 def _default_port() -> int:
@@ -926,6 +239,21 @@ def main() -> int:
     finally:
         server.server_close()
     return 0
+
+
+def _wire_http_api() -> None:
+    """把 Handler 的目标目录校验与搜索调度接回入口。
+
+    Handler 的实现在包里，但这两处必须按入口全局解析：入口是唯一持有预算常量与
+    `_run_search_job` 的地方，测试替换的也是入口模块上的名字。必须在入口所有定义
+    之后调用 —— 脚本方式运行时包会先被导入并按包内那一次接线，这里是最后一次、
+    也是生效的那次。
+    """
+    http_api.valid_target_dir = _entry_valid_target_dir
+    http_api.dispatch_search = _dispatch_search
+
+
+_wire_http_api()
 
 
 if __name__ == "__main__":
