@@ -737,7 +737,45 @@ class SiteUrlClassificationTests(unittest.TestCase):
         page = (ROOT / "Jellyfin.Plugin.JellyfinDownloader" / "Configuration" / "configPage.html").read_text(encoding="utf-8")
         self.assertIn("row._kind", page, "站点行必须记住后端给的 kind")
         self.assertIn("Kind: item.kind", page, "save 必须把 kind 原样发回")
-        self.assertIn("refreshSiteCaption(row)", page, "自定义站要按声明类型显示")
+        self.assertIn("refreshSiteHint(row)", page, "自定义站要按声明类型显示")
+
+    def test_the_removed_rows_stay_removed(self):
+        """按要求删掉的三行不许再回来：解析路径回显、暂存目录回显、后端运行状态行。
+
+        用户的判断是它们把页面撑松了；这三行也是「用一次就过时」的信息。
+        解析出来的媒体库路径仍以 placeholder 的形式保留（留空时的提示），
+        后端状态改成只在出错时用 Dashboard.alert 报。
+        """
+        page = (ROOT / "Jellyfin.Plugin.JellyfinDownloader" / "Configuration" / "configPage.html").read_text(encoding="utf-8")
+        for element_id in ("jdl-media-resolved", "jdl-staging", "jdl-backend-status"):
+            self.assertNotIn('id="%s"' % element_id, page, "已删除的行不该再出现：" + element_id)
+        # 解析结果仍然要有去处：placeholder 里带上解析到的路径
+        self.assertIn("media.placeholder = resolved", page)
+        # 出错反馈不能因此消失
+        self.assertIn("Dashboard.alert", page)
+
+    def test_the_station_box_shows_the_station_not_the_api_path(self):
+        """资源站点框里显示站点本身；完整接口路径由后端拼接并保存。
+
+        需求：页面上写 `https://m.diao.im`，`/api/search` 在后台补。
+        所以 (a) C# 默认给的是裸站点；(b) 页面把已知站点的默认路径折回站点；
+        (c) 保存时后端（normalise_site / NormaliseSite）会补回完整路径。
+        """
+        page = (ROOT / "Jellyfin.Plugin.JellyfinDownloader" / "Configuration" / "configPage.html").read_text(encoding="utf-8")
+        self.assertIn("function siteShortUrl(address)", page)
+        self.assertIn("SITE_PATHS", page, "页面要认得哪些是内置站点的默认接口路径")
+        for host_path in ("'/api/search'", "'/service/search'"):
+            self.assertIn(host_path, page)
+
+        import source_config
+
+        # 裸站点经后端归一化后，必须落回 source_config 的默认接口地址
+        for site in source_config.DEFAULT_SITES:
+            bare = "https://" + site["base_url"].split("/")[2]
+            normalised, error = source_config.normalise_site({"kind": "", "base_url": bare})
+            self.assertEqual(error, "", f"{bare} 应当能被归一化")
+            self.assertEqual(normalised["base_url"], site["base_url"],
+                             f"{bare} 归一化后必须等于内置默认的接口地址")
 
     def test_the_http_proxy_follows_the_effective_port(self):
         """面板的数据面调用必须走「实际监听端口」，不能走配置里的固定 URL。
@@ -887,8 +925,10 @@ class SiteUrlClassificationTests(unittest.TestCase):
         cs_urls = re.findall(r'"(https://[^"]+)"', sites_block[:sites_block.index("DefaultKeywords")])
         cs_keywords = re.findall(r'"([^"]+)"', keywords_block[:keywords_block.index("};")])
 
-        self.assertEqual(cs_urls, [site["base_url"] for site in source_config.DEFAULT_SITES],
-                         "C# 内置默认站点与 source_config.DEFAULT_SITES 不一致")
+        self.assertEqual(
+            [source_config.classify_site_url(url)[1] for url in cs_urls],
+            [site["base_url"] for site in source_config.DEFAULT_SITES],
+            "C# 内置默认站点归一化后必须与 source_config.DEFAULT_SITES 指向同一接口")
         self.assertEqual(cs_keywords, list(source_config.DEFAULT_ANCHOR_KEYWORDS),
                          "C# 内置默认关键词与 source_config.DEFAULT_ANCHOR_KEYWORDS 不一致")
         # 空配置时走默认这一分支必须存在

@@ -34,18 +34,19 @@ public class JellyfinDownloaderController : ControllerBase
     };
 
     /// <summary>
-    /// 内置默认资源站：与 <c>backend/source_config.py</c> 的 <c>DEFAULT_SITES</c> /
-    /// <c>DEFAULT_ANCHOR_KEYWORDS</c> 必须一致（两边各有守卫盯着）。配置为空时配置页
-    /// 要把它们显示出来——需求是「系统内置两个资源站点，默认显示完整站点名」，
-    /// 让用户看到空白输入框等于把内置默认藏起来了。
+    /// 内置默认资源站与默认关键词，配置为空时由配置页显示。站点这里只放**站点本身**：
+    /// 完整接口路径（/api/search、/service/search）在保存时由 <see cref="NormaliseSite"/>
+    /// 拼接并落盘，用户在页面上看到的始终是站名。这两组默认必须与
+    /// <c>backend/source_config.py</c> 的 <c>DEFAULT_SITES</c> / <c>DEFAULT_ANCHOR_KEYWORDS</c>
+    /// 指向同一批站点与关键词（两边各有守卫盯着）。
     /// </summary>
     private static readonly string[] DefaultSiteUrls =
     {
-        "https://m.diao.im/api/search",
-        "https://torrents-csv.com/service/search",
+        "https://m.diao.im",
+        "https://torrents-csv.com",
     };
 
-    private static readonly string[] DefaultKeywords = { "高清剧集网", "DDHDTV" };
+    private static readonly string[] DefaultKeywords = { "高清剧集网 DDHDTV BBHDTV" };
 
     /// <summary>Gets the injected client script.</summary>
     [HttpGet("script")]

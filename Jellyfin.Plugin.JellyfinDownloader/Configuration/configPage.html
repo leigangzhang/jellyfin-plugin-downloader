@@ -6,122 +6,59 @@
 <body>
   <div id="JellyfinDownloaderConfigPage" data-role="page" class="page type-interior pluginConfigurationPage">
   <style>
-    /* 布局节奏：一个配置项 = 一个 .jdl-item，内部固定三行——标题 / 输入 / 说明。
-       行距由这两条统一控制，所以配置项之间的间隔一致，不再松紧不一。
-       Jellyfin 自己的 .emby-input 内边距偏大，外面再叠行距就会显得松散，所以这里
-       把行距压小、并用 line-height 收紧说明文字。 */
-    #JellyfinDownloaderConfigPage .jdl-item + .jdl-item { margin-top: 16px; }
-    #JellyfinDownloaderConfigPage .jdl-row + .jdl-row { margin-top: 4px; }
-
-    #JellyfinDownloaderConfigPage .jdl-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-
-    /* 输入框统一收紧一档：Jellyfin 默认的 .emby-input 内边距配 100% 宽的整行输入框
-       会显得很空，页面本来就"偏松散"——这里只压内边距与行高，不动字号。 */
-    #JellyfinDownloaderConfigPage .emby-input {
-      padding: 6px 10px;
-      line-height: 1.4;
-    }
-
-    #JellyfinDownloaderConfigPage .jdl-row .inputLabel {
-      margin: 0;
-      font-weight: 600;
-    }
-
-    #JellyfinDownloaderConfigPage .jdl-row .fieldDescription { margin: 0; }
-    #JellyfinDownloaderConfigPage .jdl-hint { line-height: 1.5; display: block; }
-
-    /* 标题行右侧的状态 / 操作区 */
-    #JellyfinDownloaderConfigPage .jdl-row__actions {
-      margin-left: auto;
-      display: inline-flex;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-
-    #JellyfinDownloaderConfigPage .jdl-input-block { width: 100%; }
-
-    /* 列表（资源站点 / 关键词组合）：一行一条，行尾依次是 上移 / 下移 / 删除，
-       最后一行再多一个新增按钮。 */
+    /* 页面风格跟控制台其它插件页（如 TheTVDB）对齐：标题用 .sectionTitle、输入框用
+       .emby-input、说明用 .fieldDescription，字体与行距全部交回 Jellyfin 主题。
+       这里只保留主题没有的排布：一行一条的列表、行尾按钮组、端口行。 */
     #JellyfinDownloaderConfigPage .jdl-list {
       display: flex;
       flex-direction: column;
-      gap: 8px;
-      width: 100%;
+      gap: 4px;
     }
 
     #JellyfinDownloaderConfigPage .jdl-list__row {
       display: flex;
-      align-items: flex-end;
-      gap: 8px;
+      align-items: center;
+      gap: 6px;
     }
 
     #JellyfinDownloaderConfigPage .jdl-list__field {
       flex: 1 1 auto;
       min-width: 0;
-      display: flex;
-      flex-direction: column;
-      gap: 3px;
-    }
-
-    #JellyfinDownloaderConfigPage .jdl-list__caption {
-      font-size: 12px;
-      line-height: 1.4;
-      min-height: 16px;
-      opacity: 0.72;
-      overflow: hidden;
-      white-space: nowrap;
-      text-overflow: ellipsis;
     }
 
     #JellyfinDownloaderConfigPage .jdl-list__buttons {
       flex: 0 0 auto;
       display: inline-flex;
       align-items: center;
-      gap: 6px;
     }
 
-    /* 小方块按钮：文字按钮在本页会挤掉输入框，图标按钮更省横向空间 */
-    #JellyfinDownloaderConfigPage .jdl-btn {
-      width: 32px;
-      height: 32px;
-      min-width: 32px;
+    /* Jellyfin 自带的图标按钮默认偏大，这里只压尺寸，配色/字体仍走主题 */
+    #JellyfinDownloaderConfigPage .jdl-icon-btn {
+      width: 34px;
+      height: 34px;
       padding: 0;
-      display: inline-flex;
+      flex: 0 0 auto;
+    }
+
+    #JellyfinDownloaderConfigPage .jdl-icon-btn .material-icons { font-size: 20px; }
+
+    #JellyfinDownloaderConfigPage .jdl-port-row {
+      display: flex;
       align-items: center;
-      justify-content: center;
-      line-height: 1;
-      font-size: 15px;
-      border: 1px solid rgba(127, 127, 127, 0.35);
-      border-radius: 3px;
-      background: transparent;
-      color: inherit;
-      cursor: pointer;
+      gap: 10px;
+      flex-wrap: wrap;
     }
 
-    #JellyfinDownloaderConfigPage .jdl-btn:hover:not(:disabled) { background: rgba(127, 127, 127, 0.16); }
-    #JellyfinDownloaderConfigPage .jdl-btn:disabled { opacity: 0.35; cursor: default; }
-    #JellyfinDownloaderConfigPage .jdl-btn--danger:hover:not(:disabled) { background: rgba(220, 60, 60, 0.18); }
-
-    /* 媒体目录 / 暂存目录的只读回显 */
-    #JellyfinDownloaderConfigPage .jdl-readonly {
-      margin: 0;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 13px;
-      word-break: break-all;
+    #JellyfinDownloaderConfigPage .jdl-port-row__actions {
+      margin-left: auto;
+      display: inline-flex;
+      gap: 8px;
     }
 
-    #JellyfinDownloaderConfigPage .jdl-port-value {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 15px;
-    }
+    #JellyfinDownloaderConfigPage .jdl-list__hint { margin-top: 2px; }
 
     @media (max-width: 520px) {
-      /* 窄屏：行尾按钮换到下一行，输入框独占整行 */
+      /* 窄屏：行尾按钮换到下一行 */
       #JellyfinDownloaderConfigPage .jdl-list__row { flex-wrap: wrap; }
       #JellyfinDownloaderConfigPage .jdl-list__buttons { margin-left: auto; }
     }
@@ -129,74 +66,63 @@
     <div data-role="content">
       <div class="content-primary">
         <form id="jdl-config-form">
+          <div class="verticalSection verticalSection-extrabottompadding">
 
-          <!-- ① 媒体目录 -->
-          <div class="jdl-item inputContainer">
-            <div class="jdl-row">
-              <label class="inputLabel inputLabelUnfocused" for="jdl-media">媒体目录</label>
+            <!-- ① 媒体目录 -->
+            <div class="sectionTitleContainer flex align-items-center">
+              <h2 class="sectionTitle">媒体目录</h2>
             </div>
-            <div class="jdl-row">
-              <input id="jdl-media" type="text" class="emby-input jdl-input-block"
+            <div class="inputContainer">
+              <input id="jdl-media" type="text" class="emby-input" aria-label="媒体目录"
                      autocomplete="off" spellcheck="false" placeholder="留空 = 自动取 Jellyfin 库路径" />
+              <div class="fieldDescription">
+                存储下载资源的父目录，默认取值自 Jellyfin 库路径。下载中/未完成的资源文件存储在媒体目录下的 .staging 目录中，下载完成后一次性移动到目标资源目录中。
+              </div>
             </div>
-            <div class="jdl-row">
-              <span id="jdl-media-resolved" class="fieldDescription jdl-readonly"></span>
-            </div>
-            <div class="jdl-row">
-              <span id="jdl-staging" class="fieldDescription jdl-readonly"></span>
-            </div>
-            <div class="jdl-row">
-              <span class="fieldDescription jdl-hint">存储下载资源的父目录，默认取值自 Jellyfin 库路径。下载中/未完成的资源文件存储在媒体目录下的 <code>.staging</code> 目录中，下载完成后一次性移动到目标资源目录中。</span>
-            </div>
-          </div>
 
-          <!-- ② 资源站点 -->
-          <div class="jdl-item inputContainer">
-            <div class="jdl-row">
-              <span class="inputLabel inputLabelUnfocused">资源站点</span>
+            <!-- ② 资源站点 -->
+            <div class="sectionTitleContainer flex align-items-center">
+              <h2 class="sectionTitle">资源站点</h2>
             </div>
-            <div class="jdl-row">
+            <div class="inputContainer">
               <div class="jdl-list" id="jdl-sites"></div>
+              <div class="fieldDescription">
+                获取 magnet 和云盘链接的 BT 资源站点。系统内置两个，一行都没有时用内置默认。每个站点占一行，可以用行尾的按钮上下调整顺序——排序越靠前的搜索优先级越高。
+              </div>
             </div>
-            <div class="jdl-row">
-              <span class="fieldDescription jdl-hint">获取 magnet 和云盘链接的 BT 资源站点。系统内置两个：<code>https://m.diao.im/api/search</code> 与 <code>https://torrents-csv.com/service/search</code>，一行都没有时用内置默认。每个站点占一行，可以用行尾的按钮上下调整顺序——排序越靠前的搜索优先级越高。</span>
-            </div>
-          </div>
 
-          <!-- ③ 关键词组合 -->
-          <div class="jdl-item inputContainer">
-            <div class="jdl-row">
-              <span class="inputLabel inputLabelUnfocused">关键词组合</span>
+            <!-- ③ 关键词组合 -->
+            <div class="sectionTitleContainer flex align-items-center">
+              <h2 class="sectionTitle">关键词组合</h2>
             </div>
-            <div class="jdl-row">
+            <div class="inputContainer">
               <div class="jdl-list" id="jdl-keywords"></div>
+              <div class="fieldDescription">
+                添加固定关键词全局优化搜索资源的质量，对所有下载生效，比如添加资源来源、画质等关键词。同一个关键词组合支持多个关键词，通过空格分隔；多组关键词按先后顺序依次搜索。不建议添加电影名、导演等仅绑定特定有限资源的关键词。一行都没有时用内置默认。
+              </div>
             </div>
-            <div class="jdl-row">
-              <span class="fieldDescription jdl-hint">添加固定关键词全局优化搜索资源的质量，对所有下载生效，比如添加资源来源、画质等关键词。同一个关键词组合支持多个关键词，通过空格分隔；多组关键词按先后顺序依次搜索。不建议添加电影名、导演等仅绑定特定有限资源的关键词。一行都没有时用内置默认。</span>
-            </div>
-          </div>
 
-          <!-- ④ 服务端口 -->
-          <div class="jdl-item inputContainer">
-            <div class="jdl-row">
-              <label class="inputLabel inputLabelUnfocused">服务端口</label>
-              <span id="jdl-port-value" class="jdl-port-value">—</span>
-              <span id="jdl-port-note" class="fieldDescription"></span>
-              <span class="jdl-row__actions">
-                <button id="jdl-backend-refresh" type="button" is="emby-button" class="raised">刷新状态</button>
-                <button id="jdl-backend-restart" type="button" is="emby-button" class="raised">重启后端</button>
-              </span>
+            <!-- ④ 服务端口 -->
+            <div class="sectionTitleContainer flex align-items-center">
+              <h2 class="sectionTitle">服务端口</h2>
             </div>
-            <div class="jdl-row">
-              <span id="jdl-backend-status" class="fieldDescription"></span>
+            <div class="inputContainer">
+              <div class="jdl-port-row">
+                <span id="jdl-port-value">—</span>
+                <span id="jdl-port-note" class="fieldDescription"></span>
+                <span class="jdl-port-row__actions">
+                  <button id="jdl-backend-refresh" type="button" is="emby-button" class="raised button-alt">刷新状态</button>
+                  <button id="jdl-backend-restart" type="button" is="emby-button" class="raised button-alt">重启后端</button>
+                </span>
+              </div>
+              <div class="fieldDescription">
+                后端在本机监听的端口，默认 8123；启动时若端口被占用会自动往后取（8123 → 8124 → …）。
+              </div>
             </div>
-            <div class="jdl-row">
-              <span class="fieldDescription jdl-hint">后端在本机监听的端口，默认 8123；启动时若端口被占用会自动往后取（8123 → 8124 → …）。</span>
-            </div>
-          </div>
 
-          <div class="jdl-item">
-            <button id="jdl-save" type="button" is="emby-button" class="raised button-submit block">保存</button>
+            <div class="inputContainer">
+              <button id="jdl-save" type="button" is="emby-button" class="raised button-submit block">保存</button>
+            </div>
           </div>
         </form>
       </div>
@@ -208,12 +134,33 @@
       var root = (document.currentScript && document.currentScript.closest('[data-role="page"]')) || document;
       function q(id) { return root.querySelector('#' + id); }
 
+      function note(message) {
+        if (window.Dashboard && Dashboard.alert) { Dashboard.alert(message); }
+      }
+
       if (!window.ApiClient || !ApiClient.ajax || !ApiClient.getUrl) {
-        var statusNode = q('jdl-backend-status');
-        if (statusNode) {
-          statusNode.textContent = '请从 控制台 → 插件 → Jellyfin Downloader 打开本页（独立打开时缺少 ApiClient）';
-        }
+        note('请从 控制台 → 插件 → Jellyfin Downloader 打开本页（独立打开时缺少 ApiClient）');
         return;
+      }
+
+      // 资源站点的地址只在后台拼接：页面上显示站点本身，保存后由后端补全完整接口路径
+      // （source_config.classify_site_url 会把 https://m.diao.im 补成 .../api/search）。
+      var SITE_PATHS = {
+        'm.diao.im': '/api/search',
+        'diao.im': '/api/search',
+        'torrents-csv.com': '/service/search',
+        'www.torrents-csv.com': '/service/search'
+      };
+
+      function siteShortUrl(address) {
+        var value = (address || '').trim();
+        if (!value) { return ''; }
+        var parsed;
+        try { parsed = new URL(value); } catch (error) { return value; }
+        var host = parsed.hostname.toLowerCase();
+        var path = parsed.pathname.replace(/\/+$/, '');
+        if (SITE_PATHS[host] && path === SITE_PATHS[host]) { return parsed.origin; }
+        return value;
       }
 
       function pluginUrl(path) {
@@ -230,60 +177,41 @@
         return ApiClient.ajax(options);
       }
 
-      function note(message) {
-        if (window.Dashboard && Dashboard.alert) { Dashboard.alert(message); }
-      }
-
-      function svg(path) {
-        var ns = 'http://www.w3.org/2000/svg';
-        var node = document.createElementNS(ns, 'svg');
-        node.setAttribute('viewBox', '0 0 24 24');
-        node.setAttribute('width', '18');
-        node.setAttribute('height', '18');
+      function icon(name) {
+        var node = document.createElement('span');
+        node.className = 'material-icons ' + name;
         node.setAttribute('aria-hidden', 'true');
-        var shape = document.createElementNS(ns, 'path');
-        shape.setAttribute('d', path);
-        shape.setAttribute('fill', 'currentColor');
-        node.appendChild(shape);
         return node;
       }
 
-      var ICONS = {
-        up: 'M12 5l7 7h-4v7h-6v-7H5z',
-        down: 'M12 19l-7-7h4V5h6v7h4z',
-        add: 'M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z',
-        remove: 'M5 11h14v2H5z'
-      };
-
-      function iconButton(icon, label, extraClass, onClick, action) {
+      function iconButton(iconName, label, action, onClick) {
         var button = document.createElement('button');
         button.type = 'button';
-        button.className = 'jdl-btn' + (extraClass ? ' ' + extraClass : '');
+        button.setAttribute('is', 'paper-icon-button-light');
+        button.className = 'jdl-icon-btn';
         button.title = label;
         button.setAttribute('aria-label', label);
         if (action) { button.setAttribute('data-action', action); }
-        button.appendChild(svg(ICONS[icon]));
+        button.appendChild(icon(iconName));
         button.addEventListener('click', onClick);
         return button;
       }
 
       // ---- 列表：资源站点与关键词组合共用同一套交互（上移 / 下移 / 删除 / 新增） ----
 
-      function listField(placeholder, value) {
+      function listField(placeholder, value, label) {
         var wrap = document.createElement('span');
         wrap.className = 'jdl-list__field';
-        var caption = document.createElement('span');
-        caption.className = 'jdl-list__caption';
-        wrap.appendChild(caption);
         var input = document.createElement('input');
         input.type = 'text';
         input.className = 'emby-input';
         input.value = value || '';
         input.placeholder = placeholder || '';
+        input.setAttribute('aria-label', label);
         input.autocomplete = 'off';
         input.spellcheck = false;
         wrap.appendChild(input);
-        return { wrap: wrap, caption: caption, input: input };
+        return { wrap: wrap, caption: null, input: input };
       }
 
       function moveRow(list, row, delta) {
@@ -304,8 +232,9 @@
           var remove = row.querySelector('[data-action="remove"]');
           if (up) { up.disabled = index === 0; }
           if (down) { down.disabled = index === rows.length - 1; }
-          // 「最后一行仅保留新增站点 + 号」：末行不显示删除，其余每行都有。
-          if (remove) { remove.style.display = index === rows.length - 1 ? 'none' : ''; }
+          // 每一行都能删，包括最后一行：需求写的是「每一行都有一个删除 - 号」，
+          // 而且误点「+」加出来的空行如果删不掉就成了死路。
+          if (remove) { remove.style.display = ''; }
           // 新增按钮每轮都先摘掉，再加到新的末行上（否则它会留在旧行里越攒越多）。
           var add = row.querySelector('[data-action="add"]');
           if (add) { add.remove(); }
@@ -313,26 +242,39 @@
         var last = rows[rows.length - 1];
         if (last) {
           last.querySelector('.jdl-list__buttons').appendChild(
-            iconButton('add', '新增一行', 'jdl-btn--add', function () {
-              appendRow(list, { placeholder: list.getAttribute('data-placeholder') || '' });
-            }, 'add'));
+            iconButton('add', '新增一行', 'add', function () {
+              appendRow(list, { placeholder: list.getAttribute('data-placeholder') || '',
+                                label: list.getAttribute('data-label') || '' });
+            }));
         }
+      }
+
+      // 删一行；删空了就补一个空行，保证列表始终至少有一个输入框（否则没有 + 可点）。
+      function removeRow(list, row) {
+        row.remove();
+        if (!list.children.length) {
+          appendRow(list, { placeholder: list.getAttribute('data-placeholder') || '',
+                            label: list.getAttribute('data-label') || '' });
+          return;
+        }
+        syncList(list);
       }
 
       function buildRow(list, data) {
         var row = document.createElement('div');
         row.className = 'jdl-list__row';
-        var field = listField(data.placeholder || '', data.value || '');
+        var field = listField(data.placeholder || '', data.value || '', data.label || '');
         row.appendChild(field.wrap);
 
         var buttons = document.createElement('span');
         buttons.className = 'jdl-list__buttons';
-        buttons.appendChild(iconButton('up', '上移（提高优先级）', '', function () { moveRow(list, row, -1); }, 'up'));
-        buttons.appendChild(iconButton('down', '下移（降低优先级）', '', function () { moveRow(list, row, 1); }, 'down'));
-        buttons.appendChild(iconButton('remove', '删除这一行', 'jdl-btn--danger', function () {
-          row.remove();
-          syncList(list);
-        }, 'remove'));
+        buttons.appendChild(iconButton('arrow_upward', '上移（提高优先级）', 'up',
+          function () { moveRow(list, row, -1); }));
+        buttons.appendChild(iconButton('arrow_downward', '下移（降低优先级）', 'down',
+          function () { moveRow(list, row, 1); }));
+        buttons.appendChild(iconButton('remove', '删除这一行', 'remove', function () {
+          removeRow(list, row);
+        }));
         row.appendChild(buttons);
 
         row._field = field;
@@ -346,11 +288,12 @@
         return row;
       }
 
-      function seedList(list, items, placeholder) {
+      function seedList(list, items, placeholder, label) {
         list.innerHTML = '';
         list.setAttribute('data-placeholder', placeholder);
+        list.setAttribute('data-label', label);
         (items && items.length ? items : ['']).forEach(function (item) {
-          appendRow(list, { value: item, placeholder: placeholder });
+          appendRow(list, { value: item, placeholder: placeholder, label: label });
         });
       }
 
@@ -362,8 +305,8 @@
 
       // ---- 资源站点 ----
 
-      // 资源站点行的说明文字：只在**认不出来**的地址上显示。内置/已知站点（diao /
-      // torrents-csv / 带 {q} 的云盘页）在地址里就能看出来，多一行小字只会让页面更松。
+      // 只在**认不出来**的地址上给一行说明（自建站）；内置/已知站点在地址里就能看出来，
+      // 不再额外占用一行。用 .fieldDescription 保证字体与其它说明一致。
       function siteHintFor(address, kind) {
         var value = (address || '').trim();
         var declared = (kind || '').trim();
@@ -378,7 +321,8 @@
         return host ? host + ' · 未能识别' : '';
       }
 
-      function refreshSiteCaption(row) {
+      function refreshSiteHint(row) {
+        if (!row._field.caption) { return; }
         var hint = siteHintFor(row._field.input.value, row._kind);
         row._field.caption.textContent = hint;
         row._field.caption.style.display = hint ? '' : 'none';
@@ -387,21 +331,29 @@
       function renderSites(sites) {
         var list = q('jdl-sites');
         list.innerHTML = '';
-        list.setAttribute('data-placeholder', 'https://站点地址/api/search');
+        list.setAttribute('data-placeholder', 'https://站点地址');
+        list.setAttribute('data-label', '资源站点');
         var items = (sites || []).map(function (site) {
           var address = (site.baseUrl || site.base_url || '').trim();
           return {
-            address: address || (site.webSearchUrl || '').trim(),
+            // 后台存的是完整接口地址，页面上只显示站点本身
+            address: siteShortUrl(address || (site.webSearchUrl || '').trim()),
             // 原样留着后端给的 kind：手改 XML 的自建站（未知主机 + 显式 kind）在页面
             // 上没有可编辑的类型字段，保存时必须原样带回，否则一次保存就会被校验拒掉。
             kind: (site.kind || '').trim()
           };
         });
         (items.length ? items : [{ address: '', kind: '' }]).forEach(function (item) {
-          var row = appendRow(list, { value: item.address, placeholder: 'https://站点地址/api/search' });
+          var row = appendRow(list, { value: item.address, placeholder: 'https://站点地址', label: '资源站点' });
           row._kind = item.kind;
-          refreshSiteCaption(row);
-          row._field.input.addEventListener('input', function () { refreshSiteCaption(row); });
+          if (siteHintFor(item.address, item.kind)) {
+            var hint = document.createElement('div');
+            hint.className = 'fieldDescription jdl-list__hint';
+            row._field.wrap.appendChild(hint);
+            row._field.caption = hint;
+            refreshSiteHint(row);
+            row._field.input.addEventListener('input', function () { refreshSiteHint(row); });
+          }
         });
       }
 
@@ -420,14 +372,19 @@
       // ---- 关键词组合 ----
 
       function renderKeywords(keywords) {
-        seedList(q('jdl-keywords'), keywords || [], '如：高清剧集网 DDHDTV');
+        seedList(q('jdl-keywords'), keywords || [], '如：高清剧集网 DDHDTV', '关键词组合');
       }
 
       function readKeywords() {
         return listValues(q('jdl-keywords'));
       }
 
-      // ---- 状态与服务端口 ----
+      // ---- 服务端口 ----
+
+      function showNote(message) {
+        var node = q('jdl-port-note');
+        if (node) { node.textContent = message || ''; }
+      }
 
       function renderPort(status) {
         var value = q('jdl-port-value');
@@ -436,42 +393,25 @@
         var requested = status && status.portRequested;
         var host = window.location && window.location.hostname ? window.location.hostname : '127.0.0.1';
         value.textContent = host + ':' + port;
-        var portNote = q('jdl-port-note');
-        if (portNote) {
-          portNote.textContent = requested && requested !== port
-            ? '（' + requested + ' 已被占用，实际监听 ' + port + '）'
-            : '';
+        if (requested && requested !== port) {
+          showNote('（' + requested + ' 已被占用，实际监听 ' + port + '）');
+        } else if (!status) {
+          showNote('');
         }
       }
 
       function renderStatus(status) {
-        var text = q('jdl-backend-status');
-        if (!text) { return; }
-        if (!status) { text.textContent = '状态未知'; return; }
-        var parts = [status.running ? '正在运行' : '已停止'];
-        if (status.pid) { parts.push('pid ' + status.pid); }
-        parts.push(status.managed ? '插件管理' : (status.running ? '外部进程' : '—'));
-        text.textContent = parts.join(' · ');
+        if (!status) { return; }
         renderPort(status);
+        if (status.scriptExists === false) {
+          note('后端脚本不存在：' + (status.script || '?'));
+        }
       }
 
       function refreshStatus() {
         return ajax('GET', 'backend/status').then(renderStatus).catch(function (error) {
-          q('jdl-backend-status').textContent = '状态读取失败：' + (error && error.status ? error.status : '网络错误');
+          showNote('状态读取失败：' + (error && error.status ? error.status : '网络错误'));
         });
-      }
-
-      function renderMedia(resolved) {
-        var node = q('jdl-media-resolved');
-        if (node) {
-          node.textContent = resolved ? '当前解析到：' + resolved : '';
-        }
-        // 暂存目录固定是媒体目录下的 .staging，不支持修改；这里只做回显。
-        var staging = q('jdl-staging');
-        if (staging) {
-          var mediaRoot = resolved ? resolved.replace(/\/+$/, '') : '';
-          staging.textContent = mediaRoot ? '暂存目录（不可修改）：' + mediaRoot + '/.staging' : '';
-        }
       }
 
       function load() {
@@ -482,12 +422,11 @@
           // 不当成用户输入回填——否则「留空跟随媒体库」会被一次保存固化成配置值。
           media.value = config.MediaRoot || '';
           media.placeholder = resolved ? '留空 = ' + resolved : '留空 = 自动取 Jellyfin 库路径';
-          renderMedia(resolved);
           renderSites(config.btSites || []);
           renderKeywords(config.l1Keywords || []);
           return refreshStatus();
         }).catch(function (error) {
-          q('jdl-backend-status').textContent = '配置读取失败：' + (error && error.status ? error.status : '网络错误');
+          note('配置读取失败：' + (error && error.status ? error.status : '网络错误'));
         });
       }
 
@@ -507,33 +446,38 @@
       }
 
       q('jdl-save').addEventListener('click', function () {
-        q('jdl-backend-status').textContent = '正在保存…';
+        showNote('正在保存…');
         save().then(function (result) {
           if (window.Dashboard && Dashboard.processPluginConfigurationUpdateResult) {
             Dashboard.processPluginConfigurationUpdateResult();
           }
-          q('jdl-backend-status').textContent = '已保存（后端已重启），正在刷新状态…';
+          showNote('');
           if (result && result.backendRestarted === false) {
             note(result.backendDetail || '后端重启失败');
           }
           return refreshStatus();
         }).catch(function (error) {
-          q('jdl-backend-status').textContent = '保存失败：' + errorText(error, '');
+          var message = '保存失败：' + errorText(error, '');
+          showNote(message);
+          note(message);
         });
       });
 
       q('jdl-backend-refresh').addEventListener('click', function () {
-        q('jdl-backend-status').textContent = '正在刷新…';
+        showNote('正在刷新…');
         refreshStatus();
       });
 
       q('jdl-backend-restart').addEventListener('click', function () {
-        q('jdl-backend-status').textContent = '正在重启…';
+        showNote('正在重启…');
         ajax('POST', 'backend/restart', {}).then(function (result) {
           if (result && result.detail) { note(result.detail); }
+          showNote('');
           renderStatus(result && result.status);
         }).catch(function (error) {
-          q('jdl-backend-status').textContent = '重启失败：' + (error && error.status ? error.status : '网络错误');
+          var message = '重启失败：' + (error && error.status ? error.status : '网络错误');
+          showNote(message);
+          note(message);
           refreshStatus();
         });
       });
