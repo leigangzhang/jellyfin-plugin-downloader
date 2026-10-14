@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-10-13-console-config-page-redesign.md (docs/i18n.md): per heading section, a hash
+# of its English and Chinese blocks outside fenced code blocks.
+# After editing either side, bring the other along and re-record with:
+#   python3 tools/pair-docs.py --write .agents/notes/implemented/feature/2026-10-13-console-config-page-redesign.md
+/decision-console-configuration-page-four-groups-of-three-lines-one-address-per-station-and-the-port-row-owning-the-backend:
+  en: c4e426bfe02cfde0
+  zh: a3d95b1ce4809d44
+/decision-console-configuration-page-four-groups-of-three-lines-one-address-per-station-and-the-port-row-owning-the-backend/problem:
+  en: 2e83c33cf1204ea5
+  zh: 7e8fb083ec2132f0
+/decision-console-configuration-page-four-groups-of-three-lines-one-address-per-station-and-the-port-row-owning-the-backend/decision:
+  en: 1a8ceaf43a806e63
+  zh: b41097d8fc0631c5
+/decision-console-configuration-page-four-groups-of-three-lines-one-address-per-station-and-the-port-row-owning-the-backend/alternatives-considered:
+  en: 6e95bcd744a8fba7
+  zh: 21afd4698f5f736c
+/decision-console-configuration-page-four-groups-of-three-lines-one-address-per-station-and-the-port-row-owning-the-backend/consequences:
+  en: cff788f945865827
+  zh: 176d2f1152c5a93b
+/decision-console-configuration-page-four-groups-of-three-lines-one-address-per-station-and-the-port-row-owning-the-backend/testing:
+  en: b588f10aa8f814dd
+  zh: f332ec701cbaf05a
