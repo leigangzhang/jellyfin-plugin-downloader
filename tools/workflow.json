@@ -216,7 +216,7 @@
         "*.sh"
       ],
       "evidence": [
-        "python3 -m py_compile backend/*.py",
+        "python3 -m compileall -q backend  # 递归：backend/ 现在有 probe/ search/ pan/ download/ 子包",
         "./build.sh",
         "run the plugin against a real Jellyfin (./install.sh stops the server first, then open a detail page and confirm the console entry still works); backend/ has no automated tests yet, so this manual smoke path is the only behaviour evidence"
       ],

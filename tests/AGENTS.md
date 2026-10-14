@@ -2,6 +2,8 @@
 
 The suite proves the kit's own machinery: that every guard can fail, that the declarations match the corpus, and that the tools keep their contracts. [testing.md](../docs/testing.md) owns the policy; this file owns the layout.
 
+**Grouped by subject, not flat.** The suite lives in four directories: [kit/](kit/) (the kit's own machinery), [backend_sources/](backend_sources/) (the L1 source chain), [backend_retired/](backend_retired/) (retired paths, station config, the plugin page's source guards), and [backend_probe/](backend_probe/) (the probe chain). [harness.py](harness.py) and the two `_backend_*_helpers.py` modules inside the groups hold what the cases share. Do not name a group after a Python package that also exists under `backend/` — `unittest discover -s tests` puts `tests/` on `sys.path`, so `tests/probe/` would shadow `backend/probe/`.
+
 **One module per subject.** [harness.py](harness.py) holds what the modules share — the root, the loaders, and the heading reader — and `test_policies`, `test_records`, `test_pairing`, `test_evidence`, and `test_tiers` each own one subject. A new invariant goes in the module that owns its subject; a new subject is a new module.
 
 **A test here earns its place by failing.** Watch the case go red for the regression it pins before trusting it green. Flake is a defect, never noise: do not fix it with a longer timeout, a retry, a sleep, a serial suite, or a weaker assertion — retry only at a real external boundary ([policy](../docs/testing.md#prove-a-new-guard), [flake policy](../docs/testing.md#flake-policy)).

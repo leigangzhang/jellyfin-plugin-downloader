@@ -28,7 +28,7 @@ MAIN_SCRIPTS = os.path.abspath(os.environ.get("JMD_MAIN_SCRIPTS") or HERE)
 if MAIN_SCRIPTS not in sys.path:
     sys.path.insert(0, MAIN_SCRIPTS)
 
-import search_pool  # noqa: E402  （季号识别与发行名解析的唯一事实源）
+from search import search_pool  # noqa: E402  （季号识别与发行名解析的唯一事实源）
 
 from media_download_lib import (  # noqa: E402
     DATA_ROOT,

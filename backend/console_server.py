@@ -453,7 +453,7 @@ class Handler(BaseHTTPRequestHandler):
         probe_kind = bc.PROBE_KIND.get(kind, "episode")
         eta = float(body.get("eta_max_hours") or 4.0)
         cmd = [
-            "submit_xunlei.py", ih, final_dir,
+            "download/submit_xunlei.py", ih, final_dir,
             "--kind", probe_kind,
             "--eta-max-hours", str(eta),
             "--no-watch",
@@ -483,7 +483,7 @@ class Handler(BaseHTTPRequestHandler):
         if not valid_target_dir(final_dir):
             return self._bad("final_dir must be inside staging or Media")
         interval = int(body.get("interval") or 900)
-        cmd = ["watch_download.py", ih, final_dir, "--detach", "--interval", str(interval)]
+        cmd = ["download/watch_download.py", ih, final_dir, "--detach", "--interval", str(interval)]
         if body.get("series_name"):
             cmd += ["--series-name", body["series_name"]]
         if body.get("year"):
@@ -499,7 +499,7 @@ class Handler(BaseHTTPRequestHandler):
         if mode not in ("audit", "prune-orphans"):
             return self._bad("invalid mode")
         flag = "--audit" if mode == "audit" else "--prune-orphans"
-        rc, out, err = run_cli(["cleanup_download.py", "", target, flag], 300)
+        rc, out, err = run_cli(["download/cleanup_download.py", "", target, flag], 300)
         return self._ok({"ok": rc == 0, "rc": rc, "stdout": out, "stderr": err})
 
     # ---- pan --------------------------------------------------------------
@@ -510,7 +510,7 @@ class Handler(BaseHTTPRequestHandler):
         title = (body.get("title") or "").strip()
         if not title:
             return self._bad("title is required")
-        cmd = ["pan_transfer.py", sub, "--title", title]
+        cmd = ["pan/pan_transfer.py", sub, "--title", title]
         if body.get("final_dir"):
             cmd += ["--final-dir", body["final_dir"]]
         if body.get("series_name"):
@@ -602,7 +602,7 @@ def _run_search_job(jid, p):
         bc.ensure_dirs()
 
         log(f"查重：{p['title']}（{p['category']}）")
-        rc, out, err = run_cli(["check_exists.py", p["title"], p["category"]], 120)
+        rc, out, err = run_cli(["download/check_exists.py", p["title"], p["category"]], 120)
         exists = _parse_exists(out)
         log("  " + (exists.get("detail") or exists.get("status") or "OK"))
 
@@ -621,7 +621,7 @@ def _run_search_job(jid, p):
             else:
                 log("L1 搜索：资源站配置为空或不可用，search_pool 会报 SOURCE_CONFIG_ERROR")
             search_cmd = [
-                "search_pool.py", p["title"],
+                "search/search_pool.py", p["title"],
                 "--pool-file", p["pool_file"],
                 "--candidates-out", p["cand_file"],
                 "--json-out", os.path.join("/tmp", f"{p['slug']}_search.json"),
@@ -677,7 +677,7 @@ def _run_search_job(jid, p):
                 log("云盘通道没有入口：插件配置里没有任何资源站填了「网页搜索地址」（需含 {q} 占位符）")
             else:
                 pan_cand = os.path.join("/tmp", f"{p['slug']}_pan.json")
-                pan_cmd = ["pan_search.py", p["title"]]
+                pan_cmd = ["pan/pan_search.py", p["title"]]
                 for site_name, url in web_urls:
                     log(f"  网页搜索（{site_name}）")
                     pan_cmd += ["--page", url]
@@ -692,7 +692,7 @@ def _run_search_job(jid, p):
 
         log("打分 + 校验 metadata（probe）…")
         probe_cmd = [
-            "probe_magnets.py", p["title"],
+            "probe/probe_magnets.py", p["title"],
             "--kind", p["probe_kind"],
             "--duration-minutes", str(p["duration"]),
             "--pool-file", p["pool_file"],

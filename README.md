@@ -175,16 +175,23 @@ jellyfin-plugin-downloader/
 │   ├── Web/inject_0*.js, Web/style.css     # 面板前端（内嵌资源）
 │   └── Configuration/                      # 配置项与配置页
 ├── backend/                                # 自带 Python 后端（自包含，零第三方依赖）
-│   ├── console_server.py                   # HTTP 服务 + 面板快照
-│   ├── build_console.py                    # 快照组装
+│   ├── console_server.py                   # HTTP 服务 + 面板快照（插件按这个固定路径启动它）
+│   ├── build_console.py                    # 快照组装；定义 MAIN_SCRIPTS（也是脚本查找根与 sys.path 根）
+│   ├── media_download_lib.py               # 数据根推导：DATA_ROOT = 本文件所在目录 / state
 │   ├── candidate_score.py                  # 打分（四维权重）
 │   ├── source_config.py                    # 资源站清单 + L1 关键字组合（唯一事实源）
-│   ├── search_pool.py / probe_magnets.py   # 候选来源与打分排名
-│   ├── pan_search.py / pan_pool.py / pan_transfer.py  # 云盘分享：找链接/入池/转存取回
-│   ├── submit_xunlei.py                    # 提交迅雷
-│   ├── watch_download.py / verify_media.py / handle_media_issues.py / cleanup_download.py
-│   ├── check_exists.py / media_download_lib.py
+│   ├── torrents_csv_source.py              # 第二个磁力源（torrents-csv 快照）
+│   ├── probe/                              # 探针链：健康度 → metadata → 打分 → 交付
+│   ├── search/                             # 取源链：diao 索引 + torrents-csv + 池合并
+│   ├── pan/                                # 云盘分享：找链接 / 入池 / 转存取回
+│   ├── download/                           # 提交迅雷 → 监视 → 校验 → 清理
 │   └── state/                              # 运行时数据（不入库）：pool / watches / snapshots / pan / marks
+
+> 为什么这四个模块留在 `backend/` 根、其余进子包：`console_server.py` 由插件按
+> `backend/console_server.py` 固定路径启动；`build_console.py` 所在目录同时是脚本查找根与
+> `sys.path` 根；`media_download_lib.py` 所在目录决定运行时数据根 `backend/state/`。
+> 三者一旦挪动就会分别打断插件启动、脚本查找与数据位置。子包里的入口脚本自带一段
+> `sys.path` 引导，所以 `python3 backend/probe/probe_magnets.py` 这类直接调用仍然可用。
 ├── manifest.json                           # Jellyfin 插件仓库清单（仓库根目录即插件仓库）
 ├── build.sh                                # 构建 → ./out
 ├── install.sh                              # 安装到 Jellyfin 并重启
@@ -241,7 +248,7 @@ Jellyfin 的卸载按钮只删文件，程序集仍在内存里。重启 Jellyfi
 - **取源与配置**：站点清单、`kind` 适配器与 L1 关键字组合的默认值和校验都在 `backend/source_config.py`；`search_pool.py` 与 `console_server.py` 都只读这一份，不要在别处再定义一套。
 - **后端边界**：`backend/` 是随插件走的自包含副本，数据根固定为 `backend/state/`（可用 `JMD_DATA_DIR` 覆盖），与作者本机的下载 skill 完全隔离，互不读写。
 - **后端环境变量**：由插件注入 `JMD_MEDIA_ROOT`（媒体库根）与 `JMD_STAGING_ROOT`（暂存区），脚本读不到时才回落到默认值。
-- **手工验证**：取源打分链已有离线契约测试（`tests/test_backend_scoring.py` 等，跑 `python3 -m unittest discover -s tests`）；下载/验证/归档路径仍靠 `./uninstall.sh --verify-only`、Jellyfin 日志、面板快照三者交叉确认。
+- **手工验证**：取源打分链已有离线契约测试（`tests/backend_probe/test_backend_scoring.py` 等，跑 `python3 -m unittest discover -s tests`）；下载/验证/归档路径仍靠 `./uninstall.sh --verify-only`、Jellyfin 日志、面板快照三者交叉确认。
 
 ### 常用命令
 

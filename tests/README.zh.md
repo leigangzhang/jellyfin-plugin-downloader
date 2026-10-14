@@ -16,10 +16,10 @@ python3 -m unittest discover -s tests
 |---|---|
 | `__init__.py` | 让本目录成为包，模块之间便能按名字导入 |
 | `harness.py` | 各模块共享的东西：仓库根、按路径加载工具的加载器、以及标题读取器 |
-| `test_policies.py` | 政策所有者：每份常驻文档都带着它那条检查所要求的形状，且声明与文档一致 |
-| `test_records.py` | 记录层：类目目录、发布、封存，以及一次改动会认领的改动面 |
-| `test_pairing.py` | 配对层：每对一条记录、重算而非信任、两侧形状一致，以及切换器指向对侧 |
-| `test_evidence.py` | 证据运行器：它绝不能把一句正文或一个占位符当成命令 |
-| `test_tiers.py` | 档位开关：开关、树与地图的档位表必须在两个方向上都一致 |
+| `kit/` | 套件自身的机件：[政策](kit/test_policies.py)、[记录](kit/test_records.py)、[配对](kit/test_pairing.py)、[证据](kit/test_evidence.py)与[档位开关](kit/test_tiers.py) |
+| `backend_sources/` | L1 取源链：索引翻页、关键词阶梯、季号识别、发行名键、池合并、外部候选 |
+| `backend_retired/` | 退役路径、站点配置、站点 URL 分类，以及读插件页面自身源码的那批守卫 |
+| `backend_probe/` | 探针链：打分、软预算、离线干跑、集成契约与清理守卫 |
+| `fixtures/` | 离线用例复放的裁剪真实响应 |
 | `AGENTS.md` | 在这里加一条测试的规矩 |
 | `README.md` | 本页 |

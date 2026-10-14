@@ -75,7 +75,7 @@
 
   本契约的作用，就是把这个已经做出的决定，从代码深处的注释提升到「开工就能读到」的地方。
 - **有意分叉的两处**：`backend/media_download_lib.py`（backend 去掉了机器相关路径、改为自带数据根
-  与同盘暂存推导）、`backend/watch_download.py`（docstring 跟着改）。
+  与同盘暂存推导）、`backend/download/watch_download.py`（docstring 跟着改）。
 - **各自独有**：backend 侧是控制台 UI 相关（`backend/build_console.py`、`backend/console_server.py`）；
   skill 侧是 monitor_download.py、series_queue.py、thunder_bridge.py 三个文件。
 - 改动任一侧时，请在提交信息里写明这次改的是哪一侧、是否影响另一侧。
@@ -86,7 +86,7 @@
   `./uninstall.sh` 加 `--verify-only` 可给确定结论。
 - **日志反复出现拉图标失败**：本地插件仓库拉图标失败，纯外观问题，不影响功能。
 - **面板提示后端未运行**：看配置页「服务端口」那行的运行状态徽标，点旁边的「刷新状态 / 重启后端」；端口被占用时插件自己往后换（页面只回显，不可改）。Python 没装或版本低于 3.9 后端起不来，装法见 README「快速开始」第 0 步。
-- **测试覆盖是分层的**：取源打分链有离线契约测试（`tests/test_backend_scoring.py`、`tests/test_backend_sources_*.py`、`tests/test_backend_probe.py`，跑 `python3 -m unittest discover -s tests`）；下载/验证/归档路径仍靠 `./uninstall.sh` 的自检、Jellyfin 日志、面板快照三者交叉确认。
+- **测试覆盖是分层的**：取源打分链有离线契约测试（`tests/backend_probe/test_backend_scoring.py`、`tests/backend_sources/`、`tests/backend_probe/test_backend_probe.py`，跑 `python3 -m unittest discover -s tests`）；下载/验证/归档路径仍靠 `./uninstall.sh` 的自检、Jellyfin 日志、面板快照三者交叉确认。
   （补齐下载/验证路径的自动化测试仍是推荐做法。）
 
 ## 发版

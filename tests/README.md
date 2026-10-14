@@ -16,10 +16,10 @@ python3 -m unittest discover -s tests
 |---|---|
 | `__init__.py` | makes this a package, so the modules import each other by name |
 | `harness.py` | what the modules share: the root, the loaders that read a tool by path, and the heading reader |
-| `test_policies.py` | the policy owners: each standing document carries the shape its check gates, and the declarations agree with it |
-| `test_records.py` | the record layer: class folders, publication, seals, and the surfaces a change claims |
-| `test_pairing.py` | the pairing layer: one record per pair, recomputed rather than trusted, the two sides the same shape, and the switchers pointing across |
-| `test_evidence.py` | the evidence runner: it must never mistake a sentence or a placeholder for a command |
-| `test_tiers.py` | the tier switch: the switch, the tree, and the map's tier table must agree in both directions |
+| `kit/` | the kit's own machinery: [policies](kit/test_policies.py), [records](kit/test_records.py), [pairing](kit/test_pairing.py), [evidence](kit/test_evidence.py), and the [tier switch](kit/test_tiers.py) |
+| `backend_sources/` | the L1 source chain: index paging, keyword ladder, season detection, release keys, pool merge, external candidates |
+| `backend_retired/` | retired paths, station config, site-URL classification, and the guards that read the plugin page's own source |
+| `backend_probe/` | the probe chain: scoring, soft budget, offline dry run, integration contracts, and the cleanup guard |
+| `fixtures/` | the trimmed real responses the offline cases replay |
 | `AGENTS.md` | the rules for adding a test here |
 | `README.md` | this page |
