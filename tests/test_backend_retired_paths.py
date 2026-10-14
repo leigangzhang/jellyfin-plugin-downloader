@@ -848,6 +848,28 @@ class SiteUrlClassificationTests(unittest.TestCase):
         backend = (BACKEND / "console_server.py").read_text(encoding="utf-8")
         self.assertIn('os.environ.get("JMD_PORT")', backend)
 
+    def test_the_backend_process_does_not_inherit_the_jellyfin_environment(self):
+        """后端子进程只拿到白名单环境，不继承 Jellyfin 的凭据环境。
+
+        实机复核发现：`ProcessStartInfo` 默认把父进程整份环境交给子进程，而 Jellyfin
+        的环境里有它自己的 API key / 会话 token —— `ps eww` 里能在后端的 Python
+        进程上看到那些名字。后端只需要 JMD_* 配置，没有理由继承这些。
+        """
+        manager = (ROOT / "Jellyfin.Plugin.JellyfinDownloader" / "BackendManager.cs").read_text(encoding="utf-8")
+        start = manager[manager.index("public static (bool Ok, string Detail) Start()"):]
+        start = start[:start.index("private static string SerializeBtSites")]
+        # 清空继承环境 + 只补白名单
+        self.assertIn("info.Environment.Clear();", start,
+                      "后端启动前必须清空继承来的环境变量")
+        self.assertIn("foreach (var name in InheritedEnvWhitelist)", start)
+        whitelist_block = manager[manager.index("private static readonly string[] InheritedEnvWhitelist"):]
+        whitelist = re.findall(r'"([A-Z_]+)"', whitelist_block[:whitelist_block.index("};")])
+        # 白名单只许放运行时必需项，任何凭据类名字都不许进
+        forbidden = [name for name in whitelist
+                     if any(token in name for token in ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL"))]
+        self.assertEqual(forbidden, [], f"白名单里混进了凭据类变量：{forbidden}")
+        self.assertTrue({"PATH", "HOME"}.issubset(set(whitelist)), whitelist)
+
     def test_the_page_shows_the_builtin_defaults_when_config_is_empty(self):
         """配置为空时页面要显示内置默认站点/关键词，而不是一排空输入框。
 

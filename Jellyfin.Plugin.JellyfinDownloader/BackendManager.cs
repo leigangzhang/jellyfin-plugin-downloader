@@ -22,6 +22,16 @@ public static class BackendManager
     /// </summary>
     private const string ServiceMarker = "jellyfin-downloader-backend";
 
+    /// <summary>
+    /// 后端进程允许从 Jellyfin 继承的环境变量白名单。只放 Python 运行所必需的：
+    /// 解释器/脚本查找（PATH）、用户目录（HOME）、临时目录（TMPDIR）、语言环境。
+    /// 后端自己要的配置全部走 JMD_*，在 Start 里逐个显式注入。
+    /// </summary>
+    private static readonly string[] InheritedEnvWhitelist =
+    {
+        "PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "USER",
+    };
+
     /// <summary>端口自增时最多往后试这么多个（8123→8124→…）。</summary>
     private const int PortScanSpan = 20;
     private static readonly object Gate = new();
@@ -210,6 +220,23 @@ public static class BackendManager
                 UseShellExecute = false,
                 CreateNoWindow = true,
             };
+
+            // **先清空继承来的环境**：Jellyfin 进程的环境里有它自己的凭据（API key、
+            // 会话 token 之类），子进程默认整份继承——后端只需要下面这几个 JMD_* 变量，
+            // 没有理由把一个明文凭据环境交给它（本机实测泄漏过 DEEPSEEK_API_KEY /
+            // DSH_SESSION_ID 等，见 docs 的复核记录）。清空后只补白名单。
+            info.Environment.Clear();
+
+            // 白名单：Python 自己运行所需的最小集合（解释器路径、用户目录、临时目录、
+            // 语言环境）。后端代码只读 JMD_* 变量，不需要别的。
+            foreach (var name in InheritedEnvWhitelist)
+            {
+                var value = Environment.GetEnvironmentVariable(name);
+                if (!string.IsNullOrEmpty(value))
+                {
+                    info.Environment[name] = value;
+                }
+            }
 
             // 端口：后端 console_server.py 的 --port 默认值取自这个变量。
             info.Environment["JMD_PORT"] = port.ToString(System.Globalization.CultureInfo.InvariantCulture);
