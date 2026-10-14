@@ -34,7 +34,7 @@
 │      ▲ 请求时由中间件追加 <script>/<link>                        │
 │      │                                                          │
 │  JellyfinDownloaderController                                   │
-│    /JellyfinDownloader/script|style     内嵌的 inject.js / css  │
+│    /JellyfinDownloader/script|style     内嵌的 inject 分片/css  │
 │    /JellyfinDownloader/config|seasons   配置与季列表            │
 │    /JellyfinDownloader/backend/*        后端进程管理            │
 │    /JellyfinDownloader/python/*         Python 探测与安装       │
@@ -172,7 +172,7 @@ jellyfin-plugin-downloader/
 │   ├── MediaPaths.cs                       # 从媒体库配置解析媒体根 / 暂存区
 │   ├── Controllers/JellyfinDownloaderController.cs  # 全部 HTTP 端点 + 后端代理
 │   ├── Middleware/                         # 往 /web/index.html 注入脚本与样式
-│   ├── Web/inject.js, Web/style.css        # 面板前端（内嵌资源）
+│   ├── Web/inject_0*.js, Web/style.css     # 面板前端（内嵌资源）
 │   └── Configuration/                      # 配置项与配置页
 ├── backend/                                # 自带 Python 后端（自包含，零第三方依赖）
 │   ├── console_server.py                   # HTTP 服务 + 面板快照
@@ -236,7 +236,7 @@ Jellyfin 的卸载按钮只删文件，程序集仍在内存里。重启 Jellyfi
 
 ## 开发说明
 
-- **前端**：改 `Jellyfin.Plugin.JellyfinDownloader/Web/inject.js` 或 `style.css`（以 `EmbeddedResource` 内嵌进 DLL），必须重新 `./build.sh && ./install.sh` 才生效。
+- **前端**：改 `Jellyfin.Plugin.JellyfinDownloader/Web/inject_0*.js`（5 个分片，装配顺序见 controller 的 `ScriptSegments`）或 `style.css`（都以 `EmbeddedResource` 内嵌进 DLL），必须重新 `./build.sh && ./install.sh` 才生效。
 - **打分**：四维权重在 `backend/candidate_score.py` 的 `DEFAULT_WEIGHTS`；速度这一维只读做种者数与外部索引快照（aria2c 短窗测速已删除）。改完只需重装后端（`install.sh` 会带上 `backend/`）。
 - **取源与配置**：站点清单、`kind` 适配器与 L1 关键字组合的默认值和校验都在 `backend/source_config.py`；`search_pool.py` 与 `console_server.py` 都只读这一份，不要在别处再定义一套。
 - **后端边界**：`backend/` 是随插件走的自包含副本，数据根固定为 `backend/state/`（可用 `JMD_DATA_DIR` 覆盖），与作者本机的下载 skill 完全隔离，互不读写。

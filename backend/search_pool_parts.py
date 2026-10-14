@@ -1,6 +1,6 @@
 """承载侧：拆出的公共名字在这里显式 import，`search_pool` 只是它的外观。
 
-为什么要有这一层：`search_pool.py` 不能写兄弟模块的 import——tests/test_backend_sources.py
+为什么要有这一层：`search_pool.py` 不能写兄弟模块的 import——tests/test_backend_sources_dependencies.py
 的 DependencyTests 把它的 import 根限定为既有那几个模块名 + 标准库，写
 `import search_pool_api` 会让那条守卫变红，而 tests/** 不在本次改动范围内。于是依赖边集中
 写在本模块（grep `search_api` / `candidate_seasons` 就能看到它来自哪个模块），

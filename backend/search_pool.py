@@ -83,7 +83,7 @@ Field contract with the probe and the scorer
 
 拆分说明（按职责拆模块，纯重构）
 --------------------------------
-本文件的模块体里没有任何兄弟模块的 import（tests/test_backend_sources.py 的
+本文件的模块体里没有任何兄弟模块的 import（tests/test_backend_sources_dependencies.py 的
 DependencyTests 把 search_pool.py 的 import 根限定为既有那几个模块名 + 标准库），
 公共名字由承载侧 `search_pool_parts` 显式 import，本文件再「真实赋值」进自己的 globals，
 并由模块级 `__getattr__` 兜底转发（PEP 562）。为什么必须真实赋值而不是只转发：见下面

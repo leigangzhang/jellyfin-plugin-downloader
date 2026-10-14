@@ -220,7 +220,7 @@
         "./build.sh",
         "run the plugin against a real Jellyfin (./install.sh stops the server first, then open a detail page and confirm the console entry still works); backend/ has no automated tests yet, so this manual smoke path is the only behaviour evidence"
       ],
-      "why": "Behaviour changes need the smallest check that would fail for the regression. This repository has two runtimes: the Python backend under backend/ (syntax gate here) and the C# plugin that embeds Web/inject.js and Web/style.css (built by ./build.sh). There is no automated test suite yet, so a change to either runtime also owes the manual smoke path in AGENTS.md."
+      "why": "Behaviour changes need the smallest check that would fail for the regression. This repository has two runtimes: the Python backend under backend/ (syntax gate here) and the C# plugin that embeds the Web/inject_0*.js parts and Web/style.css (built by ./build.sh). There is no automated test suite yet, so a change to either runtime also owes the manual smoke path in AGENTS.md."
     },
     {
       "name": "packaging",

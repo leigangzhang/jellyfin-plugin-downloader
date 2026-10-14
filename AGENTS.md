@@ -9,7 +9,7 @@
 
 - **覆盖插件目录下的 DLL 之前必须先停 Jellyfin。** 运行中的进程会读到半写好的 DLL，
   报 `System.BadImageFormatException: Bad IL range`。用 `./install.sh`，它自己会先停服再覆盖。
-- 改 `Web/inject.js` 或 `Web/style.css` 后必须重新 `./build.sh` 再 `./install.sh` 才生效——
+- 改 `Web/inject_0*.js`（5 个分片，装配顺序见 controller 的 `ScriptSegments`）或 `Web/style.css` 后必须重新 `./build.sh` 再 `./install.sh` 才生效——
   它们是 `EmbeddedResource`，内嵌进 DLL。
 - `meta.json` 的 `version` 与 `Jellyfin.Plugin.JellyfinDownloader.csproj` 的 `<Version>` 必须一致。
 - `backend/` 里**不允许出现机器相关路径**（媒体根、暂存区一律由插件经环境变量注入）。
@@ -86,7 +86,7 @@
   `./uninstall.sh` 加 `--verify-only` 可给确定结论。
 - **日志反复出现拉图标失败**：本地插件仓库拉图标失败，纯外观问题，不影响功能。
 - **面板提示后端未运行**：看配置页「服务端口」那行的运行状态徽标，点旁边的「刷新状态 / 重启后端」；端口被占用时插件自己往后换（页面只回显，不可改）。Python 没装或版本低于 3.9 后端起不来，装法见 README「快速开始」第 0 步。
-- **测试覆盖是分层的**：取源打分链有离线契约测试（`tests/test_backend_scoring.py`、`tests/test_backend_sources.py`、`tests/test_backend_probe.py`，跑 `python3 -m unittest discover -s tests`）；下载/验证/归档路径仍靠 `./uninstall.sh` 的自检、Jellyfin 日志、面板快照三者交叉确认。
+- **测试覆盖是分层的**：取源打分链有离线契约测试（`tests/test_backend_scoring.py`、`tests/test_backend_sources_*.py`、`tests/test_backend_probe.py`，跑 `python3 -m unittest discover -s tests`）；下载/验证/归档路径仍靠 `./uninstall.sh` 的自检、Jellyfin 日志、面板快照三者交叉确认。
   （补齐下载/验证路径的自动化测试仍是推荐做法。）
 
 ## 发版

@@ -2,7 +2,7 @@
 
 覆盖本轮三份实现（I1 打分去偏 / I2 torrents-csv + L1 翻页 / I3 超时守卫 + live-check
 复用 + tracker 列表）在**合起来**之后的行为：单个模块的测试各自在
-`test_backend_scoring.py` / `test_backend_sources.py` / `test_backend_probe.py`
+`test_backend_scoring.py` / `test_backend_sources_*.py` / `test_backend_probe.py`
 里，这里只钉“接口对上、接线没断、退出码没变”。
 
 全部离线：网络入口（announce_health / tracker_health / fetch_metadata /
@@ -78,7 +78,7 @@ class FakeIndexHttp:
     真实索引。t13 F-1 实测：本模块 17 条用例在 socket 钩子下触发 288 次外部网络事件，
     目标主机只有 `m.diao.im`（`172.67.209.90` / `104.21.69.146`）。
 
-    写法与 `tests/test_backend_sources.py` 的 `FakeHttp` 一致（替换
+    写法与 `tests/_backend_sources_helpers.py` 的 `FakeHttp` 一致（替换
     `search_pool.urllib.request.urlopen`）。用例还必须断言 `requests` 非空，否则
     桩被绕过时没有人会发现——这正是 F-1 能潜伏这么久的原因。
     """

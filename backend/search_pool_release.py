@@ -7,7 +7,7 @@
 `strict_season_filter`）。
 
 `build_console.py` 的季号识别（`search_pool.candidate_seasons`）与
-tests/test_backend_sources.py 的 SeasonRecognitionHasOneHome 守卫要求季号正则全仓只有
+tests/test_backend_sources_seasons.py 的 SeasonRecognitionHasOneHome 守卫要求季号正则全仓只有
 一份实现——拆模块后这一份仍然只在这里，`search_pool` 侧只是重绑定。
 """
 

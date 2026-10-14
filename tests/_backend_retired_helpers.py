@@ -22,7 +22,7 @@ Subject: `backend/` 的模块表面与 `backend/source_config.py` 的配置契�
 并再导出 `source_config`；夹具与网络都无关，这里只读仓库里的源文件。
 
 `tests/harness.py` 不在这里用：它加载的是套件自己的工具，而这一族模块的被测对象是
-插件后端，那个根之外的代码（同 `tests/test_backend_sources.py` 的理由）。
+插件后端，那个根之外的代码（同 `tests/_backend_sources_helpers.py` 的理由）。
 """
 
 from __future__ import annotations
