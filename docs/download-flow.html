@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jellyfin Downloader 下载资源链路（模块粒度）</title>
+<style>
+  :root {
+    --bg: #f4f6fa;
+    --surface: #ffffff;
+    --surface-2: #f9fafb;
+    --line: #e5e7eb;
+    --line-strong: #d1d5db;
+    --text: #1f2937;
+    --text-dim: #5b6472;
+    --text-faint: #6b7280;
+    /* 阶段配色（每类一色，用于边框与标题） */
+    --c-entry: #2f6fed;
+    --c-proxy: #0891b2;
+    --c-search: #7c3aed;
+    --c-score: #4f46e5;
+    --c-submit: #ea580c;
+    --c-verify: #16a34a;
+    --c-pan: #0d9488;
+    --c-fail: #dc2626;
+    --c-state: #6b7280;
+    --radius: 12px;
+    --shadow: 0 1px 4px rgba(0, 0, 0, .08);
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115;
+      --surface: #171a21;
+      --surface-2: #1d2129;
+      --line: #2b303a;
+      --line-strong: #3a414d;
+      --text: #e6e8ec;
+      --text-dim: #b3b9c4;
+      --text-faint: #9aa1ad;
+      --c-entry: #6d9dff;
+      --c-proxy: #22c3e6;
+      --c-search: #a78bfa;
+      --c-score: #8b93ff;
+      --c-submit: #fb923c;
+      --c-verify: #4ade80;
+      --c-pan: #2dd4bf;
+      --c-fail: #f87171;
+      --c-state: #9aa1ad;
+      --shadow: 0 1px 4px rgba(0, 0, 0, .5);
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+    font-size: 15px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a { color: var(--c-entry); }
+  a:focus-visible, summary:focus-visible, button:focus-visible {
+    outline: 3px solid var(--c-entry);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 20px 18px 64px; }
+
+  /* ── 顶部导航 ── */
+  .topbar {
+    position: sticky; top: 0; z-index: 20;
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .05);
+  }
+  .topbar__inner {
+    max-width: 1240px; margin: 0 auto; padding: 8px 18px;
+    display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center;
+    font-size: 13px;
+  }
+  .topbar a { text-decoration: none; color: var(--text-dim); padding: 3px 2px; }
+  .topbar a:hover { color: var(--c-entry); }
+  .topbar__title { font-weight: 700; color: var(--text); margin-right: 6px; }
+
+  /* ── 卡片 ── */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 20px 22px;
+    margin-bottom: 16px;
+  }
+
+  h1 { font-size: 26px; line-height: 1.3; margin: 0 0 6px; }
+  h2 { font-size: 19px; margin: 0 0 4px; }
+  h3 { font-size: 16px; margin: 22px 0 8px; }
+  .sub { color: var(--text-faint); font-size: 13px; }
+  .lede { color: var(--text-dim); margin: 10px 0 0; max-width: 78ch; }
+
+  .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .chip {
+    font-size: 12px; padding: 3px 10px; border-radius: 999px;
+    background: var(--surface-2); border: 1px solid var(--line); color: var(--text-dim);
+  }
+  .chip code { font-family: var(--mono); }
+
+  /* ── 图例 ── */
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 14px; font-size: 13px; }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; color: var(--text-dim); }
+  .dot { width: 12px; height: 12px; border-radius: 3px; flex: 0 0 auto; }
+
+  /* ── 拓扑 ── */
+  .layer {
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 14px; margin: 0 0 0; background: var(--surface-2);
+  }
+  .layer__title {
+    font-size: 13px; font-weight: 700; letter-spacing: .02em;
+    color: var(--text-dim); margin-bottom: 10px;
+  }
+  .layer__mods { display: flex; flex-wrap: wrap; gap: 8px; }
+  .mod {
+    background: var(--surface); border: 1px solid var(--line-strong);
+    border-radius: 8px; padding: 7px 11px; font-size: 13px;
+  }
+  .mod b { display: block; font-weight: 600; }
+  .mod small { color: var(--text-faint); font-size: 12px; }
+  .mod--ext { border-style: dashed; }
+  .arrow {
+    text-align: center; color: var(--text-faint); font-size: 13px;
+    padding: 6px 0; letter-spacing: .04em;
+  }
+  .arrow b { color: var(--text-dim); font-weight: 600; }
+
+  /* ── 流程图 ── */
+  .flow { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
+  .stage {
+    position: relative;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-left: 5px solid var(--accent, var(--c-entry));
+    border-radius: 10px;
+    padding: 13px 15px 14px;
+  }
+  .stage__no {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 24px; height: 24px; padding: 0 7px; margin-right: 8px;
+    border-radius: 6px; font-size: 12px; font-weight: 700;
+    color: #fff; background: var(--accent, var(--c-entry));
+  }
+  .stage__head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px; }
+  .stage__title { font-size: 15px; font-weight: 700; }
+  .stage__mod {
+    font-family: var(--mono); font-size: 12px; color: var(--text-faint);
+    margin: 6px 0 8px; word-break: break-all;
+  }
+  .stage ol, .stage ul { margin: 0; padding-left: 20px; font-size: 13.5px; color: var(--text-dim); }
+  .stage li { margin: 2px 0; }
+  .stage li b { color: var(--text); font-weight: 600; }
+  .io {
+    margin-top: 9px; padding-top: 8px; border-top: 1px dashed var(--line-strong);
+    font-size: 12.5px; color: var(--text-faint);
+  }
+  .io b { color: var(--text-dim); font-weight: 600; }
+
+  .s-entry   { --accent: var(--c-entry); }
+  .s-proxy   { --accent: var(--c-proxy); }
+  .s-search  { --accent: var(--c-search); }
+  .s-score   { --accent: var(--c-score); }
+  .s-submit  { --accent: var(--c-submit); }
+  .s-verify  { --accent: var(--c-verify); }
+  .s-pan     { --accent: var(--c-pan); }
+  .s-state   { --accent: var(--c-state); }
+
+  .branch {
+    margin-top: 14px; padding: 12px 15px;
+    border: 1px dashed var(--c-fail); border-radius: 10px;
+    background: color-mix(in srgb, var(--c-fail) 6%, var(--surface));
+  }
+  .branch h3 { margin: 0 0 6px; font-size: 14px; color: var(--c-fail); }
+  .branch ul { margin: 0; padding-left: 20px; font-size: 13.5px; color: var(--text-dim); }
+
+  /* ── 表格 ── */
+  .tablewrap { overflow-x: auto; margin-top: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; min-width: 520px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12.5px; text-transform: none; letter-spacing: .02em; color: var(--text-faint); font-weight: 600; background: var(--surface-2); }
+  td code, th code { font-family: var(--mono); font-size: 12.5px; }
+  tbody tr:hover { background: var(--surface-2); }
+
+  details.note { margin-top: 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-2); }
+  details.note > summary { cursor: pointer; padding: 9px 13px; font-size: 13.5px; font-weight: 600; }
+  details.note > div { padding: 0 14px 12px; font-size: 13.5px; color: var(--text-dim); }
+
+  footer.foot { color: var(--text-faint); font-size: 12.5px; text-align: center; padding-top: 10px; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .stage { transition: border-color .15s ease; }
+  }
+  @media (max-width: 560px) {
+    .wrap { padding: 14px 12px 48px; }
+    .panel { padding: 15px 15px; }
+    h1 { font-size: 21px; }
+  }
+  @media print {
+    .topbar { position: static; }
+    .panel { break-inside: avoid; box-shadow: none; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="topbar" aria-label="本页导航">
+  <div class="topbar__inner">
+    <span class="topbar__title">下载资源链路</span>
+    <a href="#topology">三层拓扑</a>
+    <a href="#chain">主链路</a>
+    <a href="#pan">云盘通道</a>
+    <a href="#states">状态与失败口径</a>
+    <a href="#modules">模块索引</a>
+    <a href="#gaps">未核实项</a>
+  </div>
+</nav>
+
+<div class="wrap">
+  <header class="panel">
+    <h1>Jellyfin Downloader 下载资源链路</h1>
+    <p class="sub">模块粒度 · 每一步只写「谁执行了什么动作」 · 不出示函数名与参数默认值</p>
+    <p class="lede">
+      从 Jellyfin 详情页点「获取资源」，到文件按规范命名落进媒体库并触发库刷新，一共经过
+      <strong>3 层、13 个阶段</strong>。每张阶段卡片的最后一行给出这条动作的出处源码，需要细节时按它去读。
+    </p>
+    <div class="meta">
+      <span class="chip">事实基准 <code>commit 2d7da69</code></span>
+      <span class="chip">后端 <code>Python 3.9+ / 标准库</code></span>
+      <span class="chip">插件 <code>.NET 9 / Jellyfin 10.11</code></span>
+      <span class="chip">后端只监听 <code>127.0.0.1</code></span>
+    </div>
+    <div class="legend" aria-label="配色图例">
+      <span><i class="dot" style="background:var(--c-entry)"></i>入口 / 请求</span>
+      <span><i class="dot" style="background:var(--c-proxy)"></i>代理与进程管理</span>
+      <span><i class="dot" style="background:var(--c-search)"></i>取源（两条通道）</span>
+      <span><i class="dot" style="background:var(--c-score)"></i>打分与排名</span>
+      <span><i class="dot" style="background:var(--c-submit)"></i>提交与下载</span>
+      <span><i class="dot" style="background:var(--c-verify)"></i>校验与归档</span>
+      <span><i class="dot" style="background:var(--c-pan)"></i>云盘取回</span>
+      <span><i class="dot" style="background:var(--c-fail)"></i>失败 / 终止</span>
+    </div>
+  </header>
+
+  <section class="panel" id="topology">
+    <h2>一、三层拓扑</h2>
+    <p class="sub">三条通信约束解释了大部分设计：浏览器不直连后端、后端随 Jellyfin 生命周期起停、数据根由插件注入。</p>
+
+    <div style="margin-top:14px">
+      <div class="layer">
+        <div class="layer__title">① 浏览器侧 · Jellyfin Web（8096）</div>
+        <div class="layer__mods">
+          <div class="mod"><b>详情页「获取资源」</b><small>电影 / 剧集 / 单集，仅管理员可见</small></div>
+          <div class="mod"><b>header 图标入口</b><small>搜库里没有的剧（详情页点不到）</small></div>
+          <div class="mod"><b>面板</b><small>候选列表 · 最低分阈值 · 标记 · 任务状态轮询</small></div>
+        </div>
+      </div>
+
+      <div class="arrow">▼ <b>ScriptInjectionMiddleware 注入 5 个 JS 分片 + CSS</b> ／ 页面请求 <b>/JellyfinDownloader/api/*</b></div>
+
+      <div class="layer">
+        <div class="layer__title">② 插件侧 · C# net9.0（Jellyfin 进程内）</div>
+        <div class="layer__mods">
+          <div class="mod"><b>ScriptInjectionMiddleware</b><small>改写 /web/index.html，往 &lt;/body&gt; 前追加 script + link</small></div>
+          <div class="mod"><b>JellyfinDownloaderController</b><small>资源分片 · 配置读写 · 季列表 · 后端与 Python 端点 · <b>/api/** 同源代理</b></small></div>
+          <div class="mod"><b>BackendManager</b><small>拉后端 · 端口自增 · SERVICE_ID 校验 · 注入 JMD_*</small></div>
+          <div class="mod"><b>MediaPaths</b><small>媒体根 → 同盘 .staging</small></div>
+          <div class="mod"><b>PythonLocator / Installer</b><small>探测或安装 3.9+</small></div>
+        </div>
+      </div>
+
+      <div class="arrow">▼ <b>子进程</b> python3 backend/console_server.py ／ 注入 <b>JMD_MEDIA_ROOT</b>、<b>JMD_STAGING_ROOT</b>、<b>JMD_BT_SITES</b>、<b>JMD_L1_KEYWORDS</b></div>
+
+      <div class="layer">
+        <div class="layer__title">③ 后端侧 · Python 标准库（127.0.0.1，零第三方依赖）</div>
+        <div class="layer__mods">
+          <div class="mod"><b>console_server.py</b><small>HTTP 入口 · 契约面 · 组合根 · 预算常量</small></div>
+          <div class="mod"><b>console_server/</b><small>路由与端点 · 搜索任务 · 快照 · 子进程运行器</small></div>
+          <div class="mod"><b>search/ · probe/ · pan/ · candidate_score/ · download/</b><small>取源 → 打分 → 提交 → 监控 → 校验</small></div>
+          <div class="mod"><b>build_console.py</b><small>快照组装 · state 各子目录路径</small></div>
+          <div class="mod"><b>media_download_lib/</b><small>迅雷库只读查询 · 归档 · watcher 状态</small></div>
+        </div>
+      </div>
+
+      <div class="arrow">▼ 只读 / 调用</div>
+
+      <div class="layer">
+        <div class="layer__title">④ 外部依赖</div>
+        <div class="layer__mods">
+          <div class="mod mod--ext"><b>资源站搜索 API / 网页</b><small>磁力索引 + 云盘分享入口</small></div>
+          <div class="mod mod--ext"><b>diao 索引 + torrents-csv</b><small>候选与做种数快照</small></div>
+          <div class="mod mod--ext"><b>aria2c</b><small>抓种子元数据</small></div>
+          <div class="mod mod--ext"><b>迅雷客户端 + 迅雷数据库</b><small>提交下载 / 云盘转存，库只读</small></div>
+          <div class="mod mod--ext"><b>ffprobe / ffmpeg</b><small>流信息与抽样解码</small></div>
+          <div class="mod mod--ext"><b>Jellyfin 数据库 + Server API</b><small>对账与库刷新</small></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" id="chain">
+    <h2>二、主链路（13 个阶段）</h2>
+    <p class="sub">实线是主路径；失败与分支统一收在下面的「失败分支」里。</p>
+
+    <div class="flow" style="margin-top:14px">
+
+      <article class="stage s-entry">
+        <div class="stage__head"><span class="stage__no">0</span><span class="stage__title">入口</span></div>
+        <div class="stage__mod">Web/inject_02_entry.js</div>
+        <ol>
+          <li>详情页挂「获取资源」<b>按钮</b>；非详情页挂右上角 <b>header 图标</b>（同一个面板）。</li>
+          <li>从页面上下文 <b>预填</b> 片名 / 年份 / 季集，打开面板。</li>
+          <li>剧集页先 <b>取季列表</b>（服务端查媒体库），选季再搜。</li>
+        </ol>
+        <div class="io"><b>产物：</b>带上下文的面板；季级命名空间（<code>&lt;剧名&gt;.sNN.*.json</code>）</div>
+      </article>
+
+      <article class="stage s-entry">
+        <div class="stage__head"><span class="stage__no">1</span><span class="stage__title">组装搜索请求</span></div>
+        <div class="stage__mod">Web/inject_04_search.js</div>
+        <ol>
+          <li>组装片名 / 类型 / 年份 / 季集 / 别名 / <b>通道选择</b>（磁力 / 云盘 / 两者）。</li>
+          <li>带入 <b>严格按季</b>、<b>单源</b>（只跑 L1 关键字）两个开关。</li>
+          <li>最低分阈值取插件配置，面板内可临时调。</li>
+        </ol>
+        <div class="io"><b>产物：</b>POST /api/search 的请求体</div>
+      </article>
+
+      <article class="stage s-proxy">
+        <div class="stage__head"><span class="stage__no">2</span><span class="stage__title">同源代理</span></div>
+        <div class="stage__mod">Controllers/JellyfinDownloaderController.cs</div>
+        <ol>
+          <li><b>仅管理员</b>（RequiresElevation）放行。</li>
+          <li>路径必须命中 <b>白名单前缀</b>：search / snapshot / submit / watch / verify / mark / cleanup / pan/。</li>
+          <li><b>转发</b> 到后端实际监听地址（端口自增后不能读配置里那个字段），失败回 502 与原因。</li>
+        </ol>
+        <div class="io"><b>产物：</b>浏览器与后端之间的唯一通道（因此没有 CORS，也不用给后端做鉴权）</div>
+      </article>
+
+      <article class="stage s-search">
+        <div class="stage__head"><span class="stage__no">3</span><span class="stage__title">建搜索任务</span></div>
+        <div class="stage__mod">console_server/http_api.py → console_server/jobs.py</div>
+        <ol>
+          <li><b>校验</b>片名与类型，推导落点（必须在暂存区或媒体根内）。</li>
+          <li>生成本轮<b>唯一候选文件</b>路径，<b>丢进后台线程</b>，立刻返回 job_id。</li>
+          <li>进度与结果由 <b>状态端点 + 快照</b> 供面板读取。</li>
+        </ol>
+        <div class="io"><b>产物：</b>job_id；任务注册表（最多留 50 个，日志行超限滚动）</div>
+      </article>
+
+      <article class="stage s-search">
+        <div class="stage__head"><span class="stage__no">4</span><span class="stage__title">查重</span></div>
+        <div class="stage__mod">download/check_exists.py</div>
+        <ol>
+          <li>在分类目录里 <b>模糊匹配</b>片名（忽略大小写、空格、标点、年份）。</li>
+          <li>命中目录且含真实视频（&gt; 100 MB）→ <b>ALREADY_EXISTS</b>；空壳目录 → 继续下载。</li>
+          <li>结论写进快照的 <code>exists</code> 字段，面板直接可见。</li>
+        </ol>
+        <div class="io"><b>产物：</b>exists 结论</div>
+      </article>
+
+      <article class="stage s-search">
+        <div class="stage__head"><span class="stage__no">5</span><span class="stage__title">磁力通道 · 资源站取源</span></div>
+        <div class="stage__mod">search/search_pool.py + search_pool_*.py + torrents_csv_source.py</div>
+        <ol>
+          <li><b>关键词阶梯</b>：L1 发布者关键字排最前，其后别名/原始片名带年份、裸片名、逐词追加。</li>
+          <li>多资源站 <b>等分</b>每个关键词的墙钟预算（加站是分摊，不是延长单轮）。</li>
+          <li>第二通道 torrents-csv 补齐 <b>做种数快照</b>（带快照年龄，供打分侧判断可信度）。</li>
+          <li>去重后写候选文件与池快照。</li>
+        </ol>
+        <div class="io"><b>产物：</b>候选磁力文件 · 池快照 ｜ <b>失败：</b>站点配置坏掉时明确报 <code>SOURCE_CONFIG_ERROR</code></div>
+      </article>
+
+      <article class="stage s-search">
+        <div class="stage__head"><span class="stage__no">6</span><span class="stage__title">云盘通道 · 分享提取</span></div>
+        <div class="stage__mod">pan/pan_search.py + pan/pan_pool.py</div>
+        <ol>
+          <li>把配置里带 <code>{q}</code> 占位符的站点当 <b>搜索页</b>，抓分享链接与提取码。</li>
+          <li>没有这种站点时<b>明说没有入口</b>，不给一个语焉不详的空结果。</li>
+          <li>云盘候选与磁力候选 <b>进同一套打分</b>：转存前按标题粗排，转存后读本机云盘缓存换真实文件清单精排。</li>
+        </ol>
+        <div class="io"><b>产物：</b>云盘候选文件（含提取码）</div>
+      </article>
+
+      <article class="stage s-score">
+        <div class="stage__head"><span class="stage__no">7</span><span class="stage__title">候选池 · probe 打分</span></div>
+        <div class="stage__mod">probe/probe_magnets.py 编排 probe_health · probe_metadata · probe_round + candidate_score/</div>
+        <ol>
+          <li><b>合并去重</b>：磁力与云盘是两条独立通道，一侧读不到不该把另一侧一起丢掉。</li>
+          <li><b>健康度</b>：tracker announce / scrape 取做种数与可用性。</li>
+          <li><b>metadata</b>：并发抓种子元数据，命中池缓存则跳过。</li>
+          <li><b>加权打分 → 全量排名 → 交付前若干名</b>。四维不淘汰，只有结构合法性与磁盘安全是硬否决。</li>
+        </ol>
+        <div class="io"><b>产物：</b>ranked 结果 JSON ｜ <b>失败：</b>软预算耗尽时打印 <code>PROBE_PARTIAL</code> 且<b>不写</b>快照——保留上一份历史，不拿旧候选冒充本轮</div>
+      </article>
+
+      <article class="stage s-state">
+        <div class="stage__head"><span class="stage__no">8</span><span class="stage__title">快照写入 · 面板轮询</span></div>
+        <div class="stage__mod">console_server/probe_state.py + build_console.py</div>
+        <ol>
+          <li>写 probe 结果、云盘候选（保留提取码）、本轮状态（context）。</li>
+          <li>组装成面板视图：候选 + 标记 + 迅雷任务 + 本轮状态。</li>
+          <li>面板 <b>每 5 秒轮询</b>；空轮时磁盘上那份候选会被标 <code>previous_round</code>，不冒充新结果。</li>
+        </ol>
+        <div class="io"><b>产物：</b>state/snapshots/*.json · 面板候选列表与四维拆解</div>
+      </article>
+
+      <article class="stage s-submit">
+        <div class="stage__head"><span class="stage__no">9</span><span class="stage__title">选择与提交</span></div>
+        <div class="stage__mod">Web/inject_05_render.js → POST /api/submit 或 /api/watch</div>
+        <ol>
+          <li>展示总分与 <b>四维拆解</b>、体积、码率、字幕、片源；可设最低分阈值、标记候选。</li>
+          <li>磁力候选两个按钮：<b>后台监控</b>（直接建 watcher）与 <b>提交迅雷</b>（走守门流程）。</li>
+          <li>云盘候选只有一个「<b>打开云盘</b>」（转存是浏览器侧动作）。</li>
+          <li>端点<b>校验</b> info hash 与分类，再交给后端脚本。</li>
+        </ol>
+        <div class="io"><b>产物：</b>提交请求 ｜ 提交端点带 <code>--no-watch</code>，由工作流决定何时起 watcher</div>
+      </article>
+
+      <article class="stage s-submit">
+        <div class="stage__head"><span class="stage__no">9′</span><span class="stage__title">提交与守门</span></div>
+        <div class="stage__mod">download/submit_xunlei.py</div>
+        <ol>
+          <li>先按 <b>体积策略</b> 拒不合规资源（低于/超出配置区间直接拒绝）。</li>
+          <li>设置迅雷默认保存路径为 <b>同盘暂存目录</b> → 打开磁力 → 等任务落库。</li>
+          <li>校正保存路径与<b>选片</b>；把已抓到的 metainfo <b>写进任务目录</b>（迅雷有时自己不写，之后「继续下载」会报取种子失败）。</li>
+          <li>在线校验补丁是否真的持久，没生效就撤回。</li>
+          <li><b>实测吞吐</b>换算 ETA，超上限则暂停任务并只清本次任务文件。</li>
+        </ol>
+        <div class="io"><b>产物：</b>已入队的迅雷任务 ｜ <b>失败：</b>体积或 ETA 不合格 → 暂停 + 只清本次文件</div>
+      </article>
+
+      <article class="stage s-submit">
+        <div class="stage__head"><span class="stage__no">10</span><span class="stage__title">下载监控</span></div>
+        <div class="stage__mod">download/watch_download.py + media_download_lib/watcher.py</div>
+        <ol>
+          <li><b>起独立进程</b>并写状态文件；同一 info hash 已有存活 watcher 时直接复用，不重复监控。</li>
+          <li>每 15 分钟（默认）<b>只读查询迅雷数据库</b> 取进度与速度，换算 ETA 写状态。</li>
+          <li>面板通过快照读到的就是这份状态。</li>
+        </ol>
+        <div class="io"><b>产物：</b>state/watches/&lt;IH&gt;.json|log ｜ <b>失败：</b>任务消失 / 迅雷报错 / ETA 长期超上限，各有独立终态</div>
+      </article>
+
+      <article class="stage s-verify">
+        <div class="stage__head"><span class="stage__no">11</span><span class="stage__title">校验 · 归档 · 清理 · 刷新</span></div>
+        <div class="stage__mod">media_download_lib/finalize.py → download/verify_media.py → download/handle_media_issues.py</div>
+        <ol>
+          <li><b>归档</b>：定位本次发布目录，逐个视频校验，按 <code>剧名 S01E01.ext</code> / <code>片名 (年份).ext</code> 规范命名，<b>同盘原子移动</b>进媒体库，顺带搬外挂字幕、清垃圾、收空目录。</li>
+          <li><b>六层校验</b>：流信息（分辨率/码率区间）→ 三段抽样解码 → 集号一致性（缺集/重复/残片）→ Jellyfin 数据库对账 → 结构卫生 → 硬字幕启发式。</li>
+          <li><b>处置</b>：重复集按哈希去重、删可疑小文件、处理孤儿目录与残留；库与文件不一致时 <b>触发库刷新</b>（拿不到令牌则退回「请手动刷新」）。</li>
+          <li>需要人工的事（缺集、缺字幕、码率不合规、疑似硬字幕）<b>列成清单</b>，不静默吞掉。</li>
+        </ol>
+        <div class="io"><b>产物：</b>媒体库里的规范文件 + 库刷新 ｜ <b>失败：</b>校验不过 → <code>invalid</code>，<b>文件留在原地</b>供排查</div>
+      </article>
+
+      <article class="stage s-verify">
+        <div class="stage__head"><span class="stage__no">13</span><span class="stage__title">清理残留</span></div>
+        <div class="stage__mod">POST /api/cleanup → download/cleanup_download.py</div>
+        <ol>
+          <li><b>audit</b> 只报告，<b>prune-orphans</b> 才真删——默认不删。</li>
+          <li>需要动迅雷任务文件时先绕一圈重启迅雷。</li>
+        </ol>
+        <div class="io"><b>产物：</b>清理报告 / 已清残留</div>
+      </article>
+
+    </div>
+
+    <div class="branch">
+      <h3>失败分支</h3>
+      <ul>
+        <li><b>取源失败</b>：站点配置不可用 → <code>SOURCE_CONFIG_ERROR</code>；没有磁力入口 → 明说本轮没写出候选，不拿上一轮文件喂 probe。</li>
+        <li><b>打分早退</b>：软预算耗尽 / 阶段超时 → <code>PROBE_PARTIAL</code>，结果不完整但落盘，面板能看到。</li>
+        <li><b>提交被拒</b>：体积不合策略、ETA 超上限、在线补丁没生效 → 暂停任务并<b>只清本次任务的文件</b>。</li>
+        <li><b>下载异常</b>：任务消失、迅雷报错态 → 写 <code>missing</code> / <code>error</code>，<b>文件留在原地</b>。</li>
+        <li><b>校验不过</b>：finalize 或六层任一不过 → <code>invalid</code>，不归档、不删文件。</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="panel" id="pan">
+    <h2>三、云盘通道（浏览器与脚本交替执行）</h2>
+    <p class="sub">云盘没有可以端到端自动化的接口，所以 <code>plan</code> 会把下面这张步骤表算出来交给用户照做；脚本负责每一步的校验与最后的取回监控。</p>
+    <div class="flow" style="margin-top:14px">
+      <article class="stage s-pan">
+        <div class="stage__head"><span class="stage__no">P1</span><span class="stage__title">浏览器 · 打开分享页</span></div>
+        <div class="stage__mod">pan/pan_transfer.py · plan 步骤 1</div>
+        <ol><li>带提取码打开分享链接，未登录先扫码。</li><li>这是<b>人工步骤</b>，脚本只能把 URL 和提取码准备好。</li></ol>
+      </article>
+      <article class="stage s-pan">
+        <div class="stage__head"><span class="stage__no">P2</span><span class="stage__title">浏览器 · 保存到云盘</span></div>
+        <div class="stage__mod">pan_transfer.py · plan 步骤 2</div>
+        <ol><li>点「保存到我的云盘」，目录选配置的云盘目录。</li></ol>
+      </article>
+      <article class="stage s-pan">
+        <div class="stage__head"><span class="stage__no">P3</span><span class="stage__title">脚本 · 确认真实文件清单</span></div>
+        <div class="stage__mod">pan_transfer.py verify-transfer + pan_pool.py + candidate_score/</div>
+        <ol>
+          <li>读本机云盘缓存，确认文件真的落到云盘。</li>
+          <li>此时才第一次拿到<b>可信的分数输入</b>（真实文件名/大小/扩展名），据此精排。</li>
+        </ol>
+        <div class="io"><b>产物：</b>云盘候选的真实排名</div>
+      </article>
+      <article class="stage s-pan">
+        <div class="stage__head"><span class="stage__no">P4</span><span class="stage__title">浏览器 · 进云盘页</span></div>
+        <div class="stage__mod">pan_transfer.py · plan 步骤 4</div>
+        <ol><li>打开云盘页，进入已转存目录。</li></ol>
+      </article>
+      <article class="stage s-pan">
+        <div class="stage__head"><span class="stage__no">P5</span><span class="stage__title">脚本 · 指定保存路径</span></div>
+        <div class="stage__mod">pan_transfer.py set-save-path</div>
+        <ol><li>把迅雷默认保存路径指到暂存区（与磁力通道同一个暂存根）。</li></ol>
+      </article>
+      <article class="stage s-pan">
+        <div class="stage__head"><span class="stage__no">P6</span><span class="stage__title">浏览器 · 下载到本地</span></div>
+        <div class="stage__mod">pan_transfer.py · plan 步骤 6</div>
+        <ol><li>勾选要取的集/文件，点「下载到本地」。</li></ol>
+      </article>
+      <article class="stage s-pan">
+        <div class="stage__head"><span class="stage__no">P7</span><span class="stage__title">脚本 · 确认取回已开始</span></div>
+        <div class="stage__mod">pan_transfer.py verify-retrieve</div>
+        <ol>
+          <li>列出 cloud/getback 任务，确认取回已开始。</li>
+          <li>一条取回任务都没有时明确报 <code>NO_RETRIEVE_TASK</code>，而不是空等。</li>
+        </ol>
+      </article>
+      <article class="stage s-pan">
+        <div class="stage__head"><span class="stage__no">P8</span><span class="stage__title">脚本 · 等待并归档</span></div>
+        <div class="stage__mod">pan_transfer.py watch --detach</div>
+        <ol>
+          <li>等取回完成，然后<b>汇入同一条校验 + 归档路径</b>（就是上面的阶段 10–11）。</li>
+        </ol>
+        <div class="io"><b>产物：</b>与磁力通道一致的终态与状态文件</div>
+      </article>
+    </div>
+  </section>
+
+  <section class="panel" id="states">
+    <h2>四、状态与失败口径</h2>
+
+    <h3>搜索状态（写进快照，面板直接显示）</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>状态</th><th>含义</th></tr></thead>
+        <tbody>
+          <tr><td><code>ok</code></td><td>本轮跑完且有交付候选</td></tr>
+          <tr><td><code>best_below_min_score</code></td><td>有排名结果，但第 1 名低于最低分阈值，不交付</td></tr>
+          <tr><td><code>best_dead_swarm</code></td><td>第 1 名 metadata 不可达（死种），交付了也会种子解析失败——明确降级，不硬交</td></tr>
+          <tr><td><code>swarm_dead</code></td><td>都拿不到 metadata 且 live announce 无外部做种者：是种子死了，不是网络问题</td></tr>
+          <tr><td><code>metadata_failed</code></td><td>拿不到 metadata 但外部 peers 存在：网络/tracker 问题，不是资源不存在</td></tr>
+          <tr><td><code>no_eligible_resource</code></td><td>候选都被结构性否决（结构合法性与磁盘安全是硬门槛，四维打分不淘汰）</td></tr>
+          <tr><td><code>probe_partial</code></td><td>软预算耗尽 / 阶段超时，结果不完整</td></tr>
+          <tr><td><code>rc_N</code></td><td>脚本以非零码退出（如资源站配置坏掉时取源退 2），结论另在 job 日志里</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="sub" style="margin-top:10px">
+      另有两个容易混的名词：<code>probe_round_empty</code> 是本轮没写出新结果时快照上的字段（那份候选属于上一轮），不是状态；
+      <code>SOURCE_CONFIG_ERROR</code> 是 stdout 上的 token，面板在 job 日志里能看到，状态本身会落到 <code>rc_2</code>。
+    </p>
+
+    <h3>watcher 状态（面板的任务卡片读它）</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>状态</th><th>触发</th><th>文件处置</th></tr></thead>
+        <tbody>
+          <tr><td><code>running</code></td><td>每轮采样</td><td>—</td></tr>
+          <tr><td><code>completed</code> / <code>completed_with_warnings</code></td><td>归档与六层校验都过</td><td>已归档进媒体库，触发库刷新</td></tr>
+          <tr><td><code>invalid</code></td><td>完成但校验不过</td><td><b>留在原地</b>供排查</td></tr>
+          <tr><td><code>error</code></td><td>迅雷报错态</td><td><b>留在原地</b></td></tr>
+          <tr><td><code>missing</code></td><td>连续查不到任务</td><td>—</td></tr>
+          <tr><td><code>eta_aborted</code></td><td>ETA 长期超上限</td><td>暂停任务，清本次任务文件</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>其它关键口径</h3>
+    <ul class="lede" style="padding-left:20px">
+      <li><b>落点守卫</b>：暂存区或媒体根内，所有端点在动文件前都查一遍。</li>
+      <li><b>同盘原子移动</b>：暂存区固定为媒体根下的 <code>.staging</code>，这也是「迅雷只允许写暂存区」的原因。</li>
+      <li><b>一轮搜索的墙钟上界</b>：总超时 900s，其中 L1 取源 600s、probe 软预算 720s——软预算刻意小于整轮超时，让 probe 在被杀之前自己收工并把 partial 结果落盘。</li>
+      <li><b>迅雷数据库全程只读</b>；写动作（暂停任务、清理）走明确的任务级操作，且只碰本次任务。</li>
+    </ul>
+  </section>
+
+  <section class="panel" id="modules">
+    <h2>五、模块索引</h2>
+    <p class="sub">按「想知道什么」查。完整职责表在 <a href="download-flow.md">docs/download-flow.md</a> 的 § 2。</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>想知道</th><th>看哪个模块</th></tr></thead>
+        <tbody>
+          <tr><td>按钮和面板是怎么被塞进 Jellyfin 页面的</td><td><code>Middleware/ScriptInjectionMiddleware.cs</code>、<code>Web/inject_01..05.js</code></td></tr>
+          <tr><td>浏览器怎么和后端说话、为什么不需要 CORS</td><td><code>Controllers/JellyfinDownloaderController.cs</code> 的代理端点</td></tr>
+          <tr><td>后端进程是谁拉起来的、端口冲突怎么办</td><td><code>BackendManager.cs</code>、<code>BackendHostedService.cs</code></td></tr>
+          <tr><td>媒体根和暂存区是怎么定的</td><td><code>MediaPaths.cs</code>、<code>media_download_lib/paths.py</code></td></tr>
+          <tr><td>候选从哪来</td><td><code>search/search_pool.py</code>、<code>torrents_csv_source.py</code>、<code>pan/pan_search.py</code></td></tr>
+          <tr><td>分数怎么算、四维各是什么</td><td><code>candidate_score/</code>（<code>policy.py</code> 有默认权重）</td></tr>
+          <tr><td>一轮搜索的预算与阶段编排</td><td><code>console_server.py</code> 顶部常量、<code>console_server/jobs.py</code></td></tr>
+          <tr><td>提交迅雷时都动了什么</td><td><code>download/submit_xunlei.py</code>、<code>media_download_lib/db.py</code></td></tr>
+          <tr><td>下载完成后都校验了哪六层</td><td><code>download/verify_media.py</code></td></tr>
+          <tr><td>文件怎么改名、怎么落库</td><td><code>media_download_lib/finalize.py</code>、<code>media_download_lib/media.py</code></td></tr>
+          <tr><td>云盘那条路怎么走</td><td><code>pan/pan_transfer.py</code> 的 <code>build_steps</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <details class="note">
+      <summary>与仓库里那份旧流程图的关系</summary>
+      <div>
+        根目录另有一份 <code>JMD操作流程图.html</code>（2026-10-13，未入库），画的是 skill 侧那份代码：七段主线里包含
+        <code>series_queue.py</code>——它属于 skill 侧独有，当前后端并不包含；那份图也没有 C# 插件层、同源代理、双通道与快照/标记体系。
+        本页按插件 <code>backend/</code> 的现状重画，替换了那份的定位。
+      </div>
+    </details>
+  </section>
+
+  <section class="panel" id="gaps">
+    <h2>六、未核实项</h2>
+    <ul class="lede" style="padding-left:20px;margin-top:6px">
+      <li>面板上「最低分阈值」是否回写插件配置：只确认面板内可临时调整，<b>未核实</b>是否持久化。</li>
+      <li>一轮 probe 的真实墙钟耗时：源码注释明确写着「是推算，不是本机实测」，真实网络下的预算行为尚未跑过。本页照录该口径，未自行补测。</li>
+    </ul>
+  </section>
+
+  <footer class="foot">
+    Jellyfin Downloader · 下载资源链路（模块粒度） · 事实基准 commit 2d7da69 ·
+    同源文档 <a href="download-flow.md">docs/download-flow.md</a>
+  </footer>
+</div>
+
+</body>
+</html>

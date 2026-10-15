@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for download-flow.md (docs/i18n.md): per heading section, a hash
+# of its English and Chinese blocks outside fenced code blocks.
+# After editing either side, bring the other along and re-record with:
+#   python3 tools/pair-docs.py --write docs/download-flow.md
+/jellyfin-downloader-download-pipeline-module-level:
+  en: afad7d387c783512
+  zh: a70fc5365f1eeecb
+/jellyfin-downloader-download-pipeline-module-level/the-pipeline-in-one-line:
+  en: 228546e980ab8a7e
+  zh: 7fdd38077546c213
+/jellyfin-downloader-download-pipeline-module-level/module-inventory:
+  en: 87704199ef290902
+  zh: 76fba307cb0cee79
+/jellyfin-downloader-download-pipeline-module-level/search-states-and-exit-codes:
+  en: 52311f4188032023
+  zh: 4a165a15c9442b5f
+/jellyfin-downloader-download-pipeline-module-level/redundant-and-kept:
+  en: 0d399390a3061600
+  zh: c839f032a3cea37c
+/jellyfin-downloader-download-pipeline-module-level/unverified:
+  en: c0b08554a08a9338
+  zh: a14aef8a0b9dd755

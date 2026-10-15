@@ -84,6 +84,14 @@
     {
       "pattern": "tests/AGENTS.md",
       "reason": "standing orders for an agent editing the suite; the reader-facing policy lives in docs/testing.md and the layout in the file itself"
+    },
+    {
+      "pattern": "docs/download-flow*.md",
+      "reason": "this plugin's own pipeline map at module level; an internal reference for editing the backend, not a kit page a reader browses"
+    },
+    {
+      "pattern": "docs/download-flow.html",
+      "reason": "the visual rendering of docs/download-flow.md: one self-contained file showing the same facts, opened on demand rather than published as a page"
     }
   ]
 }
