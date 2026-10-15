@@ -412,6 +412,12 @@ def main():
     ranked, output, best = round_.rank_phase(args, budget, timers, pool, now, enriched, extras, rejected, policy,
         completed, round_started_at, pool_path, skipped_uncached, probe)
 
+    if best is None:
+        # 整轮候选都被交付前过滤（例如磁力候选全都没有做种）：rank_phase 已经写好 probe JSON
+        # 并打印 NO_CANDIDATES，这里按「无候选」收尾 —— 不能进 deliver（它依赖 ranked[0]）。
+        print("BEST_RESULT_JSON " + args.json_out)
+        return round_.NO_CANDIDATE_EXIT_CODE
+
     exit_code = round_.deliver(pool, pool_path, args, output, best)
     if exit_code is not None:
         return exit_code

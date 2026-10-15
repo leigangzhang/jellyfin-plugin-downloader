@@ -17,8 +17,6 @@ from candidate_score import (
     score_band,
     structural_reject,
 )
-# 可达性判决（「0 种子候选」= dead-swarm）用产品自己那一个，别在这里另拼一套 seeds 规则。
-from candidate_score.speed import is_dead_swarm
 from media_download_lib import GB
 
 from probe.probe_health import (
@@ -35,24 +33,44 @@ HEALTH_TTL_SECONDS = 3600
 # announce 的 external peer 不超过这个数就算「都是本机」，判死种。
 DEAD_SWARM_PEER_CEILING = 3
 
-# 「0 种子候选」的丢弃理由（写进快照 rejected，前端只按它数一行提示条数）。
-# 用户口径叫「0 种子候选」，判定用的是产品自己的可达性判决 `candidate_score.is_dead_swarm`
-# —— announce/live-check 没看到任何非本机 peer ⇒ 提交必然种子解析失败（这类候选永远用不到）。
-# 不按「seeds 数字为 0/缺失」判：云盘（pan）候选根本没有 seeds；而 `mode == "unknown"`
-# （tracker 抓不到读数）按 speed.py 的注释是「不知道」而不是「不可达」，不能被丢掉。
-DEAD_SWARM_REASON = "dead_swarm_filtered"
+# 「没有做种」的丢弃理由（写进快照 rejected）。字符串仍叫 dead_swarm_filtered 是为了
+# 前端兼容：Web/inject_05_render.js 按这个字符串数「已过滤 N 条 0 种子候选」，
+# 改字符串就要同时改 Web/（本任务范围外）。判据本身已按使用方 2026-10-15 的口径收紧。
+NO_SEEDER_REASON = "dead_swarm_filtered"
+
+# 「整轮都被滤空」的收尾码：与 no_eligible_phase 的 NO_ELIGIBLE_RESOURCE 同一个（4）。
+NO_CANDIDATE_EXIT_CODE = 4
 
 
-def is_dead_candidate(item) -> bool:
-    """交付前该丢掉吗：产品判定的 dead-swarm（不可达）候选。"""
-    return is_dead_swarm(item)
+def has_no_seeder(item) -> bool:
+    """磁力候选有没有做种：seeds 缺失 / None / 非数字 / <= 0 → True（该丢）。
+
+    使用方口径（2026-10-15，真机佐证）：0 种子能用**只是概率问题**，好用且下载快的概率
+    更低 —— 实测队长点过一条「种子 0/6」的候选，它确实过了元数据闸门并建了任务
+    （迅雷 taskid 307），但随后速率只有几 KB/s、预计要一天以上。所以磁力侧一律按
+    「有没有做种」过滤，**不再用 `is_dead_swarm` 这种可达性判决当门槛**（那只是
+    「此刻能不能拿到 metadata」，与「值不值得下」是两件事）。
+
+    云盘候选没有「做种」这个概念 → 永远不在这里被丢（`kind == "pan"` 直接放行）。
+    """
+    if not isinstance(item, dict):
+        return False
+    if item.get("kind") == "pan":
+        return False
+    seeds = item.get("seeds")
+    if seeds is None:
+        return True
+    try:
+        return float(seeds) <= 0
+    except (TypeError, ValueError):
+        return True
 
 
-def drop_dead_candidates(candidates):
+def drop_no_seeder(candidates):
     """拆成 (保留, 丢弃)；丢弃的候选不进交付列表，只把条数与理由留给上层。"""
     kept, dropped = [], []
     for item in candidates or []:
-        (dropped if is_dead_candidate(item) else kept).append(item)
+        (dropped if has_no_seeder(item) else kept).append(item)
     return kept, dropped
 
 
@@ -526,28 +544,60 @@ def rank_phase(args, budget, timers, pool, now, enriched, extras, rejected, poli
             )
         )
 
-    # 「0 种子候选」（dead-swarm：announce/live-check 没看到任何非本机 peer，提交必然
-    # 种子解析失败）不再交付 —— 使用方口径：永远用不到、不保存在数据里。丢弃的候选不进
-    # ranked，但在 rejected 里留一条 reason 记录，好让面板只报一行「已过滤 N 条 0 种子候选」。
-    kept, dead_dropped = drop_dead_candidates(ranked)
-    if not kept and dead_dropped:
-        # 整轮都是死种：这一支**保持原样**，让 deliver() 走它既有的 BEST_DEAD_SWARM 分支
-        # （rc=8 + best_dead_swarm）。原因：deliver 与既有的退出码矩阵依赖 ranked[0]，
-        # 而 probe_magnets.main（不在本任务改动范围）只在 rc 非空时提前返回 —— 从
-        # rank_phase 里抛退出码会绕过那条契约。混合轮（有可提交候选）里死种一律丢弃。
-        kept, dead_dropped = dead_dropped, []
-    ranked = kept
-    if dead_dropped:
-        print(f"DEAD_SWARM_FILTERED {len(dead_dropped)}")
-    for item in dead_dropped:
+    # 没有做种的磁力候选不再交付（使用方 2026-10-15 口径）：0 种子即便有 peer，可用且快的
+    # 概率很低，直接滤掉最有效。丢弃的候选不进 ranked，但在 rejected 里留一条 reason 记录，
+    # 好让面板只报一行「已过滤 N 条 0 种子候选」（不列行、不给开关）。云盘候选原样保留。
+    ranked, no_seeder_dropped = drop_no_seeder(ranked)
+    if no_seeder_dropped:
+        print(f"NO_SEEDER_FILTERED {len(no_seeder_dropped)}")
+    for item in no_seeder_dropped:
         rejected.append(
             {
                 "ih": item.get("ih") or item.get("id") or "",
                 "name": item.get("name", ""),
-                "reason": DEAD_SWARM_REASON,
+                "reason": NO_SEEDER_REASON,
                 "error": "",
             }
         )
+    if not ranked:
+        # 整轮候选都被滤空（例如全是 0 种子的磁力候选）：交空轮 + NO_CANDIDATES。
+        # rank_phase 自己写好 probe JSON 并返回 best=None，调用方（probe_magnets.main）
+        # 看到 best is None 就直接按 NO_CANDIDATE_EXIT_CODE 收尾，不进 deliver ——
+        # deliver 依赖 ranked[0]，空名单进去只会崩。
+        empty_output = {
+            "query": args.query,
+            "kind": args.kind,
+            "partial": partial,
+            "timeout_stage": timeout_stage,
+            "expired_stages": budget.expired_stages,
+            "budget_secs": budget.total_seconds,
+            "completed": completed,
+            "stage_seconds": timers.seconds,
+            "live_check": live_summary,
+            "policy": {key: value for key, value in policy.items() if key != "wanted_markers"},
+            "min_score": args.min_score,
+            "pool_file": pool_path,
+            "ranked": [],
+            "all_eligible": [],
+            "rejected": rejected,
+            "best": None,
+            "no_seeder_filtered": len(no_seeder_dropped),
+        }
+        write_json_atomic(args.json_out, empty_output)
+        print(
+            "NO_CANDIDATES "
+            + json.dumps(
+                {
+                    "no_seeder_filtered": len(no_seeder_dropped),
+                    "reason": (
+                        "every magnet candidate has no seeder (seeds missing or <= 0); "
+                        "they are dropped before delivery and never stored"
+                    ),
+                },
+                ensure_ascii=False,
+            )
+        )
+        return [], empty_output, None
 
     best = ranked[0]
     output = {
@@ -603,7 +653,7 @@ def rank_phase(args, budget, timers, pool, now, enriched, extras, rejected, poli
         ],
         "rejected": rejected,
         "best": None,
-        "dead_swarm_filtered": len(dead_dropped),
+        "no_seeder_filtered": len(no_seeder_dropped),
     }
     output["all_eligible"] = output["ranked"]
 
