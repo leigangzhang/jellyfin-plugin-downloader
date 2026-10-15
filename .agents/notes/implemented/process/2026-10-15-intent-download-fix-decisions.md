@@ -137,6 +137,10 @@ Deliberately left out, each with the condition that should reopen it:
   refusal-deletes-data behaviour; it was brought in line on the same day (its own tests: 35 OK).
   It is a separate copy, not a mirror, so it will drift again — revisit when either side next
   changes a refusal path.
+- Whether `variety` should also be single-source: the person who asked for the episode rule
+  confirmed on 2026-10-15 that today's behaviour stands — only `episode` is single-source, and
+  `movie`, `record` and `variety` keep the full ladder. Revisit if variety candidates get thin,
+  or if a variety search comes back empty.
 
 ## Testing
 
