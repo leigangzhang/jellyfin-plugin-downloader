@@ -49,6 +49,90 @@ def log(message):
     print(f"[{utc_now()}] {message}", flush=True)
 
 
+# ---- 面板按钮状态机：阶段 ----------------------------------------------------
+# 阶段与 reason 写进同一个 watch 状态文件（`state/watches/<IH>.json`），字段名
+# `stage` / `stage_reason` / `stage_updated_at`；旧字段（status / progress / speed /
+# eta_hours …）一律保留 —— 面板与其它调用方还在读它们。
+STAGE_SUBMITTING = "submitting"
+STAGE_MONITORING = "monitoring"
+STAGE_PAUSED = "paused"
+STAGE_VERIFYING = "verifying"
+STAGE_DONE = "done"
+STAGE_FAILED_SUBMIT = "failed_submit"
+STAGE_FAILED_DOWNLOAD = "failed_download"
+STAGE_FAILED_ETA = "failed_eta"
+STAGE_FAILED_VERIFY = "failed_verify"
+
+# 旧的 `status` → 新 `stage`：本次改动之前写下的 watch 文件没有 stage 字段，
+# /api/stages 读旧文件时按这张表兜底，不至于凭空多出一批空阶段。
+LEGACY_STATUS_TO_STAGE = {
+    "running": STAGE_MONITORING,
+    "submitting": STAGE_SUBMITTING,
+    "paused": STAGE_PAUSED,
+    "completed": STAGE_DONE,
+    "completed_with_warnings": STAGE_DONE,
+    "invalid": STAGE_FAILED_VERIFY,
+    "missing": STAGE_FAILED_DOWNLOAD,
+    "error": STAGE_FAILED_DOWNLOAD,
+    "eta_aborted": STAGE_FAILED_ETA,
+}
+
+
+def stage_fields(stage, reason=""):
+    """阶段三件套；合并进任何一次 write_watcher_state 的 payload。"""
+    return {"stage": stage, "stage_reason": reason, "stage_updated_at": utc_now()}
+
+
+def stage_for_watch_state(state):
+    """取一个 watch 状态 dict 的阶段：新文件读 `stage`，旧文件按 `status` 映射。"""
+    if not isinstance(state, dict):
+        return ""
+    stage = str(state.get("stage") or "").strip()
+    if stage:
+        return stage
+    return LEGACY_STATUS_TO_STAGE.get(str(state.get("status") or ""), "")
+
+
+def write_stage(info_hash, stage, reason="", **extra):
+    """把阶段并进 watch 状态文件（合并，不抹掉已在跑的字段）。
+
+    提交侧（`/api/submit` 的 submitting / failed_submit）与监控侧共用这一个入口，
+    免得两处各自拼 payload、拼出两份格式。
+    """
+    state = read_watcher_state(info_hash)
+    if not isinstance(state, dict):
+        state = {}
+    state.update(stage_fields(stage, reason))
+    state.update(extra)
+    state.setdefault("info_hash", str(info_hash).upper())
+    state.setdefault("updated_at", utc_now())
+    write_watcher_state(info_hash, state)
+    return state
+
+
+def classify_task_row(task, misses, max_misses):
+    """后台监控的存活判定（纯函数：假快照即可测，不用真等 15 s）。
+
+    返回 `(stage, reason)`；`stage` 为空表示「照常跑，不改阶段」。
+      * 迅雷里查不到该 info_hash，且连续 misses ≥ max_misses → `failed_download`
+        （原因「任务已从迅雷消失」：用户在客户端删了任务）；
+      * 迅雷 state=2 → `paused`（用户在客户端按了暂停；可恢复，所以不停进程）；
+      * 迅雷 state=5 → `failed_download`（客户端自己报错）。
+    """
+    if task is None:
+        if misses >= max_misses:
+            return STAGE_FAILED_DOWNLOAD, "任务已从迅雷消失"
+        return None, ""
+    status = task_status(task)
+    if status is None:
+        return None, ""
+    if status["state"] == 2:
+        return STAGE_PAUSED, "已在迅雷暂停"
+    if status["state"] == 5:
+        return STAGE_FAILED_DOWNLOAD, "迅雷报错（state=5）"
+    return None, ""
+
+
 def start_detached(args):
     state, log_path = watcher_paths(args.info_hash)
     current = read_watcher_state(args.info_hash)
@@ -147,27 +231,35 @@ def run_watch(args):
             "final_dir": final_dir,
             "started_at": utc_now(),
             "interval_seconds": args.interval,
+            "poll_seconds": args.poll_seconds,
             "eta_scope": args.eta_scope,
+            **stage_fields(STAGE_MONITORING),
         },
     )
-    log(f"watcher started hash={info_hash[:12]} dir={download_dir}")
+    log(
+        f"watcher started hash={info_hash[:12]} dir={download_dir} "
+        f"poll={args.poll_seconds}s"
+    )
 
     while True:
         rows = find_task_by_hash(info_hash)
         if not rows:
             misses += 1
             log(f"task not found ({misses}/{args.max_misses})")
-            if misses >= args.max_misses:
+            stage, reason = classify_task_row(None, misses, args.max_misses)
+            if stage:
                 payload = {
                     "pid": os.getpid(),
                     "status": "missing",
                     "info_hash": info_hash,
                     "download_dir": download_dir,
                     "finished_at": utc_now(),
+                    **stage_fields(stage, reason),
                 }
                 write_watcher_state(info_hash, payload)
+                log(f"stage={stage} reason={reason}")
                 return 3
-            time.sleep(args.interval)
+            time.sleep(args.poll_seconds)
             continue
 
         misses = 0
@@ -232,15 +324,36 @@ def run_watch(args):
             "updated_at": utc_now(),
             "log": state_path.replace(".json", ".log"),
         }
+        # 存活判定：暂停 / 客户端报错先落阶段。暂停**不停进程**（用户可能马上恢复，
+        # 恢复后阶段自己会回到 monitoring），所以只写状态继续轮询。
+        stage, reason = classify_task_row(task, 0, args.max_misses)
+        if stage:
+            payload.update(stage_fields(stage, reason))
+            if stage == STAGE_PAUSED:
+                payload["status"] = "paused"
         write_watcher_state(info_hash, payload)
 
+        if stage == STAGE_PAUSED:
+            log(f"stage={stage} reason={reason} taskid={status['taskid']}")
+            time.sleep(args.poll_seconds)
+            continue
+
         if status["state"] == 5:
-            payload.update({"status": "error", "finished_at": utc_now()})
+            payload.update(
+                {
+                    "status": "error",
+                    "finished_at": utc_now(),
+                    **stage_fields(STAGE_FAILED_DOWNLOAD, "迅雷报错（state=5）"),
+                }
+            )
             write_watcher_state(info_hash, payload)
             log("Thunder reported an error; files were left for inspection")
             return 5
 
         if status["state"] in (3, 4) and status["pct"] > 99.5:
+            payload.update(stage_fields(STAGE_VERIFYING, "下载完成，开始检测归档"))
+            write_watcher_state(info_hash, payload)
+            log(f"stage={STAGE_VERIFYING} (下载完成，开始检测归档)")
             result = finalize_download(
                 download_dir,
                 info_hash,
@@ -275,6 +388,7 @@ def run_watch(args):
                     {
                         "status": status_value,
                         "finished_at": utc_now(),
+                        **stage_fields(STAGE_DONE),
                         "verified_files": [
                             item["path"] for item in result["verified"]
                         ],
@@ -312,6 +426,7 @@ def run_watch(args):
                 {
                     "status": "invalid",
                     "finished_at": utc_now(),
+                    **stage_fields(STAGE_FAILED_VERIFY, "检测/归档未通过"),
                     "verified_files": [
                         item["path"] for item in result["verified"]
                     ],
@@ -343,6 +458,7 @@ def run_watch(args):
                 {
                     "status": "eta_aborted",
                     "finished_at": utc_now(),
+                    **stage_fields(STAGE_FAILED_ETA, "下载超时（持续 ETA 过高）"),
                     "removed_files": len(cleanup["files"]),
                 }
             )
@@ -353,7 +469,7 @@ def run_watch(args):
             )
             return 4
 
-        time.sleep(args.interval)
+        time.sleep(args.poll_seconds)
 
 
 def main():
@@ -361,11 +477,16 @@ def main():
     parser.add_argument("info_hash")
     parser.add_argument("download_dir")
     parser.add_argument("--interval", type=int, default=900)
+    # 存活轮询节奏：面板要在 15–30 s 内发现「任务被暂停/被删除」，所以状态检查用
+    # 短周期；重活（ffprobe 检测、归档）只在任务下完之后跑一次，不受它影响。
+    parser.add_argument("--poll-seconds", type=int, default=15)
     parser.add_argument("--final-dir", default="")
     parser.add_argument("--media-kind", choices=["auto", "movie", "tv"], default="auto")
     parser.add_argument("--series-name", default="")
     parser.add_argument("--year", default="")
-    parser.add_argument("--max-misses", type=int, default=4)
+    # 判「任务已从迅雷消失」需要连续几次查不到：15 s × 2 = 30 s 迟滞，既压住
+    # 「客户端正在写库」的瞬时误读，又满足面板 15–30 s 的翻状态要求。
+    parser.add_argument("--max-misses", type=int, default=2)
     parser.add_argument("--abort-eta-hours", type=float, default=6.0)
     parser.add_argument(
         "--eta-scope",

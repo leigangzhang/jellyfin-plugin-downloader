@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
 import build_console as bc
-from media_download_lib import MEDIA_ROOT, STAGING_ROOT, path_is_within
+from media_download_lib import MEDIA_ROOT, STAGING_ROOT, STATE_DIR, path_is_within
 
 from trending import trending_cache, trending_source, trending_watchlist
 
@@ -98,6 +98,45 @@ def resolve_year(body: dict, title: str) -> str:
     return str(ctx.get("year") or "").strip()
 
 
+def _parse_marker(stdout: str, name: str) -> dict:
+    """从 CLI stdout 里取最后一个 `<NAME> {json}` 标记；没有/解析不了就返回空 dict。
+
+    提交侧的机器可读出口（`ETA_DEFERRED {...}`、`ETA_REJECTED {...}`）都是这一种
+    形态，所以按名字扫最后一行即可，不必给 run_cli 加第二条返回通道。
+    """
+    for line in reversed((stdout or "").splitlines()):
+        line = line.strip()
+        if not line.startswith(name):
+            continue
+        tail = line[len(name):].strip()
+        if not tail:
+            continue
+        try:
+            data = json.loads(tail)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            return data
+    return {}
+
+
+def _watch_module():
+    """延迟 import watcher：它的依赖（verify_media / handle_media_issues）只在
+    真需要写阶段或读阶段时才加载，不再拖慢服务启动与纯读端点的路径。"""
+    from download import watch_download
+    return watch_download
+
+
+def _write_stage(info_hash: str, stage: str, reason: str = "") -> None:
+    """把阶段写进 `state/watches/<IH>.json`；写不进去也不能拖垮提交本身。"""
+    if not info_hash:
+        return
+    try:
+        _watch_module().write_stage(info_hash, stage, reason)
+    except Exception as exc:  # noqa: BLE001
+        print(f"WARNING 写任务阶段失败（{stage}）：{exc!r}", flush=True)
+
+
 class ConsoleHandler(BaseHTTPRequestHandler):
     server_version = "JMDConsole/1.0"
 
@@ -147,6 +186,8 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             return self._get_snapshot(parsed)
         if path == "/api/search/status":
             return self._get_search_status(parsed)
+        if path == "/api/stages":
+            return self._get_stages(parsed)
         if path == "/api/trending":
             return self._get_trending(parsed)
         return self._send(404, {"error": "not found"})
@@ -249,6 +290,39 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         dispatch_search(jid, params)
         return self._ok({"job_id": jid, "slug": slug, "done": False})
 
+    def _get_stages(self, parsed):
+        """只读：一次拿到全部任务的阶段，按 info_hash 索引（面板按钮状态机用）。
+
+        形状 `{"stages": {IH: {stage, taskid, updated_at, reason, status}}, "count": N}`。
+        数据源就是 `state/watches/<IH>.json`（监控自己写的落点）；旧文件没有 `stage`
+        字段时按 `status` 映射，所以这次改动之前留下的任务也不会凭空少一批。
+        """
+        watch = _watch_module()
+        stages = {}
+        try:
+            names = sorted(os.listdir(STATE_DIR))
+        except OSError:
+            names = []
+        for name in names:
+            if not name.endswith(".json"):
+                continue
+            info_hash = name[: -len(".json")]
+            try:
+                with open(os.path.join(STATE_DIR, name), encoding="utf-8") as handle:
+                    state = json.load(handle)
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(state, dict):
+                continue
+            stages[info_hash] = {
+                "stage": watch.stage_for_watch_state(state),
+                "taskid": state.get("taskid"),
+                "updated_at": state.get("stage_updated_at") or state.get("updated_at"),
+                "reason": state.get("stage_reason") or "",
+                "status": state.get("status"),
+            }
+        return self._ok({"stages": stages, "count": len(stages)})
+
     def _get_search_status(self, parsed):
         q = parse_qs(parsed.query)
         jid = (q.get("job") or [""])[0]
@@ -343,12 +417,21 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             return self._bad("final_dir must be inside staging or Media")
         probe_kind = bc.PROBE_KIND.get(kind, "episode")
         eta = float(body.get("eta_max_hours") or 4.0)
+        # 面板的按钮状态机要「提交中 → 下载监控中」，所以提交这一格不该卡在 180 s 的
+        # ETA 观测窗口上：`wait_eta: false` ⇒ 提交只把任务建好就返回，ETA 判定交给
+        # 监控阶段（submit_xunlei 的 `--eta-probe-seconds 0` + ETA_DEFERRED）。
+        # 不传 `wait_eta` 时命令行与响应与改动前**逐字一致**（仍带 `--no-watch`）。
+        wait_eta = bool(body.get("wait_eta", True))
+        auto_watch = bool(body.get("auto_watch", not wait_eta))
         cmd = [
             "download/submit_xunlei.py", ih, final_dir,
             "--kind", probe_kind,
             "--eta-max-hours", str(eta),
-            "--no-watch",
         ]
+        if not wait_eta:
+            cmd += ["--eta-probe-seconds", "0"]
+        if not auto_watch:
+            cmd += ["--no-watch"]
         if series_name:
             cmd += ["--series-name", series_name]
         if year:
@@ -357,8 +440,35 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         # submit_xunlei.py 决定「元数据窗口拿不到文件列表就按磁力直连放行」。
         if bool(body.get("trust_magnet", False)):
             cmd += ["--trust-magnet"]
+        if not wait_eta:
+            # 提交阶段先落 submitting：面板一按下去就有阶段可读，不用等监控起来。
+            _write_stage(ih, "submitting", "已提交迅雷，等待建立任务")
         rc, out, err = service.run_cli(cmd, 900)
-        return self._ok({"ok": rc == 0, "rc": rc, "stdout": out, "stderr": err})
+        payload = {"ok": rc == 0, "rc": rc, "stdout": out, "stderr": err}
+        if not wait_eta:
+            # 只有新模式下才加新字段（默认响应保持不变）：让面板能区分
+            # ① 元数据探测失败（rc=3 RESOURCE_REJECTED，没有任务）
+            # ② 任务已建好、ETA 判定留给监控阶段（eta_deferred=true）。
+            deferred = _parse_marker(out, "ETA_DEFERRED")
+            # rc=0 但没有 ETA_DEFERRED：不知道任务到底建没建，按失败口径记账，
+            # 免得面板显示一个不存在的「下载监控中」。
+            payload.update({
+                "eta_deferred": bool(deferred),
+                "stage": "monitoring" if (rc == 0 and deferred) else "failed_submit",
+            })
+            if deferred:
+                payload.update({
+                    "taskid": deferred.get("taskid"),
+                    "info_hash": deferred.get("info_hash") or ih,
+                    "final_dir": deferred.get("download_dir") or final_dir,
+                })
+            if rc != 0:
+                _write_stage(ih, "failed_submit", f"提交失败 rc={rc}")
+            elif not deferred:
+                # rc=0 却没有 ETA_DEFERRED：不知道任务到底建没建，按失败口径记账，
+                # 免得面板显示一个不存在的「下载监控中」。
+                _write_stage(ih, "failed_submit", "提交返回成功但缺少 ETA_DEFERRED 标记")
+        return self._ok(payload)
 
     def _api_watch(self, body):
         ih = (body.get("ih") or "").strip()

@@ -580,7 +580,9 @@ def main():
         default=900,
         help="Background watcher interval in seconds",
     )
-    parser.add_argument("--watch-max-misses", type=int, default=4)
+    # 判「任务已从迅雷消失」的连续查空次数：与 watch_download 的 --max-misses 一致
+    # （15 s × 2 = 30 s 迟滞），面板才有 15–30 s 的翻状态口径。
+    parser.add_argument("--watch-max-misses", type=int, default=2)
     parser.add_argument("--wait", action="store_true", help="Run watcher foreground")
     parser.add_argument("--no-watch", action="store_true")
     parser.add_argument(
@@ -916,6 +918,43 @@ def main():
             flush=True,
         )
         return 0 if measurement["speed_bps"] > 0 else 4
+
+    if args.eta_probe_seconds <= 0:
+        # 提交不再等测速窗口：任务已经建好（上面的 patch/verify 都过了），ETA 判定
+        # 交给后台监控阶段 —— 面板的按钮状态机是「提交中 → 下载监控中 → 检测归档中
+        # → 下载完成」，提交这一格不该卡在 180 s 的观测窗口上。
+        # 机器可读的一行：/api/submit 解析出 taskid/info_hash/download_dir 回给面板。
+        print(
+            "5. Skip ETA probe (--eta-probe-seconds 0)：ETA 判定交给监控阶段",
+            flush=True,
+        )
+        print(
+            "ETA_DEFERRED "
+            + json.dumps(
+                {
+                    "taskid": taskid,
+                    "info_hash": info_hash,
+                    "download_dir": staging_dir,
+                    "eta_scope": args.eta_scope,
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
+        if args.no_watch:
+            return 0
+        print("6. Start background watcher...")
+        return start_watcher(
+            info_hash,
+            staging_dir,
+            args.watch_interval,
+            args.watch_max_misses,
+            args.eta_scope,
+            final_dir=args.final_dir,
+            media_kind=args.media_kind,
+            series_name=args.series_name,
+            year=args.year,
+        )
 
     print(
         f"5. Observe measured ETA for up to {args.eta_probe_seconds}s "
