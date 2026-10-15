@@ -70,4 +70,49 @@ public class PluginConfiguration : BasePluginConfiguration
     /// backend's built-in defaults.
     /// </summary>
     public List<string> L1Keywords { get; set; } = new();
+
+    /// <summary>
+    /// Gets or sets the TMDb API key used by the 「热门」 entry (the poster wall).
+    /// Applied for at <c>https://www.themoviedb.org/settings/api</c>. Default is
+    /// empty = 未配置：热门页只报「未配置」，不回退到任何内置 key。
+    /// 这个值**只存在本机插件配置里**，配置页的 GET config 只回
+    /// <c>tmdbApiKeyConfigured</c> 布尔，绝不下发 key 本身；保存空串 = 清除。
+    /// </summary>
+    public string TmdbApiKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the TMDb language tag for the trending lists (default
+    /// <c>zh-CN</c>：榜单按简体中文标题/简介返回)。空串在保存时回落到这个默认值。
+    /// </summary>
+    public string TmdbLanguage { get; set; } = DefaultTmdbLanguage;
+
+    /// <summary>
+    /// Gets the built-in trending list ids (TMDb list keys). 顺序即配置页复选框的
+    /// 展示顺序：本周热门电影 / 本周热门剧集 / 流行电影 / 流行剧集。它是
+    /// <see cref="TrendingLists"/> 留空时的默认值，也是配置页那四个复选框的唯一出处
+    /// （页面不得另抄一份，见 tests/backend_retired/test_backend_retired_trending_anchor_naming.py）。
+    /// </summary>
+    public static readonly string[] DefaultTrendingLists =
+    {
+        "trending_movie_week",
+        "trending_tv_week",
+        "popular_movie",
+        "popular_tv",
+    };
+
+    /// <summary>Gets the默认 TMDb 语言标签（配置页的 placeholder 与保存时的回落值）。</summary>
+    public const string DefaultTmdbLanguage = "zh-CN";
+
+    /// <summary>
+    /// Gets or sets a value indicating whether关注条目时在媒体库写一个占位文件，
+    /// 让条目先在 Jellyfin 里可见（默认 <c>false</c> = 只记录关注，对媒体库零写入）。
+    /// 占位文件名带 <c>- zz placeholder</c> 标签，永远不等于后端归档的真文件落点。
+    /// </summary>
+    public bool AnchorEnabled { get; set; }
+
+    /// <summary>
+    /// Gets or sets the trending list ids the 「热门」 page shows. Empty means
+    /// <see cref="DefaultTrendingLists"/> (保存时会归一到那份默认，而不是留空)。
+    /// </summary>
+    public List<string> TrendingLists { get; set; } = new(DefaultTrendingLists);
 }

@@ -285,6 +285,9 @@
 
   function mount() {
     mountHeaderButton();
+    // 热门入口（06）。它自己的挂载函数收在 06 里，这里只负责每轮 mount 都叫它一次：
+    // React 重渲染会冲掉 header 节点，靠 mount 重建才不会被冲没。
+    mountTrendingButton();
     var id = currentItemId();
     if (!id) {
       state.lastLoggedId = 'none';

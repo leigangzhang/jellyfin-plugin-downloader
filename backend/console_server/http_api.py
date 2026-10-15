@@ -15,9 +15,19 @@ from urllib.parse import urlparse, parse_qs
 import build_console as bc
 from media_download_lib import MEDIA_ROOT, STAGING_ROOT, path_is_within
 
+from trending import trending_cache, trending_source, trending_watchlist
+
 from . import jobs as jobs_mod
 from . import probe_state
 from . import service
+
+
+# 无 TMDb Key 时的引导文案：热门榜单的数据源是 TMDb，没有 key 就只能把入口指到
+# 配置页。路由在这个分支里**不触网**（见 `_get_trending`）。
+TRENDING_GUIDANCE = (
+    "未配置 TMDb API Key，热门榜单暂不可用："
+    "请到 控制台 → 插件 → Jellyfin Downloader 填 TMDb API Key。"
+)
 
 
 def _target_dir_ok(value) -> bool:
@@ -137,6 +147,8 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             return self._get_snapshot(parsed)
         if path == "/api/search/status":
             return self._get_search_status(parsed)
+        if path == "/api/trending":
+            return self._get_trending(parsed)
         return self._send(404, {"error": "not found"})
 
     def do_POST(self):
@@ -151,6 +163,8 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             return self._api_submit(body)
         if path == "/api/watch":
             return self._api_watch(body)
+        if path == "/api/trending/watch":
+            return self._api_trending_watch(body)
         if path.startswith("/api/pan/"):
             sub = path[len("/api/pan/"):]
             return self._api_pan(sub, body)
@@ -248,6 +262,67 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         resp["stale_seconds"] = round(time.monotonic() - float(job.get("updated_at") or 0.0), 1)
         return self._ok(resp)
 
+    # ---- trending ---------------------------------------------------------
+    def _get_trending(self, parsed):
+        """热门榜单：TMDb 榜单海报墙的数据面。
+
+        query：`language`（缺省 zh-CN）、`lists`（逗号分隔榜单 id，缺省全部四个，
+        未知 id 忽略）。`JMD_TMDB_API_KEY` 为空/缺失时返回引导文案且**不触网** ——
+        没有 key 的请求注定 401，发出去只是白等一次超时。
+
+        有 key 时：缓存/取源的任何异常都降级成「空榜单 + stale」，绝不 500 ——
+        热门榜是锦上添花，它的失败不该让面板整体报错。响应形状固定四个键
+        （lists / stale / guidance / watched），客户端按它渲染。
+        """
+        q = parse_qs(parsed.query)
+        language = (q.get("language") or [""])[0].strip() or trending_source.DEFAULT_LANGUAGE
+        requested = [
+            part.strip()
+            for part in ((q.get("lists") or [""])[0]).split(",")
+            if part.strip()
+        ]
+        list_ids = [
+            list_id
+            for list_id in (requested or trending_source.LIST_ORDER)
+            if list_id in trending_source.LISTS
+        ]
+        # 已关注集合与榜单无关：没有 key 时也要回给客户端（媒体库占位靠它）。
+        watched = trending_watchlist.watchlist_ids()
+        api_key = (os.environ.get("JMD_TMDB_API_KEY") or "").strip()
+        if not api_key:
+            return self._ok(
+                {
+                    "lists": [],
+                    "stale": False,
+                    "guidance": TRENDING_GUIDANCE,
+                    "watched": watched,
+                }
+            )
+        try:
+            result = trending_cache.load_lists(language, list_ids, api_key)
+        except Exception as exc:  # noqa: BLE001 —— 取热门不该让面板拿到 500
+            print(f"WARNING 取热门榜单失败：{exc!r}", flush=True)
+            return self._ok(
+                {"lists": [], "stale": True, "guidance": None, "watched": watched}
+            )
+        if result.get("error"):
+            print(f"WARNING 热门榜单降级：{result['error']}", flush=True)
+        return self._ok(
+            {
+                "lists": [
+                    {
+                        "id": item.get("id"),
+                        "label": item.get("label") or item.get("id"),
+                        "items": item.get("items") or [],
+                    }
+                    for item in (result.get("lists") or [])
+                ],
+                "stale": bool(result.get("stale")),
+                "guidance": None,
+                "watched": watched,
+            }
+        )
+
     # ---- verify -----------------------------------------------------------
     def _api_submit(self, body):
         ih = (body.get("ih") or "").strip()
@@ -315,6 +390,46 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             cmd += ["--year", year]
         rc, out, err = service.run_cli(cmd, 60)
         return self._ok({"ok": rc == 0, "rc": rc, "stdout": out, "stderr": err})
+
+    def _api_trending_watch(self, body):
+        """关注一条热门条目：幂等写 `trending/watchlist.json`。
+
+        `tmdb_id` 是唯一必填项（整数或数字串）；重复关注只回 `exists=True`，
+        不重写文件（见 `trending_watchlist.add_watch`）。标题/年份/类型是客户端
+        顺手带的展示字段，缺了就存空值 —— 不等于关注失败。
+        """
+        if not isinstance(body, dict):
+            return self._bad("invalid json body")
+        raw = body.get("tmdb_id")
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            return self._bad("tmdb_id is required")
+        if isinstance(raw, bool):
+            return self._bad("invalid tmdb_id")
+        try:
+            tmdb_id = int(raw)
+        except (TypeError, ValueError):
+            return self._bad("invalid tmdb_id")
+        try:
+            result = trending_watchlist.add_watch(
+                {
+                    "tmdb_id": tmdb_id,
+                    "title": body.get("title"),
+                    "year": body.get("year"),
+                    "kind": body.get("kind"),
+                }
+            )
+        except ValueError:
+            return self._bad("tmdb_id is required")
+        except OSError as exc:
+            print(f"WARNING 写入关注清单失败：{exc!r}", flush=True)
+            return self._send(500, {"error": "failed to write watchlist"})
+        return self._ok(
+            {
+                "ok": True,
+                "exists": bool(result.get("exists")),
+                "written": bool(result.get("written")),
+            }
+        )
 
     # ---- pan --------------------------------------------------------------
     def _api_pan(self, sub, body):

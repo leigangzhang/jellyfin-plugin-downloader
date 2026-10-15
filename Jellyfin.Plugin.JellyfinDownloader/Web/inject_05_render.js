@@ -596,4 +596,3 @@
       panel.tasks.appendChild(item);
     });
   }
-})();

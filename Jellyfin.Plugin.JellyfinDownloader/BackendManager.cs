@@ -306,6 +306,15 @@ public static class BackendManager
                 info.Environment["JMD_L1_KEYWORDS"] = keywordsJson;
             }
 
+            // TMDb key 只在**配了的时候**注入：空 = 完全不注入这个变量（后端读不到就按
+            // 「未配置」处理，热门页只报未配置，不会回退到任何内置 key）。key 不进命令行、
+            // 不进日志，只走环境变量。
+            var tmdbApiKey = (config.TmdbApiKey ?? string.Empty).Trim();
+            if (tmdbApiKey.Length > 0)
+            {
+                info.Environment["JMD_TMDB_API_KEY"] = tmdbApiKey;
+            }
+
             try
             {
                 _process = Process.Start(info);

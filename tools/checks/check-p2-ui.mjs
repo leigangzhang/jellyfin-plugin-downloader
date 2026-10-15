@@ -22,7 +22,7 @@
 //      （候选已在 backend/probe/probe_round.py 交付前丢弃，面板只报「已过滤 N 条 0 种子候选」，
 //      不列行、不给开关；N=0 时不显示）。
 //
-// How it works: the five Web shards are concatenated in the controller's ScriptSegments
+// How it works: the six Web shards are concatenated in the controller's ScriptSegments
 // order and run in node:vm against a minimal DOM stub; a ApiClient.ajax stub captures the
 // payload the panel really posts. No browser, no Jellyfin, no network.
 //
@@ -74,7 +74,8 @@ const SHARDS = [
   'inject_02_entry.js',
   'inject_03_panel.js',
   'inject_04_search.js',
-  'inject_05_render.js'
+  'inject_05_render.js',
+  'inject_06_trending.js'
 ];
 
 const EXPORT_HOOK = `
