@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
@@ -211,7 +212,9 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         # 候选文件按**本轮**命名：同名标题连开两轮（同一季重搜、或不同季但同一个 slug）
         # 不会互相读到对方的候选。原来固定 `/tmp/<slug>.magnets`，只能靠 mtime 判断
         # 「是不是本轮写的」，而两个写者并发时那条判定就失效了（复核第二轮 F3）。
-        jid = jobs_mod._new_job()
+        # 首行与心跳在建立时就写好（含 title/kind）：客户端拿到 job_id 后第一次轮询
+        # 就有内容，不会停在「正在连接后端…」（真机 job 空壳复现，见 jobs.py 顶部）。
+        jid = jobs_mod._new_job(title, kind)
         params = {
             "title": title, "kind": kind, "slug": slug, "duration": duration,
             "year": year, "alt_title": alt_title, "season": season, "episode": episode,
@@ -240,6 +243,9 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             if job is None:
                 return self._send(404, {"error": "unknown job"})
             resp = dict(job)
+        # 心跳字段（started_at / updated_at 是单调时钟）以外再给一个能直接看的
+        # stale_seconds；旧字段一个不动。
+        resp["stale_seconds"] = round(time.monotonic() - float(job.get("updated_at") or 0.0), 1)
         return self._ok(resp)
 
     # ---- verify -----------------------------------------------------------

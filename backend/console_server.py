@@ -31,15 +31,38 @@ import threading
 from http.server import ThreadingHTTPServer
 
 import build_console as bc
+
+# 子模块必须只有**一个身份**（真机 job=16「永不完成」的根因，2026-10-15）：脚本路线
+# 下 `console_server` 包被别名成 `__main__`，于是 http_api 里的 `from . import jobs`
+# 会按父模块名字去 import "__main__.jobs"，而下面那些
+# `from console_server.jobs import ...` 又按规范名导入一遍 —— 同一个文件被加载成两份
+# 模块，HTTP 面（建 job、读 status）与 worker（写 lines、写终态）各持一份 JOBS：
+# 客户端永远看到 {"done": false, "lines": []}，worker 却在正常跑（子进程、快照、
+# 日志里都没有 traceback）。先用**规范名**把四个子模块导进来（点号导入按语句里的
+# 名字登记，不受父模块 `__name__` 影响），再把同一个对象登记到 "__main__.<子模块>"
+# 名下：两条路线（脚本 / import）拿到的是同一个模块对象，名字只是别名。
+# probe_state / service 同样会各被加载两份 —— service 里存着 `_ACTIVE_PROCS`
+# （关闭时按它收子进程），分成两份会让收尾漏掉另一份记的进程。
+import sys as _sys
+
+import console_server.jobs  # noqa: F401  （只为按规范名加载并登记，见上）
+import console_server.probe_state  # noqa: F401
+import console_server.service  # noqa: F401
 import console_server.http_api as http_api
+
+for _sub in ("jobs", "probe_state", "service", "http_api"):
+    _mod = _sys.modules[f"console_server.{_sub}"]
+    _sys.modules.setdefault(f"__main__.{_sub}", _mod)
+    setattr(_sys.modules["console_server"], _sub, _mod)
 
 # 下面这一组导入同时是「再导出」：拆分前 `console_server.<name>` 能取到的符号，
 # 入口仍然取得到（测试、以及任何按模块用的地方都照旧）。
 from console_server import jobs, probe_state, service
 from console_server.http_api import valid_target_dir
 from console_server.jobs import (
-    JOBS, JOBS_LOCK, _JOB_SEQ, _job_add, _job_finish, _new_job, episode_hints,
-    season_hints,
+    EARLY_EXIT_ERROR, JOBS, JOBS_LOCK, STALL_ERROR, STALL_TIMEOUT_SECS, _JOB_SEQ,
+    _job_add, _job_finish, _new_job, ensure_watchdog, episode_hints, season_hints,
+    supervised_worker, sweep_stalled_jobs,
 )
 from console_server.probe_state import (
     _build_snapshot, _file_written_since, _parse_exists,
@@ -197,8 +220,16 @@ def _entry_valid_target_dir(value):
 
 
 def _dispatch_search(jid, params):
-    """把一轮搜索丢进后台线程；线程目标同样按入口全局解析（见上）。"""
-    threading.Thread(target=_run_search_job, args=(jid, params), daemon=True).start()
+    """把一轮搜索丢进后台线程；线程目标同样按入口全局解析（见上）。
+
+    线程目标是 `jobs.supervised_worker` —— supervisor 保证 job 一定收敛到终态：
+    worker 没写 `_job_finish` 就退出（提前 return / BaseException）时补
+    `error=EARLY_EXIT_ERROR`，客户端不会等在一个永不完成的空壳 job 上（真机 job=16
+    复现，见 jobs.py 顶部）。看门狗幂等拉起，只为真实服务起一次。
+    """
+    ensure_watchdog()
+    threading.Thread(
+        target=supervised_worker, args=(jid, _run_search_job, params), daemon=True).start()
 
 
 class Handler(http_api.ConsoleHandler):

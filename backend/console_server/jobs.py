@@ -18,32 +18,76 @@ import source_config
 
 from . import probe_state
 
-# 搜索任务注册表：job_id -> {done, lines, snapshot, slug, search_status, error}
+# 搜索任务注册表：job_id -> {done, lines, snapshot, slug, search_status, error,
+#                            started_at, updated_at}
 JOBS = {}
 JOBS_LOCK = threading.Lock()
 _JOB_SEQ = [0]
 
+# 心跳与停滞看门狗（真机复现，2026-10-15）：
+# 手动面板搜「凡人修仙传 / 集=188」后 `POST /api/search` 秒回 job_id=16，随后
+# `/api/search/status?job=16` 连续 2 分钟以上返回 {"done": false, "lines": [],
+# "error": ""}，子进程跑完、job 仍是空壳且永不 done —— 面板上的表现就是一直停在
+# 「正在连接后端…」（`inject_04_search.js:102` 在发 POST 前就设了这个文案，只有拿到
+# lines 才更新）。worker 的 except 分支没被触发（日志无 traceback），所以那条路径
+# 是「线程在写下第一行之前就停住」。三道防线：
+#   1. job 建立即写首行 + 心跳时间戳（客户端第一次轮询就有内容）；
+#   2. supervisor 兜住 worker —— 没写终态就退出（提前 return / BaseException）一律收成
+#      done + error；
+#   3. 停滞看门狗：心跳 STALL_TIMEOUT_SECS 没刷新（进程还在但毫无进展）也收成终态。
+# 阈值取值依据：入口一轮搜索的单一阶段上界是 SEARCH_TIMEOUT = 900s（probe 阶段），
+# 而 `run_cli_stream` 逐行回调 on_line → 真在干活的阶段会持续刷新心跳；能连续
+# 1200s（900 + 300 余量）一行都不写的，只可能是卡死。轮询间隔取 30s：客户端要能
+# 在一分钟内收尾，又不至于频繁扫表。
+STALL_TIMEOUT_SECS = 1200
+WATCHDOG_INTERVAL_SECS = 30
+STALL_ERROR = "搜索无进展（已超时）"
+EARLY_EXIT_ERROR = "搜索线程提前退出"
 
-def _new_job():
+
+def start_line(title: str, kind: str) -> str:
+    """job 的第一行。含 title/kind，面板据此立刻显示「搜索开始 …」而不是空转。"""
+    return f"搜索开始：{title}（kind={kind}）"
+
+
+def _new_job(title: str = "", kind: str = ""):
+    """建立 job 记录：写下首行与 started_at/updated_at（单调时钟）。
+
+    `title` 给了就把首行一起写掉 —— 这发生在 `dispatch_search` **之前**，所以客户端
+    拿到 job_id 后的第一次轮询就看到内容（线程还没被调度也一样）。不传 title 时保持
+    旧形态（只有字段、没有行），历史调用点与既有测试照旧。
+    """
     with JOBS_LOCK:
         _JOB_SEQ[0] += 1
         jid = str(_JOB_SEQ[0])
+        now = time.monotonic()
         JOBS[jid] = {
             "done": False, "lines": [], "snapshot": None,
             "slug": "", "search_status": "", "error": "",
+            "started_at": now, "updated_at": now,
         }
+        if title:
+            JOBS[jid]["lines"].append(start_line(title, kind))
         if len(JOBS) > 50:
             for old in sorted(JOBS, key=int)[:-50]:
                 JOBS.pop(old, None)
         return jid
 
 
+def _job_has_lines(jid) -> bool:
+    with JOBS_LOCK:
+        job = JOBS.get(jid)
+        return bool(job and job["lines"])
+
+
 def _job_add(jid, line):
+    """追一行 + 刷新心跳（updated_at 是看门狗唯一的判据）。"""
     with JOBS_LOCK:
         job = JOBS.get(jid)
         if job is None:
             return
         job["lines"].append(line)
+        job["updated_at"] = time.monotonic()
         if len(job["lines"]) > 800:
             job["lines"] = job["lines"][-500:]
 
@@ -56,7 +100,70 @@ def _job_finish(jid, snapshot=None, slug="", search_status="", error=""):
         job.update({
             "done": True, "snapshot": snapshot, "slug": slug,
             "search_status": search_status, "error": error,
+            "updated_at": time.monotonic(),
         })
+
+
+def supervised_worker(jid, target, *args, **kwargs):
+    """supervisor：包住 worker，保证 job 无论如何都收敛到终态。
+
+    兜三种情况：worker 提前 return（没写终态）、抛 BaseException（Exception 之外的
+    那些不会进 worker 的 except Exception）、以及 worker 之前的接线错误。真机那个
+    「永不完成」的 job 就是这一类：线程在写下第一行之前停住，客户端只能永远等。
+    """
+    try:
+        target(jid, *args, **kwargs)
+    except BaseException as exc:  # noqa: BLE001 —— 线程里任何异常都不许逃出去
+        _job_add(jid, f"搜索异常：{exc!r}")
+        _job_finish(jid, error=str(exc) or exc.__class__.__name__)
+    finally:
+        with JOBS_LOCK:
+            job = JOBS.get(jid)
+            unfinished = job is not None and not job.get("done")
+        if unfinished:
+            _job_add(jid, "搜索线程提前退出：未写终态，已按失败收尾")
+            _job_finish(jid, error=EARLY_EXIT_ERROR)
+
+
+def sweep_stalled_jobs(now=None) -> list:
+    """停滞看门狗：把心跳超时的 job 收成 done + error，返回被收的 jid 列表。
+
+    `now` 可注入（默认 time.monotonic()），测试里不必真的等 20 分钟。
+    """
+    now = time.monotonic() if now is None else now
+    swept = []
+    with JOBS_LOCK:
+        stalled = [
+            jid for jid, job in JOBS.items()
+            if not job.get("done") and now - job.get("updated_at", now) > STALL_TIMEOUT_SECS
+        ]
+    for jid in stalled:
+        _job_add(jid, f"搜索停滞：{STALL_TIMEOUT_SECS}s 没有进展，已按失败收尾")
+        _job_finish(jid, error=STALL_ERROR)
+        swept.append(jid)
+    return swept
+
+
+_WATCHDOG_STARTED = [False]
+
+
+def ensure_watchdog():
+    """幂等拉起看门狗线程（第一次派发搜索时调；测试直接调 sweep_stalled_jobs）。"""
+    with JOBS_LOCK:
+        if _WATCHDOG_STARTED[0]:
+            return False
+        _WATCHDOG_STARTED[0] = True
+
+    def _loop():
+        while True:
+            time.sleep(WATCHDOG_INTERVAL_SECS)
+            try:
+                sweep_stalled_jobs()
+            except Exception as exc:  # noqa: BLE001 —— 看门狗自己不能死
+                print(f"WARNING 搜索停滞看门狗异常：{exc!r}", flush=True)
+
+    threading.Thread(target=_loop, daemon=True).start()
+    return True
 
 
 def season_hints(season: int) -> list:
@@ -232,6 +339,11 @@ def run_search_job(jid, p, *, run_cli, run_cli_stream, search_status, build_sear
     """
     def log(line):
         _job_add(jid, line)
+
+    # worker 的第一件事：保证「搜索开始 …」这一行在（job 建立时 _new_job 通常已经
+    # 写过，这里只为「先建 job、后补 worker」的路径兜底，不重复写同一行）。
+    if not _job_has_lines(jid):
+        log(start_line(p.get("title") or "", p.get("kind") or ""))
 
     try:
         # probe 会直接往 state/snapshots/<slug>.probe.json 写 --json-out，
