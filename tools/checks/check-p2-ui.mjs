@@ -1,6 +1,6 @@
 // Behaviour guard for the P2 UI fixes (evidence directory → repository, task t28).
 //
-// What it guards (50 checks, one failure each):
+// What it guards (54 checks, one failure each):
 //   R1 threshold is read-only: no 60/65/70/75/80 dial, nothing reads panel.threshold,
 //      the note node carries jdl-threshold-note, and configuredMinScore() falls back to
 //      60 for a missing, zero, or non-numeric config value.
@@ -21,14 +21,16 @@
 //   R10 进行中旋转指示器（点下去就插 .jdl-spinner，响应后摘掉）+ 0 种子候选的一行提示
 //      （候选已在 backend/probe/probe_round.py 交付前丢弃，面板只报「已过滤 N 条 0 种子候选」，
 //      不列行、不给开关；N=0 时不显示）。
+//   R11 进行中文案如实且带「已用」：提交写「探测元数据 25 s + 测速最长 180 s（已用 …）」，
+//      监控写自己的口径；已用随时钟增长，响应到达后连同 spinner 一起还原。
 //
 // How it works: the six Web shards are concatenated in the controller's ScriptSegments
 // order and run in node:vm against a minimal DOM stub; a ApiClient.ajax stub captures the
 // payload the panel really posts. No browser, no Jellyfin, no network.
 //
 // How to run (from the repository root):
-//   node tools/checks/check-p2-ui.mjs                 # green iff all 50 checks hold
-//   node tools/checks/check-p2-ui.mjs --mutate        # revert eleven fixed behaviours, one
+//   node tools/checks/check-p2-ui.mjs                 # green iff all 54 checks hold
+//   node tools/checks/check-p2-ui.mjs --mutate        # revert thirteen fixed behaviours, one
 //                                                     # at a time, and require each to go red
 //   node tools/checks/check-p2-ui.mjs --web-dir DIR   # check another copy of the shards
 //
@@ -99,6 +101,14 @@ const EXPORT_HOOK = `
     setSnapshot: function (s) { state.snapshot = s; },
     getSnapshot: function () { return state.snapshot; },
     setSearch: function (s) { state.search = s; },
+    // 只有守卫用：把按钮的忙碌起点往回拨 seconds 秒，再重渲染一次文案，
+    // 这样不必真的 sleep 一秒就能断言「已用」在增长。
+    setBusyElapsed: function (button, seconds) {
+      if (button && button.__jdlBusy) {
+        button.__jdlBusy.startedAt = Date.now() - seconds * 1000;
+        renderBusyLabel(button);
+      }
+    },
     getSearch: function () { return state.search; },
     getTimer: function () { return state.timer; }
   };
@@ -584,7 +594,52 @@ async function runChecks(bundleSrc) {
       collectText(cleanPanel.note).replace(/\s+/g, ' ').trim() || '(note 空)');
   }
 
-  return { failures, checks: 50 };
+  // ---- R11 进行中文案：如实的时间预期 + 每秒刷新的「已用」 ----
+  // 真机反馈：点了提交后超过 1 分钟仍写「约 25 s」，而迅雷里任务早已建好（提交是
+  // 「元数据 25 s + 测速最长 180 s」两段，队长实测一次完整提交 195.6 s）。
+  {
+    const doc = load(bundleSrc, null, { hold: true, reply: { ok: false, rc: 3 } });
+    doc.t.setPanel({ categorySelect: { value: 'Records' }, trustMagnet: false, form: null, item: docItem });
+    const ui = busyButton('提交迅雷');
+    doc.t.submitAction({ ih: 'J'.repeat(40) }, docSnapshot('record'), 'submit', '已提交迅雷', ui.button);
+    ok('R11-submit-label-honest-and-elapsed',
+      ui.text.textContent.indexOf('测速最长 180 s') >= 0
+        && ui.text.textContent.indexOf('探测元数据 25 s') >= 0
+        && ui.text.textContent.indexOf('已用') >= 0,
+      ui.text.textContent);
+    ok('R11-submit-label-no-stale-25-only',
+      ui.text.textContent.indexOf('\u7ea6 25 s') < 0,
+      ui.text.textContent);
+    doc.t.setBusyElapsed(ui.button, 72);          // 拨到「已用 1 分 12 秒」
+    ok('R11-elapsed-grows-with-the-clock',
+      ui.text.textContent.indexOf('已用 1 \u5206 12 \u79d2') >= 0,
+      ui.text.textContent);
+    doc.release();
+    await tick(); await tick();
+    ok('R11-label-restored-after-reply',
+      ui.button.disabled === false && ui.text.textContent === '提交迅雷'
+        && ui.text.textContent.indexOf('已用') < 0,
+      'disabled=' + ui.button.disabled + ' label=' + ui.text.textContent);
+  }
+  {
+    // 后台监控的耗时口径与提交不同：不带「测速最长 180 s」，但同样要有「已用」
+    const doc = load(bundleSrc, null, { hold: true, reply: { ok: true, rc: 0 } });
+    doc.t.setPanel({ categorySelect: { value: 'Records' }, trustMagnet: false, form: null, item: docItem });
+    doc.t.setSlug('kind-test');
+    const ui = busyButton('后台监控');
+    doc.t.submitAction({ ih: 'K'.repeat(40) }, docSnapshot('record'), 'watch', '已启动后台监控', ui.button);
+    ok('R11-watch-label-elapsed-without-submit-wording',
+      ui.text.textContent.indexOf('已用') >= 0
+        && ui.text.textContent.indexOf('测速最长 180 s') < 0
+        && ui.text.textContent.indexOf('挂后台监控') >= 0,
+      ui.text.textContent);
+    doc.release();
+    await tick(); await tick();
+    ok('R11-watch-restored', ui.button.disabled === false && ui.text.textContent === '后台监控',
+      ui.text.textContent);
+  }
+
+  return { failures, checks: 54 };
 }
 
 const MUTATIONS = [
@@ -614,7 +669,13 @@ const MUTATIONS = [
     '    if (false) {'],
   ['已过滤提示行被拆掉',
     '    if (zeroSeedFiltered(state.snapshot)) {',
-    '    if (false) {']
+    '    if (false) {'],
+  ['进行中文案的「已用」后缀被拆掉',
+    '  function renderBusyLabel(button) {\n    var info = button && button.__jdlBusy;',
+    '  function renderBusyLabel(button) {\n    if (true) { return; }\n    var info = button && button.__jdlBusy;'],
+  ['「已用」时长不再随时钟增长',
+    '    var elapsed = Math.max(0, (Date.now() - info.startedAt) / 1000);',
+    '    var elapsed = 0;']
 ];
 
 const EXPECT = {
@@ -628,7 +689,9 @@ const EXPECT = {
   '搜索停滞判定被拆掉': 'R9-stall-enters-retry',
   '已用时长的显示被拆掉': 'R9-elapsed-shown',
   '提交按钮的旋转指示器被拆掉': 'R10-spinner-on-click',
-  '已过滤提示行被拆掉': 'R10-zero-seed-notice-shown'
+  '已过滤提示行被拆掉': 'R10-zero-seed-notice-shown',
+  '进行中文案的「已用」后缀被拆掉': 'R11-submit-label-honest-and-elapsed',
+  '「已用」时长不再随时钟增长': 'R11-elapsed-grows-with-the-clock'
 };
 
 // A shard that cannot be read is a failure of this guard, not a crash of the command that
@@ -657,7 +720,7 @@ try {
   console.log(failures.length === 0 ? 'P2 UI CHECK PASS' : 'P2 UI CHECK FAIL');
   process.exit(failures.length === 0 ? 0 : 1);
 } catch (error) {
-  console.log('检查项 50，失败 1');
+  console.log('检查项 54，失败 1');
   console.log('FAIL  LOAD :: ' + (error && error.message ? error.message : String(error)));
   console.log(MUTATE ? 'MUTATION CHECK FAIL' : 'P2 UI CHECK FAIL');
   process.exit(1);

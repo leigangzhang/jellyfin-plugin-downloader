@@ -470,15 +470,41 @@
     return '';
   }
 
-  // 进行中状态：元数据闸门最长要 25 s 以上，这段时间按钮必须自己说话，
-  // 否则用户看到的就是「点了没反应」（真机复现：26.3 s 才回 rc=3）。
+  // 进行中文案为什么不是「约 25 s」——提交这段路是**两段**，25 s 只是第一段：
+  //   * 元数据探测：backend/media_download_lib/torrents.py:27
+  //     `probe_torrent_files(info_hash, timeout=25)` → aria2c `--bt-stop-timeout=25`（:57）；
+  //     拿不到 metadata 就 RESOURCE_REJECTED（真机 26.3 s 回 rc=3）。
+  //   * 测速外推 ETA：backend/download/submit_xunlei.py:566-569 的 `--eta-probe-seconds`
+  //     **默认 180**。任务在测速**之前**就已建好，所以「迅雷里已有任务 + 面板还在转」是
+  //     正常中途态（队长真机实测一次完整提交 195.6 s）。
+  // 这两个值后端目前**没有任何接口下发**（/JellyfinDownloader/config 只有 minScore /
+  // StagingRoot / MediaRoot…；快照与 /api/status 也没有），而 C# 不在本任务范围 —— 所以
+  // 这里硬编码一份，出处就是上面两行。**后端改这两个值时必须同步改这里**（更彻底的做法是
+  // 后端加字段下发、前端优先读后端值，那要另开一条跨 C#/backend 的任务）。
+  // 已用时长是纯客户端 Date.now() 计时，与后端无关。
   var BUSY_LABEL = {
-    submit: '\u63d0\u4ea4\u4e2d\u2026 \u6b63\u5728\u63a2\u6d4b\u5143\u6570\u636e\uff08\u7ea6 25 s\uff09',
-    watch: '\u542f\u52a8\u4e2d\u2026 \u6b63\u5728\u6302\u540e\u53f0\u76d1\u63a7\uff08\u7ea6\u51e0\u79d2\uff09'
+    submit: '\u63d0\u4ea4\u4e2d\u2026 \u63a2\u6d4b\u5143\u6570\u636e 25 s + \u6d4b\u901f\u6700\u957f 180 s',
+    watch: '\u542f\u52a8\u4e2d\u2026 \u6302\u540e\u53f0\u76d1\u63a7\uff08\u901a\u5e38 1\u20132 \u79d2\uff09'
   };
 
   function busyLabelFor(endpoint) {
     return endpoint === 'watch' ? BUSY_LABEL.watch : BUSY_LABEL.submit;
+  }
+
+  // 「已用」文案：<60 s 用秒，>=60 s 用「N 分 M 秒」（用户要的是「还在正常跑」的判据）
+  function formatElapsed(seconds) {
+    var total = Math.max(0, Math.round(seconds));
+    if (total < 60) { return total + ' \u79d2'; }
+    return Math.floor(total / 60) + ' \u5206 ' + (total % 60) + ' \u79d2';
+  }
+
+  function renderBusyLabel(button) {
+    var info = button && button.__jdlBusy;
+    if (!info) { return; }
+    var label = button.querySelector ? button.querySelector('.jdl-btn__label') : null;
+    if (!label) { return; }
+    var elapsed = Math.max(0, (Date.now() - info.startedAt) / 1000);
+    label.textContent = info.text + '\uff08\u5df2\u7528 ' + formatElapsed(elapsed) + '\uff09';
   }
 
   // 返回按钮原来的文案（恢复时用）；按钮是 innerHTML 造的，
@@ -492,11 +518,10 @@
         label.setAttribute('data-jdl-idle-label', label.textContent || '');
       }
       idle = (label.getAttribute && label.getAttribute('data-jdl-idle-label')) || '';
-      label.textContent = text;
     }
     button.disabled = true;
     if (button.classList) { button.classList.add('jdl-btn--busy'); }
-    // 可见的旋转指示器：闸门最长 25 s+，只有变灰+换文案还不够「看得出在转」。
+    // 可见的旋转指示器：只有变灰+换文案还不够「看得出在转」。
     // 节点插在文案前面；prefers-reduced-motion: reduce 时由 CSS 降级成静态指示。
     if (button.querySelector && !button.querySelector('.jdl-spinner')) {
       var spinner = el('span', 'jdl-spinner');
@@ -504,11 +529,23 @@
       if (button.insertBefore) { button.insertBefore(spinner, button.firstChild || null); }
       else if (button.appendChild) { button.appendChild(spinner); }
     }
+    // 已用时长：每秒刷新一次（文案里已经写明两段时间预期，用户据此判断是否还需要等）
+    if (button.__jdlBusy && button.__jdlBusy.timer) { clearInterval(button.__jdlBusy.timer); }
+    button.__jdlBusy = {
+      text: text,
+      startedAt: Date.now(),
+      timer: setInterval(function () { renderBusyLabel(button); }, 1000)
+    };
+    renderBusyLabel(button);
     return idle;
   }
 
   function clearBusy(button, idleLabel) {
     if (!button) { return; }
+    if (button.__jdlBusy) {
+      if (button.__jdlBusy.timer) { clearInterval(button.__jdlBusy.timer); }
+      button.__jdlBusy = null;
+    }
     var label = button.querySelector ? button.querySelector('.jdl-btn__label') : null;
     if (label && idleLabel) { label.textContent = idleLabel; }
     // 响应到达 → 停转并摘掉指示器
