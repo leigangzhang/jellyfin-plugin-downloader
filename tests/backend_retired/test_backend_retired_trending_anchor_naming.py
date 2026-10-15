@@ -66,6 +66,7 @@ _CS_EXPR_TOKEN = re.compile(r'"((?:[^"\\]|\\.)*)"|([A-Za-z_][A-Za-z0-9_]*)')
 TEMPLATE_NAMES = (
     "MovieRelativeTemplate",
     "SeriesRelativeTemplate",
+    "RecordRelativeTemplate",
 )
 LITERAL_NAMES = (
     "PlaceholderLabel",
@@ -220,17 +221,23 @@ class AnchorNamingNeverCollidesWithTheBackendLanding(unittest.TestCase):
             self.assertTrue(safe, f"语料 {title!r} 清洗后为空，用例失去意义")
             folder = f"{safe} ({year})" if year else safe
             # 两侧都用**清洗后的**片名：这才是最容易撞名的情形（两侧只差标签）。
-            for kind in ("movie", "series"):
+            for kind in ("movie", "series", "record"):
                 if kind == "movie":
                     template = templates["MovieRelativeTemplate"]
                     source_path = f"/incoming/{safe}.mp4"
                     media_kind = "movie"
                     landing_dirs = ("Movies", posixpath.join("Movies", folder))
-                else:
+                elif kind == "series":
                     template = templates["SeriesRelativeTemplate"]
                     source_path = f"/incoming/{safe} S01E01.mp4"
                     media_kind = "tv"
                     landing_dirs = ("TV Shows", posixpath.join("TV Shows", folder))
+                else:
+                    # 纪录片：后端落点是「一个目录 + 一部片」，与电影同形，分类目录是 Records
+                    template = templates["RecordRelativeTemplate"]
+                    source_path = f"/incoming/{safe}.mp4"
+                    media_kind = "movie"
+                    landing_dirs = ("Records", posixpath.join("Records", folder))
 
                 anchor_relative = anchor_relative_path(
                     template, safe, year, constants["YearSegmentTemplate"])
@@ -270,18 +277,23 @@ class AnchorNamingNeverCollidesWithTheBackendLanding(unittest.TestCase):
         for title, year in CORPUS:
             safe = clean_title(title, constants["ForbiddenTitleChars"], constants["WhitespaceRunPattern"])
             folder = f"{safe} ({year})" if year else safe
-            for kind in ("movie", "series"):
+            for kind in ("movie", "series", "record"):
                 if kind == "movie":
                     template = templates["MovieRelativeTemplate"]
                     final_dir = posixpath.join("Movies", folder)
                     source_path = f"/incoming/{safe}.mp4"
                     media_kind = "movie"
-                else:
+                elif kind == "series":
                     template = templates["SeriesRelativeTemplate"]
                     # tv 的最终目录是「剧集目录」（normalized_destination 自己再拼 Season NN）
                     final_dir = posixpath.join("TV Shows", folder)
                     source_path = f"/incoming/{safe} S01E01.mp4"
                     media_kind = "tv"
+                else:
+                    template = templates["RecordRelativeTemplate"]
+                    final_dir = posixpath.join("Records", folder)
+                    source_path = f"/incoming/{safe}.mp4"
+                    media_kind = "movie"
 
                 anchor_relative = anchor_relative_path(
                     template, safe, year, constants["YearSegmentTemplate"])
@@ -321,6 +333,8 @@ class AnchorNamingNeverCollidesWithTheBackendLanding(unittest.TestCase):
                          "movie 模板里 {1} 的个数不是 2：目录与文件名没有共用同一个年份段")
         self.assertEqual(templates["SeriesRelativeTemplate"].count("{1}"), 1,
                          "series 模板里 {1} 的个数不是 1：年份只该出现在剧集目录里")
+        self.assertEqual(templates["RecordRelativeTemplate"].count("{1}"), 2,
+                         "record 模板里 {1} 的个数不是 2：纪录片与电影同形，目录与文件名共用年份段")
 
     def test_cleaning_strips_path_separators_and_reserved_characters(self) -> None:
         constants = literal_constants()
@@ -443,6 +457,70 @@ class TrendingSurfaceStaysConsistent(unittest.TestCase):
                       "年份判定写反了：字段缺失会被当成非法，整批回空清单")
         self.assertNotIn("||", year_lines[0], "年份判定里出现 ||：字段缺失会被当成非法")
 
+    def test_the_anchor_requires_a_four_digit_year(self) -> None:
+        """anchor 必须带 4 位年份：缺了会落到 <title>/，与真条目 <title> (<year>)/ 永不相等。
+
+        无年份的落点必然在库里多造一个重复条目（提案要防的库污染），所以缺年份是 400，
+        而且要在**任何写之前**判掉（A9 的零写入不止针对开关关闭）。
+        """
+        anchor = _method_block(
+            _controller_source(),
+            "public IActionResult TrendingAnchor(",
+            "private static List<(string Title")
+        self.assertIn('error = "year is required"', anchor, "缺年份没有回 400 year is required")
+        missing = anchor.index('error = "year is required"')
+        for later in ("RefreshMediaPaths()", "System.IO.Directory.CreateDirectory", "System.IO.File.Move"):
+            self.assertLess(missing, anchor.index(later),
+                            f"年份校验排在了 {later} 之后：缺年份也可能写库")
+
+    def test_a_positive_exists_requires_a_year(self) -> None:
+        """library-status 没有年份时不得宣称「已在库」——那是无法确认的宣称。
+
+        TMDb 缺年份的老片很常见：按标题匹配会把同名不同年的库内条目判成命中，而命中会
+        禁用卡片的「关注」按钮（用户下不了片）。保守回 false 只是显示成未入库，危害小得多。
+        """
+        # 含 docstring：这条保守策略必须写在代码里（否则下一个人会当成漏判改掉）
+        block = _method_block(
+            _controller_source(),
+            "「热门」页的批量查库",
+            "public IActionResult TrendingAnchor(")
+        self.assertIn("query.Year.HasValue", block, "exists 的判定里没有「必须有年份」这个前提")
+        self.assertIn("保守", block, "这条保守策略必须写在代码里（否则下一个人会当成漏判改掉）")
+        # 年份必须出现在 exists 表达式的最前面：写在已知子句后面就等于没起作用
+        exists_line = [line for line in block.splitlines() if "exists = " in line]
+        self.assertEqual(len(exists_line), 1, "exists 的判定应当只有一处：" + str(exists_line))
+        self.assertIn("query.Year.HasValue", exists_line[0],
+                      "exists = 后面没有先判年份：缺年份仍可能由标题命中回 true")
+
+    def test_both_endpoints_accept_the_platform_kind_vocabulary(self) -> None:
+        """类别词表是跨层契约：面板/后端发 movie|episode|variety|record，库里叫 Series。
+
+        端点只认 movie|series 时，剧集「关注」会被判成非法 kind、占位永不落盘（review r1 的
+        F1）。归一是端点的责任：两条端点共用 NormalizeKind，落点类别决定分类目录。
+        """
+        source = _controller_source()
+        body = _method_block(source, "private static string? NormalizeKind(", "private static string[] LibraryKindsFor(")
+        for alias in ("episode", "variety", "tv", "record"):
+            self.assertIn(f'"{alias}"', body, f"类别归一漏了面板/后端会发的 {alias!r}")
+        self.assertIn("=> \"series\"", body.replace("'", "\""), "episode/variety 没有归到 series")
+        self.assertIn('=> "record"', body, "record 没有归到 record 落点类别")
+
+        anchor = _method_block(source, "public IActionResult TrendingAnchor(",
+                               "private static List<(string Title")
+        self.assertIn("NormalizeKind(kind)", anchor, "anchor 没有走类别归一")
+        self.assertIn("PlaceholderRelativePath(safeTitle, yearText, normalizedKind)", anchor,
+                      "anchor 没有把归一类别交给落点选择")
+        placeholder = _method_block(source, "private static string PlaceholderRelativePath(",
+                                   "private static bool IsWithinRoot(")
+        for name in TEMPLATE_NAMES:
+            self.assertIn(name, placeholder, f"落点选择没有覆盖 {name}")
+
+        # 查库的载荷在 ReadTrendingQueries 里归一（两条端点共用同一个 NormalizeKind）
+        status = _method_block(source, "private static List<(string Title",
+                               "private static List<(string Kind")
+        self.assertIn("NormalizeKind(kind)", status, "library-status 的载荷没有走同一套类别归一")
+        self.assertIn("LibraryKindsFor(matchKind)", status, "查库没有按归一类别选库内类别")
+
     def test_the_proxy_whitelist_carries_the_trending_prefix(self) -> None:
         block = _method_block(_controller_source(), "private static readonly string[] AllowedPrefixes", "};")
         self.assertIn('"trending"', block,
@@ -464,6 +542,19 @@ class TrendingSurfaceStaysConsistent(unittest.TestCase):
         self.assertLess(guard, inject, "注入必须包在「非空才注入」的判断里")
         self.assertNotIn("JMD_TMDB_API_KEY", _controller_source(),
                          "key 不该出现在控制器里（它只经环境变量进后端）")
+
+    def test_the_guidance_text_has_one_home_in_the_plugin(self) -> None:
+        """无 key 的引导文案只有插件侧一个家：GET config 的 guidance 字段。
+
+        面板优先读 config.guidance；后端 /api/trending 的 guidance 保留给直连 API 的消费者。
+        文案常量必须存在、并且只在「没配 key」时下发（有 key 时下发 null，面板不能把空当没配）。
+        """
+        source = _controller_source()
+        self.assertRegex(source, r'private const string TmdbGuidance = "[^"]+"',
+                         "缺少 TmdbGuidance 常量（文案的唯一出处）")
+        block = _method_block(source, "public IActionResult GetConfig()", "public IActionResult UpdateConfig(")
+        self.assertIn("guidance =", block, "GET config 没有下发 guidance")
+        self.assertIn("? null : TmdbGuidance", block, "guidance 没有按「有 key 时不下发」处理")
 
     def test_the_config_page_group_round_trips_its_fields(self) -> None:
         """「热门」分组的 DOM ↔ 脚本契约：load 回显 + save 提交，四个字段都不丢。"""
