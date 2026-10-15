@@ -24,7 +24,7 @@ Class: feature
 
 四个榜单 id 是 `trending_movie_week`、`trending_tv_week`、`popular_movie`、`popular_tv`；`JMD_TMDB_API_KEY` 缺失时返回 `lists: []` 与一段中文 `guidance`，此时这条路由**不触网**。`POST /api/trending/watch` 回 `{"ok","exists","written"}`。
 
-**库内状态。** `POST /JellyfinDownloader/trending/library-status` 按标题批量回答「库里有没有」（归一化片名加 `ProductionYear`，保持请求顺序）；`POST /JellyfinDownloader/trending/anchor` 写占位。两者都放插件侧而不是后端：库路径的唯一事实源是 `MediaPaths.MediaRoot` 与 `ILibraryManager`，而 `backend/` 不许携带机器相关路径。
+**库内状态。** `POST /JellyfinDownloader/trending/library-status` 按标题批量回答「库里有没有」（归一化片名加 `ProductionYear`，保持请求顺序）；`POST /JellyfinDownloader/trending/anchor` 写占位。两者都放插件侧而不是后端：库路径的唯一事实源是 `MediaPaths.MediaRoot` 与 `ILibraryManager`，而 `backend/` 不许携带机器相关路径。两条端点都接受平台自己的 kind 词表（`movie`/`film`、`series`/`episode`/`tv`/`show`/`variety`、`record`/`records`）并归一成库类别（`movie` → `Movies`、`series`/`episode`/`variety` → `TV Shows`、`record` → `Records`）；请求缺 4 位年份时 `anchor` 直接拒绝（`400 {"error":"year is required"}`），`library-status` 也绝不据此宣称 `exists: true`——因为无年份的落点永远不可能等于真条目目录，两者会变成两条独立条目。
 
 **占位。** `Web/placeholder.mp4`（8,307 字节，md5 `59563f02cff1daea13f1082b80fa695c`——就是库里已经在用的那个文件）作为 `EmbeddedResource` 随插件走，清洗片名并校验落在 `MediaPaths.MediaRoot` 之内后，写为
 
@@ -35,7 +35,7 @@ TV Shows/<title> (<year>)/Season 01/<title> S01E01 - zz placeholder.mp4
 
 写入走同目录临时文件加 `File.Move`。目标已存在则只报告、绝不重写。这个形状由两条约束逼出来：`atomic_same_volume_move` 在目标存在时抛 `FileExistsError`，而 `normalized_destination` 把真文件放在恰好 `<title> (<year>).<ext>`，所以不带标签的占位会在下载回来是 MP4 时打断归档；而 Jellyfin 只把「文件名在版本标签之前逐字符以文件夹名开头」的文件当作同一部片的版本，且播放字母序列表里的第一个——标签既要与真名分开，又要排在最后。
 
-**配置。** `PluginConfiguration` 新增 `TmdbApiKey`（空）、`TmdbLanguage`（`zh-CN`）、`TrendingLists`（四个榜单 id）与 `AnchorEnabled`（`false`）。`BackendManager.Start` 只在 key 非空时注入 `JMD_TMDB_API_KEY`，而 `GET /JellyfinDownloader/config` 只回 `tmdbApiKeyConfigured`，不回 key 本身。配置页新增一组「热门」；`AnchorEnabled` 关闭即对媒体库零写入。
+**配置。** `PluginConfiguration` 新增 `TmdbApiKey`（空）、`TmdbLanguage`（`zh-CN`）、`TrendingLists`（四个榜单 id）与 `AnchorEnabled`（`false`）。`BackendManager.Start` 只在 key 非空时注入 `JMD_TMDB_API_KEY`，而 `GET /JellyfinDownloader/config` 只回 `tmdbApiKeyConfigured`，不回 key 本身。配置页新增一组「热门」；`AnchorEnabled` 关闭即对媒体库零写入。`GET /JellyfinDownloader/config` 同时下发 `guidance`，作为覆盖层无 key 文案的唯一来源；`GET /api/trending` 自己的 `guidance` 字段保留给直连 API 的消费者。
 
 **不在本次范围。** 不自动下载、不批量提交、不加首页行、不劫持路由、不接 Seerr 与 *arr，也不删除占位。清理若将来要做，归 watcher 阶段。
 
@@ -65,12 +65,13 @@ TV Shows/<title> (<year>)/Season 01/<title> S01E01 - zz placeholder.mp4
 - 本次没能验证真实 TMDb 流量：这台机器出网到 `api.themoviedb.org` 超时，所以「拉真榜单」这条只有注入假 opener 的证据，真要跑通还需要一台能出网的机器加配置页里的 key。无 key 的引导路径、TTL、过期降级与 watchlist 都在不联网的情况下跑过。
 - `anchor` 只写占位文件并建目录；关注条目显示的海报、演员与评分来自 Jellyfin 自己的元数据 provider，不是本次改动给的。provider 关掉的库只会显示一个由文件名派生的名字、没有封面。
 - `Jellyfin.Plugin.JellyfinDownloader/Controllers/JellyfinDownloaderController.cs` 在这次改动里从 750 行长到 1,266 行（30 KB → 50.8 KB），越过了读文件工具的 50 KB 上限；`source-budget` 覆盖 `backend/*.py`、`tests/*.py` 与 `Web/*.js`，不含 `.cs`，所以没有闸门变红。拆控制器留作后续改动，没有塞进这一次。
+- TMDb 记录里没有年份的条目可以被关注（进 watchlist），但永远不会被占位：缺年份时覆盖层跳过 anchor 调用，而不是发一条端点必然会拒的请求，卡片因此显示「仅记录」（`listed`），不会把拒绝当成错误弹出来。
 - 唯一会污染库的失败模式是占位名与归档名分叉：两者会变成两条独立条目。A7 把它们钉在一起；清洗规则在插件与 `finalize.py` 之间是故意重复的，所以 A7 是让这份副本保持诚实的唯一东西。
 - 如果 Jellyfin 的版本排序规则变了、占位真的成了默认播放对象，或占位将来需要被删除或挪进归档路径，就回来重新审视这个决定。
 
 ## Testing
 
-- [A1] 未配置 key 时覆盖层渲染后端给的 `guidance` 且控制台干净：后端半边由 `tests/backend_trending/test_backend_trending_routes.py` 钉住 `http_api.py` 的路由与 `backend/trending/trending_source.py` 的引导分支；渲染半边是交付报告里记录的真机检查。 归属 `source`, `tests`。
+- [A1] 未配置 key 时覆盖层渲染 `GET /JellyfinDownloader/config` 下发的 `guidance` 且控制台干净：后端半边由 `tests/backend_trending/test_backend_trending_routes.py` 钉住 `http_api.py` 的路由与 `backend/trending/trending_source.py` 的引导分支；渲染半边是交付报告里记录的真机检查。 归属 `source`, `tests`。
 - [A2] `tests/backend_trending/test_backend_trending_source.py`——假 opener 返回 ≥2 个榜单、每榜 ≥10 条，字段形状同上。 归属 `tests`。
 - [A3] `tests/backend_trending/test_backend_trending_cache.py`——TTL 内第二次调用不打 TMDb，由注入时钟与 opener 调用计数证明。 归属 `tests`。
 - [A4] `tests/backend_trending/test_backend_trending_stale.py`——TMDb 不可达时返回上次缓存并置 `stale: true`。 归属 `tests`。
