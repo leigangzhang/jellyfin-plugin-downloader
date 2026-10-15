@@ -198,7 +198,55 @@
               </div>
             </div>
 
-            <!-- ④ 服务端口：标题 / 状态行 / 说明，三行（与前三组同构） -->
+            <!-- ④ 热门：TMDb 榜单海报墙 + 关注占位开关 -->
+            <div class="sectionTitleContainer flex align-items-center">
+              <h2 class="sectionTitle">热门</h2>
+            </div>
+            <div class="inputContainer">
+              <label class="inputLabel" for="jdl-tmdb-key">TMDb API Key</label>
+              <input id="jdl-tmdb-key" type="password" class="emby-input" aria-label="TMDb API Key"
+                     autocomplete="new-password" spellcheck="false" placeholder="留空 = 未配置" />
+              <div class="fieldDescription">
+                <span id="jdl-tmdb-key-state">未配置</span>
+                <span id="jdl-tmdb-key-hint">热门榜单的数据来自 TMDb：去 TMDb 账号设置（themoviedb.org/settings/api）申请一个 Key 后填在这里。它只写进本机插件配置，**不会下发到浏览器**——本页只回显「已配置 / 未配置」，所以这个输入框永远是空的。留空并保存 = 清除已存的 Key（要换 Key 就直接填新的）。</span>
+              </div>
+            </div>
+            <div class="inputContainer">
+              <label class="inputLabel" for="jdl-tmdb-language">语言</label>
+              <input id="jdl-tmdb-language" type="text" class="emby-input" aria-label="TMDb 语言"
+                     autocomplete="off" spellcheck="false" placeholder="zh-CN" />
+              <div class="fieldDescription">榜单的标题与简介按这个语言标签向 TMDb 请求，默认 zh-CN。留空并保存会回到 zh-CN。</div>
+            </div>
+            <div class="inputContainer">
+              <div id="jdl-trending-lists">
+                <label class="checkboxContainer">
+                  <input type="checkbox" is="emby-checkbox" data-list="trending_movie_week" checked />
+                  <span>本周热门电影</span>
+                </label>
+                <label class="checkboxContainer">
+                  <input type="checkbox" is="emby-checkbox" data-list="trending_tv_week" checked />
+                  <span>本周热门剧集</span>
+                </label>
+                <label class="checkboxContainer">
+                  <input type="checkbox" is="emby-checkbox" data-list="popular_movie" checked />
+                  <span>流行电影</span>
+                </label>
+                <label class="checkboxContainer">
+                  <input type="checkbox" is="emby-checkbox" data-list="popular_tv" checked />
+                  <span>流行剧集</span>
+                </label>
+              </div>
+              <div class="fieldDescription">「热门」页显示哪些榜单，默认四个全选。一个都不选并保存时按内置默认（四个全开）处理，而不是「一个都不显示」。</div>
+            </div>
+            <div class="inputContainer">
+              <label class="checkboxContainer">
+                <input id="jdl-anchor-enabled" type="checkbox" is="emby-checkbox" />
+                <span>关注时在媒体库写入占位文件</span>
+              </label>
+              <div class="fieldDescription">默认关闭；关闭时只记录关注，对媒体库零写入。打开后，关注一个榜单条目会在媒体库里放一个占位 mp4（位置就是它下载归档后的目录），让条目先在 Jellyfin 里可见；占位文件名带 zz placeholder 标签，不会与真正下载归档的文件撞名，也不会被重复关注覆盖。</div>
+            </div>
+
+            <!-- ⑤ 服务端口：标题 / 状态行 / 说明，三行（与前三组同构） -->
             <div class="sectionTitleContainer flex align-items-center">
               <h2 id="jdl-port-label" class="sectionTitle">服务端口</h2>
             </div>
@@ -489,6 +537,46 @@
         return listValues(q('jdl-keywords'));
       }
 
+      // ---- 热门（TMDb） ----
+
+      // 四个榜单复选框直接写在 HTML 里，data-list 就是提交给后台的榜单 id——默认值由
+      // checked 属性给（默认全选），清单的唯一出处是 Configuration/PluginConfiguration.cs
+      // 的 DefaultTrendingLists（页面不另抄一份，守卫对着两边比对）。
+      function trendingCheckboxes() {
+        return Array.prototype.slice.call(root.querySelectorAll('#jdl-trending-lists input[data-list]'));
+      }
+
+      function renderTrending(config) {
+        var key = q('jdl-tmdb-key');
+        // Key 永远不回填（后台也不下发它）：输入框为空 = 本次保存会清掉已存的 Key，
+        // 这条语义写在字段说明里，不能让用户以为「空着 = 不动它」。
+        if (key) { key.value = ''; }
+        var language = q('jdl-tmdb-language');
+        if (language) { language.value = (config && config.tmdbLanguage) || 'zh-CN'; }
+        var state = q('jdl-tmdb-key-state');
+        if (state) {
+          state.textContent = config && config.tmdbApiKeyConfigured
+            ? '已配置（Key 存在本机插件配置里，不回显）'
+            : '未配置（热门页会提示未配置）';
+        }
+        // 后台回的清单为空时按「四个全选」显示：那正是后台的生效语义。
+        var lists = (config && config.trendingLists) || [];
+        var picks = lists.length
+          ? lists
+          : trendingCheckboxes().map(function (input) { return input.getAttribute('data-list'); });
+        trendingCheckboxes().forEach(function (input) {
+          input.checked = picks.indexOf(input.getAttribute('data-list')) >= 0;
+        });
+        var anchor = q('jdl-anchor-enabled');
+        if (anchor) { anchor.checked = !!(config && config.anchorEnabled); }
+      }
+
+      function readTrendingLists() {
+        return trendingCheckboxes()
+          .filter(function (input) { return input.checked; })
+          .map(function (input) { return input.getAttribute('data-list'); });
+      }
+
       // ---- 服务端口 ----
 
       function showNote(message) {
@@ -582,6 +670,7 @@
           media.placeholder = resolved ? '留空 = ' + resolved : '留空 = 自动取 Jellyfin 库路径';
           renderSites(config.btSites || []);
           renderKeywords(config.l1Keywords || []);
+          renderTrending(config);
           return refreshStatus();
         }).catch(function (error) {
           note('配置读取失败：' + (error && error.status ? error.status : '网络错误'));
@@ -592,7 +681,11 @@
         return ajax('POST', 'config', {
           MediaRoot: (q('jdl-media').value || '').trim(),
           BtSites: readSites(),
-          L1Keywords: readKeywords()
+          L1Keywords: readKeywords(),
+          TmdbApiKey: (q('jdl-tmdb-key').value || '').trim(),
+          TmdbLanguage: (q('jdl-tmdb-language').value || '').trim(),
+          TrendingLists: readTrendingLists(),
+          AnchorEnabled: !!q('jdl-anchor-enabled').checked
         });
       }
 
