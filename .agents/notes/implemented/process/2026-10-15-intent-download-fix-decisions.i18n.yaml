@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-10-15-intent-download-fix-decisions.md (docs/i18n.md): per heading section, a hash
+# of its English and Chinese blocks outside fenced code blocks.
+# After editing either side, bring the other along and re-record with:
+#   python3 tools/pair-docs.py --write .agents/notes/implemented/process/2026-10-15-intent-download-fix-decisions.md
+/decision-intent-how-the-downloads-fail-goal-was-cut-into-decisions-and-in-what-order:
+  en: f50d3af41241e145
+  zh: cc159c9fdd2529e1
+/decision-intent-how-the-downloads-fail-goal-was-cut-into-decisions-and-in-what-order/problem:
+  en: 006f0dbee01a4f86
+  zh: 66d6b7a93faddf11
+/decision-intent-how-the-downloads-fail-goal-was-cut-into-decisions-and-in-what-order/decision:
+  en: 2ec0adbd693f056f
+  zh: ae1f01c302abb5dc
+/decision-intent-how-the-downloads-fail-goal-was-cut-into-decisions-and-in-what-order/alternatives-considered:
+  en: 77cc3099eda81563
+  zh: a608300919e09b3a
+/decision-intent-how-the-downloads-fail-goal-was-cut-into-decisions-and-in-what-order/consequences:
+  en: 7fd0ddb3ba5047c8
+  zh: da986d11eb2f3181
+/decision-intent-how-the-downloads-fail-goal-was-cut-into-decisions-and-in-what-order/testing:
+  en: 9eba5b566b4e2da6
+  zh: 6fc2873bf1cdcccf
