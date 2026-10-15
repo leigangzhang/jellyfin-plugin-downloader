@@ -117,65 +117,118 @@
     });
   }
 
+  // 搜索停滞判定：前端阈值必须 ≥ 后端自己的看门狗，否则会把「后端还在合法跑」的
+  // 长搜索误判成无进展。后端上界（console_server.py:71-73）：
+  //   SEARCH_POOL_TIMEOUT = 600 s（搜池阶段）、SEARCH_TIMEOUT = 900 s（整个 job）
+  // 搜索早期（check / pool / probe）可以几分钟不产出任何行，所以这里取 900 + 60 余量。
+  var SEARCH_STALL_SECONDS = 960;
+
+  function searchElapsedSeconds() {
+    var search = state.search;
+    if (!search) { return 0; }
+    return Math.max(0, Math.round((Date.now() - search.startedAt) / 1000));
+  }
+
+  // 阶段文案 + 已用时长：每轮轮询都刷一次，用户能看出「在跑」而不是「卡住」
+  function renderSearchStage() {
+    var panel = state.panel;
+    var search = state.search;
+    if (!panel || !search) { return; }
+    setStage(panel.progress, search.stage + '\uff08\u5df2\u7528 ' + searchElapsedSeconds() + ' s\uff09');
+  }
+
+  function searchStalled() {
+    var search = state.search;
+    if (!search) { return false; }
+    return (Date.now() - search.lastProgressAt) >= SEARCH_STALL_SECONDS * 1000;
+  }
+
   function pollSearch(jobId, seen) {
     // 后端重启（Jellyfin 重启 / 配置页关了再开）会让 job 记录随进程消失，
     // 状态接口对旧 job 直接 404（unknown job）。这时候必须判定为「搜索已中断」
     // 并给出重试入口，否则面板会一直显示「正在获取…」——看起来像卡死。
-    var misses = 0;
-    state.timer = setInterval(function () {
-      api('search/status?job=' + encodeURIComponent(jobId)).then(function (result) {
-        if (!result) { return; }
-        if (result.error) {
-          if (/unknown\s*job/i.test(String(result.error))) {
-            failSearch('\u641c\u7d22\u5df2\u4e2d\u65ad\uff08\u540e\u7aef\u91cd\u542f\u540e\u4efb\u52a1\u8bb0\u5f55\u4e22\u5931\uff09\uff0c\u70b9\u300c\u91cd\u8bd5\u300d\u91cd\u65b0\u83b7\u53d6', false);
-            return;
-          }
-          misses += 1;
-          if (misses >= 5) { failSearch('\u8fdb\u5ea6\u67e5\u8be2\u5931\u8d25\uff1a' + result.error, false); }
+    state.search = {
+      job: jobId,
+      seen: seen || 0,
+      misses: 0,
+      startedAt: Date.now(),
+      lastProgressAt: Date.now(),
+      stage: '\u6b63\u5728\u8fde\u63a5\u540e\u7aef\u2026'
+    };
+    renderSearchStage();
+    state.timer = setInterval(searchTick, 800);
+  }
+
+  // 一轮轮询：状态查询 → 有新行就算「有进展」→ done 收尾 / 长期无进展判停滞
+  function searchTick() {
+    var search = state.search;
+    if (!search) { return; }
+    api('search/status?job=' + encodeURIComponent(search.job)).then(function (result) {
+      if (!result) { return; }
+      if (result.error) {
+        if (/unknown\s*job/i.test(String(result.error))) {
+          failSearch('\u641c\u7d22\u5df2\u4e2d\u65ad\uff08\u540e\u7aef\u91cd\u542f\u540e\u4efb\u52a1\u8bb0\u5f55\u4e22\u5931\uff09\uff0c\u70b9\u300c\u91cd\u8bd5\u300d\u91cd\u65b0\u83b7\u53d6', false);
           return;
         }
-        misses = 0;
-        var panel = state.panel;
-        if (!panel) { return; }
-        var lines = result.lines || [];
-        if (lines.length > seen) {
-          panel.log.textContent = lines.join('\n');
-          panel.log.scrollTop = panel.log.scrollHeight;
-          seen = lines.length;
-        }
+        search.misses += 1;
+        if (search.misses >= 5) { failSearch('\u8fdb\u5ea6\u67e5\u8be2\u5931\u8d25\uff1a' + result.error, false); }
+        return;
+      }
+      search.misses = 0;
+      var panel = state.panel;
+      if (!panel) { return; }
+      var lines = result.lines || [];
+      if (lines.length > search.seen) {
+        panel.log.textContent = lines.join('\n');
+        panel.log.scrollTop = panel.log.scrollHeight;
+        search.seen = lines.length;
         var stage = (lines[lines.length - 1] || '').trim();
-        if (stage) { setStage(panel.progress, stage); }
-        if (result.done) {
-          clearInterval(state.timer);
-          state.timer = null;
-          if (result.error) { failSearch(result.error); return; }
-          finishProgress('\u83b7\u53d6\u5b8c\u6210');
-          state.slug = result.slug || state.slug;
-          state.snapshot = result.snapshot || {};
-          rememberSnapshotKind(state.snapshot.kind);
-          syncSnapshotKind();
-          var status = result.search_status;
-          panel.summary.textContent = status && status !== 'ok'
-            ? '\u641c\u7d22\u5b8c\u6210\uff08' + status + '\uff09'
-            : '\u641c\u7d22\u5b8c\u6210';
-          renderCandidates();
-          startMonitoring();
-        }
-      }).catch(function () {
-        // 状态接口 404 / 后端不可达都走这里：连续 6 次（约 5 秒）才判定中断，
-        // 避免一次网络抖动就把搜索判死。
-        misses += 1;
-        if (misses >= 6) {
-          failSearch('\u641c\u7d22\u5df2\u4e2d\u65ad\uff08\u540e\u7aef\u4e0d\u53ef\u8fbe\u6216\u5df2\u91cd\u542f\uff09\uff0c\u70b9\u300c\u91cd\u8bd5\u300d\u91cd\u65b0\u83b7\u53d6', true);
-        }
-      });
-    }, 800);
+        if (stage) { search.stage = stage; }
+        search.lastProgressAt = Date.now();
+      }
+      if (result.done) {
+        clearInterval(state.timer);
+        state.timer = null;
+        state.search = null;
+        if (result.error) { failSearch(result.error); return; }
+        finishProgress('\u83b7\u53d6\u5b8c\u6210');
+        state.slug = result.slug || state.slug;
+        state.snapshot = result.snapshot || {};
+        rememberSnapshotKind(state.snapshot.kind);
+        syncSnapshotKind();
+        var status = result.search_status;
+        panel.summary.textContent = status && status !== 'ok'
+          ? '\u641c\u7d22\u5b8c\u6210\uff08' + status + '\uff09'
+          : '\u641c\u7d22\u5b8c\u6210';
+        renderCandidates();
+        startMonitoring();
+        return;
+      }
+      // 未完成：先判停滞（无新行且已超阈值 → 给重试，不再无限静默轮询），再刷时长
+      if (searchStalled()) {
+        clearInterval(state.timer);
+        state.timer = null;
+        failSearch('\u641c\u7d22\u65e0\u8fdb\u5c55\uff08\u5df2\u7528 ' + searchElapsedSeconds()
+          + ' s \u6ca1\u6709\u4efb\u4f55\u65b0\u8fdb\u5c55\uff09\uff0c\u70b9\u300c\u91cd\u8bd5\u300d\u91cd\u65b0\u83b7\u53d6', true);
+        return;
+      }
+      renderSearchStage();
+    }).catch(function () {
+      // 状态接口 404 / 后端不可达都走这里：连续 6 次（约 5 秒）才判定中断，
+      // 避免一次网络抖动就把搜索判死。
+      if (!state.search) { return; }
+      state.search.misses += 1;
+      if (state.search.misses >= 6) {
+        failSearch('\u641c\u7d22\u5df2\u4e2d\u65ad\uff08\u540e\u7aef\u4e0d\u53ef\u8fbe\u6216\u5df2\u91cd\u542f\uff09\uff0c\u70b9\u300c\u91cd\u8bd5\u300d\u91cd\u65b0\u83b7\u53d6', true);
+      }
+    });
   }
 
   function failSearch(message, offerStart) {
     var panel = state.panel;
     if (!panel) { return; }
     if (state.timer) { clearInterval(state.timer); state.timer = null; }
+    state.search = null;   // 停止计时：这条路径已经把搜索判死，留着旧时钟只会误导
     panel.progress.classList.add('jdl-progress--done');
     setStage(panel.progress, message);
     panel.summary.textContent = message;

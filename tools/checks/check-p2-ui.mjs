@@ -1,6 +1,6 @@
 // Behaviour guard for the P2 UI fixes (evidence directory → repository, task t28).
 //
-// What it guards (40 checks, one failure each):
+// What it guards (45 checks, one failure each):
 //   R1 threshold is read-only: no 60/65/70/75/80 dial, nothing reads panel.threshold,
 //      the note node carries jdl-threshold-note, and configuredMinScore() falls back to
 //      60 for a missing, zero, or non-numeric config value.
@@ -16,14 +16,16 @@
 //      后端快照 kind 是探针口径 movie）之后提交第 2 条仍是 record；TV Shows 路径不变。
 //   R8 提交/监控的进行中状态：点下去同一帧就 disabled 且文案含「提交中… 正在探测元数据」，
 //      响应放行后恢复可点；失败 toast 带 rc 与耗时秒数，成功 toast 仍是既有文案。
+//   R9 搜索停滞反馈：进行中阶段文案带「已用 N s」；超过阈值（960 s）仍无任何新行且未 done
+//      时判定「搜索无进展」并给「重试」入口且停掉轮询；done:true 的正常收尾不受影响。
 //
 // How it works: the five Web shards are concatenated in the controller's ScriptSegments
 // order and run in node:vm against a minimal DOM stub; a ApiClient.ajax stub captures the
 // payload the panel really posts. No browser, no Jellyfin, no network.
 //
 // How to run (from the repository root):
-//   node tools/checks/check-p2-ui.mjs                 # green iff all 40 checks hold
-//   node tools/checks/check-p2-ui.mjs --mutate        # revert eight fixed behaviours, one
+//   node tools/checks/check-p2-ui.mjs                 # green iff all 45 checks hold
+//   node tools/checks/check-p2-ui.mjs --mutate        # revert nine fixed behaviours, one
 //                                                     # at a time, and require each to go red
 //   node tools/checks/check-p2-ui.mjs --web-dir DIR   # check another copy of the shards
 //
@@ -168,6 +170,10 @@ function load(bundleSrc, snapshotReply, options) {
       if (hold) {
         return new Promise((resolve) => { held.push(() => resolve(heldReply)); });
       }
+      // R9：按 URL 回不同的东西（搜索状态 vs 别的一律成功）。
+      if (options && options.respond) {
+        return Promise.resolve(options.respond(req));
+      }
       // 只有 R7 的监控轮询需要「后端回一份快照」；其余检查沿用原来的空回复。
       if (snapshotReply && String(req.url).indexOf('snapshot') >= 0) {
         return Promise.resolve(snapshotReply());
@@ -195,7 +201,7 @@ async function runChecks(bundleSrc) {
   const { t, calls, loadError } = load(bundleSrc);
   if (loadError) {
     failures.push('LOAD :: the Web shards did not load: ' + loadError.message);
-    return { failures, checks: 40 };
+    return { failures, checks: 45 };
   }
 
   // ---- acceptance 1：不再暴露阈值档位，阈值只取配置 ----
@@ -397,7 +403,79 @@ async function runChecks(bundleSrc) {
       'disabled=' + ui.button.disabled + ' toast=' + lastToastText(doc));
   }
 
-  return { failures, checks: 40 };
+  // ---- R9 搜索停滞反馈：已用时长 + 长期无进展给重试 ----
+  // 早期阶段（check/pool/probe）可以几分钟不产出行，job 还可能是永不完成的空壳；
+  // 没有这两条时面板会一直显示「正在连接后端…」，看起来就是卡死。
+  const collectText = (node) => {
+    let out = String(node.textContent || '');
+    for (const child of node.children || []) { out += ' ' + collectText(child); }
+    return out;
+  };
+  const searchUi = () => {
+    const progress = makeNode('div');
+    const stage = makeNode('div');
+    stage.className = 'jdl-progress__stage';
+    progress.appendChild(stage);
+    return {
+      stage,
+      panel: {
+        progress, list: makeNode('div'), summary: makeNode('div'), log: makeNode('pre'),
+        kindFilter: 'magnet', seasonFilter: 'all', cacheOnly: false, form: null, item: docItem,
+        categorySelect: { value: 'TV Shows' }
+      }
+    };
+  };
+  const searchRespond = () => (req) => (String(req.url).indexOf('search/status') >= 0
+    ? { done: false, lines: [], error: '' }
+    : { ok: true, rc: 0 });
+  {
+    // ① 进行中：阶段文案带「已用 37 s」，且未到阈值不判停滞
+    const doc = load(bundleSrc, null, { respond: searchRespond() });
+    const ui = searchUi();
+    doc.t.setPanel(ui.panel);
+    doc.t.setSearch({ job: 'j1', seen: 0, misses: 0, startedAt: Date.now() - 37000, lastProgressAt: Date.now(), stage: '正在连接后端…' });
+    doc.t.searchTick();
+    await tick(); await tick();
+    ok('R9-elapsed-shown', ui.stage.textContent.indexOf('已用 37 s') >= 0, ui.stage.textContent);
+    ok('R9-not-stalled-before-threshold',
+      collectText(ui.panel.list).indexOf('无进展') < 0 && ui.panel.list.children.length === 0,
+      'stage=' + ui.stage.textContent + ' list=' + ui.panel.list.children.length);
+  }
+  {
+    // ② 超过阈值（960 s）仍无任何新行 → failSearch + 「重试」，并停掉轮询
+    const doc = load(bundleSrc, null, { respond: searchRespond() });
+    const ui = searchUi();
+    doc.t.setPanel(ui.panel);
+    doc.t.setSearch({ job: 'j1', seen: 0, misses: 0, startedAt: Date.now() - 1000000, lastProgressAt: Date.now() - 1000000, stage: '正在连接后端…' });
+    doc.t.searchTick();
+    await tick(); await tick();
+    const text = collectText(ui.panel.list);
+    ok('R9-stall-enters-retry', text.indexOf('无进展') >= 0 && text.indexOf('重试') >= 0, text.slice(0, 160));
+    ok('R9-stall-stops-polling', doc.t.getTimer() === null && doc.t.getSearch() === null,
+      'timer=' + doc.t.getTimer() + ' search=' + doc.t.getSearch());
+  }
+  {
+    // ③ 正常完成路径不受影响（done:true 照旧收尾，不误报无进展）
+    const doc = load(bundleSrc, null, {
+      respond: (req) => (String(req.url).indexOf('search/status') >= 0
+        ? { done: true, lines: ['完成：6 个候选'], error: '', slug: 'kind-test', search_status: 'ok', snapshot: docSnapshot('record') }
+        : (String(req.url).indexOf('snapshot') >= 0 ? docSnapshot('record') : { ok: true, rc: 0 }))
+    });
+    const ui = searchUi();
+    doc.t.setPanel(ui.panel);
+    doc.t.setSearch({ job: 'j1', seen: 0, misses: 0, startedAt: Date.now() - 5000, lastProgressAt: Date.now() - 5000, stage: '打分 + 校验 metadata…' });
+    doc.t.searchTick();
+    await tick(); await tick();
+    // 注意：done 分支里 renderCandidates() 会按候选数改写 summary，所以「收尾了」要看
+    // 阶段行 + 快照已落 + 轮询已停，而不是看 summary 文案。
+    ok('R9-done-path-unaffected',
+      String(ui.stage.textContent).indexOf('获取完成') >= 0
+        && collectText(ui.panel.list).indexOf('无进展') < 0
+        && doc.t.getSearch() === null && doc.t.getTimer() === null,
+      'stage=' + ui.stage.textContent + ' search=' + doc.t.getSearch() + ' list=' + collectText(ui.panel.list).slice(0, 80));
+  }
+
+  return { failures, checks: 45 };
 }
 
 const MUTATIONS = [
@@ -415,7 +493,13 @@ const MUTATIONS = [
     "    var idleLabel = '';\n"],
   ['响应到达后的恢复可点被拆掉',
     '      clearBusy(button, idleLabel);\n      if (!result || result.error)',
-    '      if (!result || result.error)']
+    '      if (!result || result.error)'],
+  ['搜索停滞判定被拆掉',
+    '      if (searchStalled()) {',
+    '      if (false) {'],
+  ['已用时长的显示被拆掉',
+    '  function searchElapsedSeconds() {\n    var search = state.search;',
+    '  function searchElapsedSeconds() {\n    return 0;\n    var search = state.search;']
 ];
 
 const EXPECT = {
@@ -425,7 +509,9 @@ const EXPECT = {
   '详情页/手动面板的纪录片类型改写被拆掉': 'R7-search-record-when-records',
   '监控轮询回写快照时的 kind 对齐被拆掉': 'R7-poll-keeps-record',
   '提交/监控的进行中状态被拆掉': 'R8-submit-busy-disabled-on-click',
-  '响应到达后的恢复可点被拆掉': 'R8-submit-restored-after-reply'
+  '响应到达后的恢复可点被拆掉': 'R8-submit-restored-after-reply',
+  '搜索停滞判定被拆掉': 'R9-stall-enters-retry',
+  '已用时长的显示被拆掉': 'R9-elapsed-shown'
 };
 
 // A shard that cannot be read is a failure of this guard, not a crash of the command that
@@ -454,7 +540,7 @@ try {
   console.log(failures.length === 0 ? 'P2 UI CHECK PASS' : 'P2 UI CHECK FAIL');
   process.exit(failures.length === 0 ? 0 : 1);
 } catch (error) {
-  console.log('检查项 40，失败 1');
+  console.log('检查项 45，失败 1');
   console.log('FAIL  LOAD :: ' + (error && error.message ? error.message : String(error)));
   console.log(MUTATE ? 'MUTATION CHECK FAIL' : 'P2 UI CHECK FAIL');
   process.exit(1);
