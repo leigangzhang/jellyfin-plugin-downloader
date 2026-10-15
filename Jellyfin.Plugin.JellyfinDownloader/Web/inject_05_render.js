@@ -337,7 +337,6 @@
 
   function renderRow(candidate, snapshot) {
     var row = el('div', 'jdl-row');
-    row.setAttribute('data-jdl-key', candidate.key || candidate.ih || '');
 
     var score = el('div', 'jdl-score ' + bandOf(candidate.score));
     score.appendChild(el('div', 'jdl-score__value', candidate.score != null ? candidate.score.toFixed(1) : '\u2014'));

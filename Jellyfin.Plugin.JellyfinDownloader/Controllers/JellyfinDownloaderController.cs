@@ -32,7 +32,7 @@ public class JellyfinDownloaderController : ControllerBase
     private static string? _packageChecksum;
     private static readonly string[] AllowedPrefixes =
     {
-        "search", "snapshot", "submit", "watch", "verify", "mark", "cleanup", "pan/",
+        "search", "snapshot", "submit", "watch", "mark", "cleanup", "pan/",
     };
 
     /// <summary>
@@ -436,36 +436,6 @@ public class JellyfinDownloaderController : ControllerBase
         RefreshMediaPaths();
         var result = BackendManager.Restart();
         return new JsonResult(new { ok = result.Ok, detail = result.Detail, status = BackendManager.Status() });
-    }
-
-    /// <summary>Detects the system python3 (and its version) for the config page.</summary>
-    [HttpGet("python/status")]
-    [Authorize(Policy = "RequiresElevation")]
-    public IActionResult PythonStatus()
-    {
-        NoCache();
-        PythonLocator.Invalidate();
-        return new JsonResult(BackendManager.Status());
-    }
-
-    /// <summary>Guides the user through installing a usable python3 (never runs sudo).</summary>
-    [HttpPost("python/install")]
-    [Authorize(Policy = "RequiresElevation")]
-    public IActionResult PythonInstall()
-    {
-        NoCache();
-        var guide = PythonInstaller.Guide();
-        // 安装动作可能刚把解释器装好，清缓存让「刷新状态」看到最新结果
-        PythonLocator.Invalidate();
-        return new JsonResult(new
-        {
-            ok = guide.Ok,
-            detail = guide.Detail,
-            command = guide.Command,
-            url = guide.Url,
-            options = guide.Options,
-            status = BackendManager.Status(),
-        });
     }
 
     /// <summary>Re-reads the Jellyfin library paths so the backend gets a fresh MEDIA_ROOT.</summary>

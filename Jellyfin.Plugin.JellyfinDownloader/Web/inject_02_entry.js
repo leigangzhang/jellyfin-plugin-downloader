@@ -42,7 +42,6 @@
       button = el('button', 'headerButton headerButtonRight');
     }
     button.classList.add('jdl-header-btn');
-    button.setAttribute('data-jdl-header', '1');
     button.type = 'button';
     button.title = '\u641c\u7d22\u8d44\u6e90\u5e76\u6253\u5206\uff08\u5e93\u91cc\u6ca1\u6709\u4e5f\u884c\uff09';
     button.setAttribute('aria-label', '\u83b7\u53d6\u8d44\u6e90');

@@ -98,7 +98,7 @@ python3 --version
 ./install.sh    # 安装到 Jellyfin 插件目录并重启 Jellyfin
 ```
 
-> Linux / Windows 的安装命令不在这里重复：`apt-get install -y python3` / `dnf install -y python3` / `winget install Python.Python.3.12`（Windows 上记得勾 “Add python.exe to PATH”）写在 [PythonInstaller.cs](Jellyfin.Plugin.JellyfinDownloader/PythonInstaller.cs)，那里是这套引导的唯一出处。
+> Linux / Windows 的安装命令不在这里重复：`apt-get install -y python3` / `dnf install -y python3` / `winget install Python.Python.3.12`（Windows 上记得勾 “Add python.exe to PATH”）写在 [PythonInstaller.cs](Jellyfin.Plugin.JellyfinDownloader/PythonInstaller.cs)。插件只做**探测**不代装：解释器装好后由 `PythonLocator` 自动找到；那个文件现在只剩这份跨平台安装指引，没有调用者，读数时按文档看。
 
 `install.sh` 会：先停掉 Jellyfin → 复制 DLL / `meta.json` / `icon.png` / `backend/` → 保留原有的 `backend/state/`（历史快照与标记不丢）→ `open -n /Applications/Jellyfin.app` 重新拉起。
 
@@ -168,7 +168,8 @@ jellyfin-plugin-downloader/
 │   ├── Plugin.cs                           # 插件入口
 │   ├── BackendManager.cs                   # 后端进程的启动/停止/重启（含按端口兜底）
 │   ├── BackendHostedService.cs             # 随 Jellyfin 生命周期起停后端
-│   ├── PythonLocator.cs / PythonInstaller.cs  # 探测与安装 Python
+│   ├── PythonLocator.cs                    # 探测本机 python3（PATH/Homebrew/python.org/pyenv/conda/uv）
+│   ├── PythonInstaller.cs                  # 只剩跨平台安装命令这份指引；无调用者，供人照做
 │   ├── MediaPaths.cs                       # 从媒体库配置解析媒体根 / 暂存区
 │   ├── Controllers/JellyfinDownloaderController.cs  # 全部 HTTP 端点 + 后端代理
 │   ├── Middleware/                         # 往 /web/index.html 注入脚本与样式
