@@ -15,7 +15,6 @@
 import os
 import re
 import subprocess
-import plistlib
 
 from ._shared import ensure_trailing_slash, path_is_within
 
@@ -27,7 +26,6 @@ __all__ = [
     "STATE_DIR",
     "POOL_DIR",
     "PAN_STATE_DIR",
-    "THUNDER_PREFS",
     "VIDEO_EXTS",
     "SUBTITLE_EXTS",
     "JUNK_EXTS",
@@ -38,7 +36,6 @@ __all__ = [
     "normalized_destination",
     "atomic_same_volume_move",
     "human_gb",
-    "thunder_parallelism",
     "path_is_within",
 ]
 
@@ -85,9 +82,6 @@ DATA_ROOT = os.path.abspath(
 STATE_DIR = os.path.join(DATA_ROOT, "watches")
 POOL_DIR = os.path.join(DATA_ROOT, "pool")
 PAN_STATE_DIR = os.path.join(DATA_ROOT, "pan")
-THUNDER_PREFS = os.path.expanduser(
-    "~/Library/Preferences/com.xunlei.Thunder.plist"
-)
 
 VIDEO_EXTS = {".mkv", ".mp4", ".ts", ".avi", ".mov", ".wmv", ".m4v", ".m2ts"}
 SUBTITLE_EXTS = {".srt", ".ass", ".ssa", ".sub", ".sup", ".vtt"}
@@ -163,38 +157,3 @@ def atomic_same_volume_move(source, destination):
 
 def human_gb(num_bytes):
     return num_bytes / GB
-
-
-def thunder_parallelism():
-    """Return Thunder's configured maximum number of simultaneous tasks.
-
-    Thunder stores a zero-based index for a 20-item preset list whose values
-    are 1 through 20. Prefer `defaults` so the current in-memory preference is
-    used, then fall back to the preference plist.
-    """
-    index = None
-    try:
-        result = subprocess.run(
-            [
-                "defaults",
-                "read",
-                "com.xunlei.Thunder",
-                "maxRunningTasksIndex",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-        if result.returncode == 0:
-            index = int(result.stdout.strip())
-    except (OSError, ValueError, subprocess.SubprocessError):
-        index = None
-
-    if index is None:
-        try:
-            with open(THUNDER_PREFS, "rb") as handle:
-                index = int(plistlib.load(handle).get("maxRunningTasksIndex", 0))
-        except (OSError, ValueError, plistlib.InvalidFileException):
-            index = 0
-    return max(1, min(20, index + 1))

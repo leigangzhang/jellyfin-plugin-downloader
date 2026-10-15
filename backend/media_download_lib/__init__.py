@@ -34,7 +34,6 @@ from .paths import (  # noqa: F401  -- 再导出：调用方按扁平名字 impo
     STAGING_ROOT,
     STATE_DIR,
     SUBTITLE_EXTS,
-    THUNDER_PREFS,
     VIDEO_EXTS,
     atomic_same_volume_move,
     ensure_trailing_slash,
@@ -42,7 +41,6 @@ from .paths import (  # noqa: F401  -- 再导出：调用方按扁平名字 impo
     normalized_destination,
     path_is_within,
     staging_dir_for_final,
-    thunder_parallelism,
 )
 from ._shared import allocated_size  # noqa: F401  -- 再导出
 from .db import (  # noqa: F401  -- 再导出
