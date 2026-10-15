@@ -455,6 +455,13 @@
     }).then(function (result) {
       if (anchorPlaced(result)) { markWatched(record, TRENDING_BADGE.anchored); return; }
       if (!anchorEnabled()) { markWatched(record, TRENDING_BADGE.listed); return; }
+      // anchor 要用 4 位年份拼「片名 (年份)」目录，缺年份或年份不合法时插件直接 400。
+      // 这时不发那一枪：只记关注清单，并把原因说清楚（不要把内部错误码甩给用户）。
+      if (!anchorableYear(entry)) {
+        markWatched(record, TRENDING_BADGE.listed);
+        toast('缺年份：已记进关注清单，未写库内占位');
+        return;
+      }
       return pluginApi('trending/anchor', {
         type: 'POST',
         data: { title: entry.title, year: entry.year, kind: entry.kind }
@@ -470,6 +477,13 @@
       record.watch.textContent = '关注';
       toast('关注失败：' + trendingError(error));
     });
+  }
+
+  // anchor 分支的前置条件：年份必须是 4 位数字（插件侧拿它拼目录名，缺/非法 → 400）。
+  // 判定只认「4 位数字」，不认 2025-01-01 这类日期串——后端收的是年份。
+  function anchorableYear(entry) {
+    var year = entry && entry.year != null ? String(entry.year).trim() : '';
+    return /^\d{4}$/.test(year);
   }
 
   function anchorPlaced(result) {
