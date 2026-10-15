@@ -45,15 +45,12 @@ from media_download_lib import (  # noqa: E402
     path_is_within,
 )
 
-# marks/snapshots 与 pool/watches/pan 同属插件自己的数据根（JMD_DATA_DIR
+# snapshots 与 pool/watches/pan 同属插件自己的数据根（JMD_DATA_DIR
 # 可整体搬走；JMD_CONSOLE_STATE_DIR 仍可只覆盖这一部分）
 CONSOLE_STATE_DIR = os.path.abspath(
     os.environ.get("JMD_CONSOLE_STATE_DIR") or DATA_ROOT
 )
-MARKS_DIR = os.path.join(CONSOLE_STATE_DIR, "marks")
 SNAPSHOTS_DIR = os.path.join(CONSOLE_STATE_DIR, "snapshots")
-WEB_DIR = os.path.join(HERE, "web")
-PUBLISH_HISTORY = os.path.join(WEB_DIR, ".publish_history")
 
 VALID_KINDS = ("movie", "episode", "variety", "record")
 KIND_TO_CATEGORY = {
@@ -72,7 +69,6 @@ PROBE_KIND = {
 }
 DEFAULT_DURATION = {"movie": 120, "episode": 50, "variety": 50, "record": 90}
 
-MARK_SET = {"pending", "arbitrate", "dead", "submit", "done", "skip"}
 IH_RE = re.compile(r"^[0-9A-Fa-f]{40}$")
 # 允许「.」以便季级命名空间（王冠.s01），但仍拒绝路径穿越（".."）
 SAFE_SLUG_RE = re.compile(r"^[0-9A-Za-z\u4e00-\u9fff][0-9A-Za-z\u4e00-\u9fff\-\.]*$")
@@ -124,26 +120,7 @@ def derive_final_dir(title: str, kind: str, year: str = "", category: str = "") 
 
 
 def ensure_dirs() -> None:
-    for d in (MARKS_DIR, SNAPSHOTS_DIR):
-        os.makedirs(d, exist_ok=True)
-
-
-def read_marks(slug: str) -> dict:
-    path = os.path.join(MARKS_DIR, f"{slug}.json")
-    try:
-        with open(path, encoding="utf-8") as fh:
-            return json.load(fh)
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
-def write_marks(slug: str, marks: dict) -> None:
-    ensure_dirs()
-    path = os.path.join(MARKS_DIR, f"{slug}.json")
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(marks, fh, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
+    os.makedirs(SNAPSHOTS_DIR, exist_ok=True)
 
 
 def read_probe(slug: str) -> dict:
@@ -440,7 +417,6 @@ def build_snapshot(
     round_empty = (
         bool(ctx.get("probe_round_empty")) if probe_round_empty is None else bool(probe_round_empty)
     )
-    marks = read_marks(slug)
     ranked = probe.get("ranked") or []
     pan_codes = read_pan_map(slug)
     snapshot_title = ctx.get("title") or probe.get("query") or ""
@@ -451,7 +427,6 @@ def build_snapshot(
         cand = dict(entry)
         key = candidate_key(cand)
         cand["key"] = key
-        cand["mark"] = marks.get(key, "")
         cand["seasons"] = candidate_seasons(cand)
         cand["title_match"] = title_matches(cand, snapshot_title, snapshot_original)
         if cand.get("kind") == "pan":

@@ -1,4 +1,4 @@
-"""快照读回与「本轮写过没有」的判定：probe 输出、partial 解析、快照组装、发布历史。
+"""快照读回与「本轮写过没有」的判定：probe 输出、partial 解析、快照组装。
 
 `_file_written_since` 是这条链上的关键口径：用它区分「本轮真产出了结果」与
 「这里躺着的还是上一轮的文件」（t10/N2）。实现从 `backend/console_server.py` 搬来，
@@ -8,11 +8,8 @@ from __future__ import annotations
 
 import json
 import os
-import time
 
 import build_console as bc
-
-PUBLISH_HISTORY = bc.PUBLISH_HISTORY
 
 
 def _file_written_since(path: str, since: float, slack: float = 1.0) -> bool:
@@ -67,14 +64,3 @@ def _parse_exists(out: str) -> dict:
         if "NOT_FOUND" in line:
             return {"status": "NOT_FOUND", "detail": line.strip()}
     return {"status": "UNKNOWN", "detail": out.strip()[:200]}
-
-
-def _snapshot_history(index_path: str):
-    if not os.path.isfile(index_path):
-        return
-    os.makedirs(PUBLISH_HISTORY, exist_ok=True)
-    stamp = time.strftime("%Y%m%d%H%M%S")
-    with open(index_path, encoding="utf-8") as fh:
-        content = fh.read()
-    with open(os.path.join(PUBLISH_HISTORY, f"index-{stamp}.html"), "w", encoding="utf-8") as fh:
-        fh.write(content)

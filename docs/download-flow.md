@@ -2,7 +2,7 @@
 
 English | [中文](download-flow.zh.md)
 
-The pipeline runs in three layers and 13 stages, from the Jellyfin detail page to a normalized file in the media library. The stage-by-stage map, the diagrams and the failure branches live in [download-flow.html](download-flow.html) — that page is the single home for the narrative. This page carries the facts a check can verify: the module inventory, the flow's budgets, and what is intentionally kept.
+The pipeline runs in three layers and 12 stages, from the Jellyfin detail page to a normalized file in the media library. The stage-by-stage map, the diagrams and the failure branches live in [download-flow.html](download-flow.html) — that page is the single home for the narrative. This page carries the facts a check can verify: the module inventory, the flow's budgets, and what is intentionally kept.
 
 ## The pipeline in one line
 
@@ -47,7 +47,7 @@ Findings from a read-only audit. Rows that say "removed" are gone from the tree;
 |---|---|
 | `media_download_lib/paths.py` `thunder_parallelism()` | dead: no reference outside its own file; removed |
 | `/api/pan/*` + `pan_transfer.py` | kept on purpose: the cloud retrieve path stays |
-| `/api/cleanup`, `/api/mark`, publish endpoints | reachable only from the backend itself; no client in this repository |
+| `/api/cleanup`, `/api/mark`, publish endpoints | reachable only from the backend itself; no client in this repository; removed |
 | `data-jdl-header`, `data-jdl-key` | write-only attributes with no reader; removed |
 | `/python/status`, `/python/install` | orphaned endpoints; the configuration page no longer offers the install entry; removed while `PythonInstaller.cs` stays as the documented install guide |
 | `BackendBaseUrl`, `BackendScript` | kept: the only way to point the plugin at another backend |

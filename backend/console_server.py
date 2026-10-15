@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """省流版本地控制台服务（Python 标准库 http.server，零第三方依赖）。
 
-静态：/ /editor.html /app.js /console.css /vendor/*
-API：/api/snapshot /api/search /api/submit /api/watch /api/cleanup
-     /api/pan/<subcommand> /api/mark /api/publish /api/publish/rollback
+API：/api/snapshot /api/search /api/search/status /api/submit /api/watch
+     /api/pan/<subcommand>
+
+静态资源、/api/cleanup、/api/mark 与 /api/publish 已随发行版精简删除：
+前端只调上面这几个端点，控制台页面本身也不再由后端发（`backend/web` 不存在，
+面板前端是插件内嵌的 Web/inject_0*.js 分片）。
 
 所有写动作都委托给主 skill 脚本（subprocess）或复用其库函数（import），本服务
 本身不改主 skill 的 pool 与迅雷数据库。
@@ -33,16 +36,14 @@ import console_server.http_api as http_api
 # 下面这一组导入同时是「再导出」：拆分前 `console_server.<name>` 能取到的符号，
 # 入口仍然取得到（测试、以及任何按模块用的地方都照旧）。
 from console_server import jobs, probe_state, service
-from console_server.http_api import (
-    MIME, WEB_DIR, _body_inner, render_index, valid_target_dir,
-)
+from console_server.http_api import valid_target_dir
 from console_server.jobs import (
     JOBS, JOBS_LOCK, _JOB_SEQ, _job_add, _job_finish, _new_job, episode_hints,
     season_hints,
 )
 from console_server.probe_state import (
-    PUBLISH_HISTORY, _build_snapshot, _file_written_since, _parse_exists,
-    _probe_partial, _snapshot_history,
+    _build_snapshot, _file_written_since, _parse_exists,
+    _probe_partial,
 )
 from console_server.service import (
     MAIN_SCRIPTS, PID_FILE, _ACTIVE_PROCS, _PROCS_LOCK, _handle_signal, _kill_group,

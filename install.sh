@@ -74,7 +74,7 @@ while IFS= read -r DEST; do
     rm -rf "${DEST}/backend/state"
     mv "${DEST}/backend-state.keep" "${DEST}/backend/state"
   fi
-  mkdir -p "${DEST}/backend/state/snapshots" "${DEST}/backend/state/marks"
+  mkdir -p "${DEST}/backend/state/snapshots"
 
   echo "installed -> ${DEST}"
 done <<< "${DIRS}"

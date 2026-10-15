@@ -2,7 +2,7 @@
 
 [English](download-flow.md) | 中文
 
-链路分三层、13 个阶段，从 Jellyfin 详情页一直走到媒体库里的规范文件。逐阶段的图、阶段卡与失败分支都在 [download-flow.html](download-flow.html) —— narrative 只有那一个家。本页只放可机检的事实：模块清单、链路口径、以及刻意保留的东西。
+链路分三层、12 个阶段，从 Jellyfin 详情页一直走到媒体库里的规范文件。逐阶段的图、阶段卡与失败分支都在 [download-flow.html](download-flow.html) —— narrative 只有那一个家。本页只放可机检的事实：模块清单、链路口径、以及刻意保留的东西。
 
 ## 一句话链路
 
@@ -47,7 +47,7 @@
 |---|---|
 | `media_download_lib/paths.py` 的 `thunder_parallelism()` | 死代码：除自身文件外无引用；已删除 |
 | `/api/pan/*` + `pan_transfer.py` | 刻意保留：云盘取回路径继续存在 |
-| `/api/cleanup`、`/api/mark`、publish 端点 | 只有后端自己能到达；本仓库没有客户端 |
+| `/api/cleanup`、`/api/mark`、publish 端点 | 只有后端自己能到达；本仓库没有客户端；已删除 |
 | `data-jdl-header`、`data-jdl-key` | 只写不读的属性；已删除 |
 | `/python/status`、`/python/install` | 孤儿端点；配置页已不再提供安装入口；已删除，`PythonInstaller.cs` 保留为安装指引 |
 | `BackendBaseUrl`、`BackendScript` | 保留：把插件指向另一个后端的唯一途径 |

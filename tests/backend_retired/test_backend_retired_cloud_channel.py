@@ -37,9 +37,7 @@ class CloudChannelWiringTests(unittest.TestCase):
         """
         calls = []
         snapshots = os.path.join(self.tmp, "snapshots")
-        marks = os.path.join(self.tmp, "marks")
         os.makedirs(snapshots, exist_ok=True)
-        os.makedirs(marks, exist_ok=True)
         params = {
             "title": "漫长的季节", "kind": "episode", "category": "Shows",
             "slug": "demo", "key": "demo", "duration": 50.0, "year": "",
@@ -64,7 +62,6 @@ class CloudChannelWiringTests(unittest.TestCase):
 
         patches = [
             mock.patch.object(self.bc, "SNAPSHOTS_DIR", snapshots),
-            mock.patch.object(self.bc, "MARKS_DIR", marks),
             mock.patch.object(self.bc, "list_thunder_tasks", lambda: []),
             mock.patch.object(self.bc, "list_watches", lambda: []),
             mock.patch.object(self.cs, "run_cli", record_cli),

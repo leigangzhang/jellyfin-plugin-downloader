@@ -3,8 +3,8 @@
 # After editing either side, bring the other along and re-record with:
 #   python3 tools/pair-docs.py --write docs/download-flow.md
 /jellyfin-downloader-download-pipeline-module-level:
-  en: afad7d387c783512
-  zh: a70fc5365f1eeecb
+  en: fd336b0be1455818
+  zh: b3656d6b90e73bc5
 /jellyfin-downloader-download-pipeline-module-level/the-pipeline-in-one-line:
   en: 228546e980ab8a7e
   zh: 7fdd38077546c213
@@ -15,8 +15,8 @@
   en: 52311f4188032023
   zh: 4a165a15c9442b5f
 /jellyfin-downloader-download-pipeline-module-level/redundant-and-kept:
-  en: 0d399390a3061600
-  zh: c839f032a3cea37c
+  en: d4349746d9883b55
+  zh: 8f13b23ce31237d3
 /jellyfin-downloader-download-pipeline-module-level/unverified:
   en: c0b08554a08a9338
   zh: a14aef8a0b9dd755

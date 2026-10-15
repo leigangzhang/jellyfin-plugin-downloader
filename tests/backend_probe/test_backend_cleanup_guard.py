@@ -22,7 +22,6 @@ BACKEND = ROOT / "backend"
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
-from download import cleanup_download as cd  # noqa: E402
 import media_download_lib as mdl  # noqa: E402
 from search import search_pool as sp  # noqa: E402
 
@@ -93,70 +92,6 @@ class ReferencedTaskIsNeverResidue(unittest.TestCase):
         """负证明：没有任何任务引用的残留仍应被清掉，否则守卫就变成了什么都不做。"""
         task_dir = self._run(state=4, referenced=False)
         self.assertFalse((task_dir / MAGENT).exists(), "无人引用的 .magent 应被删除")
-
-
-class CleanupCliRefusesReferencedTasks(unittest.TestCase):
-    """CLI 默认拒绝删除仍在 DB 里的任务，必须显式 --allow-task-deletion。
-
-    离线用例：`subprocess.run` 整体打桩，`--no-thunder-restart` 再兜一层。
-    2026-10-14 之前这里没打 `subprocess` 桩，`force=True` 那条用例会真的执行
-    `cleanup_download.py` 的关/开迅雷动作——每跑一次测试就把用户的迅雷杀一次再拉起来。
-    """
-
-    def _run_cli(self, force: bool, no_restart: bool = True) -> tuple[int, str, mock.Mock]:
-        import contextlib
-        import io
-
-        row = task_row(4)
-        row["bt_task_info"] = (
-            '{"subtask": [{"is_select": 1, "file_size": 100, "download_size": 15}]}'
-        )
-        argv = ["cleanup_download.py", "9C49DAE7", "/tmp/whatever"]
-        if force:
-            argv.append("--allow-task-deletion")
-        if no_restart:
-            argv.append("--no-thunder-restart")
-        buf = io.StringIO()
-        with mock.patch.object(cd.subprocess, "run") as run:
-            with mock.patch.object(sys, "argv", argv), \
-                 mock.patch.object(cd, "find_task_by_hash", return_value=[row]), \
-                 mock.patch.object(cd, "task_file_names", return_value=[TASK_NAME]), \
-                 mock.patch.object(cd, "cleanup_task_files", return_value={"files": [], "bytes": 0, "dirs": []}), \
-                 mock.patch.object(cd, "delete_task_row", return_value=True), \
-                 contextlib.redirect_stdout(buf):
-                code = cd.main()
-        return code, buf.getvalue(), run
-
-    def test_default_refuses_a_low_progress_state_four_task(self):
-        code, out, run = self._run_cli(force=False)
-        self.assertEqual(code, 3)
-        self.assertIn("REFUSING_TO_DELETE_REFERENCED_TASK", out)
-        run.assert_not_called()
-
-    def test_explicit_flag_is_the_only_way_through(self):
-        code, out, run = self._run_cli(force=True)
-        self.assertNotIn("REFUSING_TO_DELETE_REFERENCED_TASK", out)
-        self.assertIn("CLEANUP_DONE", out)
-        # 离线用例一个 OS 动作都不许发——尤其不许碰宿主的迅雷。
-        run.assert_not_called()
-
-    def test_restart_can_be_opted_out_but_stays_on_by_default(self):
-        """`--no-thunder-restart` 只关掉关/开动作，默认（不传）仍会执行它们。"""
-        code, out, run = self._run_cli(force=True, no_restart=False)
-        self.assertEqual(code, 0)
-        self.assertIn("CLEANUP_DONE", out)
-        self.assertEqual(
-            [call.args[0] for call in run.call_args_list],
-            [
-                ["osascript", "-e", 'quit app "Thunder"'],
-                ["pkill", "-9", "-f", "Thunder"],
-                ["open", "-a", "Thunder"],
-            ],
-        )
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class WriteTaskMagentIsDeterministic(unittest.TestCase):

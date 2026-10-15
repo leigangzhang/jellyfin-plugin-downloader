@@ -75,7 +75,7 @@ class ProbePartialStatusTests(unittest.TestCase):
 class ConsoleRoundsWithoutOutputTests(unittest.TestCase):
     """N2：本轮没写出 probe JSON 时，不许把上一轮快照当成本轮结果回写。
 
-    复现方式与 t10 相同：把 `bc.SNAPSHOTS_DIR`/`MARKS_DIR` 指到临时目录，桩掉
+    复现方式与 t10 相同：把 `bc.SNAPSHOTS_DIR` 指到临时目录，桩掉
     `run_cli`/`run_cli_stream`，让「probe」既不写 JSON 又把 PROBE_PARTIAL 打到
     stdout；断言磁盘上那份旧快照的**内容和 mtime 都没变**，而本轮 job 的快照是
     「空 + partial」而不是旧候选。
@@ -108,9 +108,7 @@ class ConsoleRoundsWithoutOutputTests(unittest.TestCase):
 
         self.bc = bc
         self.snapshots = os.path.join(self.tmp, "snapshots")
-        self.marks = os.path.join(self.tmp, "marks")
         os.makedirs(self.snapshots)
-        os.makedirs(self.marks)
         self.probe_path = os.path.join(self.snapshots, "demo.probe.json")
         with open(self.probe_path, "w", encoding="utf-8") as handle:
             json.dump(self.PREVIOUS, handle, ensure_ascii=False)
@@ -136,7 +134,6 @@ class ConsoleRoundsWithoutOutputTests(unittest.TestCase):
     def _run_round(self, stream_result):
         patchers = [
             mock.patch.object(self.bc, "SNAPSHOTS_DIR", self.snapshots),
-            mock.patch.object(self.bc, "MARKS_DIR", self.marks),
             mock.patch.object(self.bc, "list_thunder_tasks", lambda: []),
             mock.patch.object(self.bc, "list_watches", lambda: []),
             mock.patch.object(self.cs, "run_cli", lambda *a, **k: (0, "", "")),

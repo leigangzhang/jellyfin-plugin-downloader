@@ -236,7 +236,7 @@
     <p class="sub">模块粒度 · 每一步只写「谁执行了什么动作」 · 不出示函数名与参数默认值</p>
     <p class="lede">
       从 Jellyfin 详情页点「获取资源」，到文件按规范命名落进媒体库并触发库刷新，一共经过
-      <strong>3 层、13 个阶段</strong>。每张阶段卡片的最后一行给出这条动作的出处源码，需要细节时按它去读。
+      <strong>3 层、12 个阶段</strong>。每张阶段卡片的最后一行给出这条动作的出处源码，需要细节时按它去读。
     </p>
     <div class="meta">
       <span class="chip">事实基准 <code>commit 2d7da69</code></span>
@@ -266,7 +266,7 @@
         <div class="layer__mods">
           <div class="mod"><b>详情页「获取资源」</b><small>电影 / 剧集 / 单集，仅管理员可见</small></div>
           <div class="mod"><b>header 图标入口</b><small>搜库里没有的剧（详情页点不到）</small></div>
-          <div class="mod"><b>面板</b><small>候选列表 · 最低分阈值 · 标记 · 任务状态轮询</small></div>
+          <div class="mod"><b>面板</b><small>候选列表 · 最低分阈值 · 任务状态轮询</small></div>
         </div>
       </div>
 
@@ -313,7 +313,7 @@
   </section>
 
   <section class="panel" id="chain">
-    <h2>二、主链路（13 个阶段）</h2>
+    <h2>二、主链路（12 个阶段）</h2>
     <p class="sub">实线是主路径；失败与分支统一收在下面的「失败分支」里。</p>
 
     <div class="flow" style="margin-top:14px">
@@ -345,7 +345,7 @@
         <div class="stage__mod">Controllers/JellyfinDownloaderController.cs</div>
         <ol>
           <li><b>仅管理员</b>（RequiresElevation）放行。</li>
-          <li>路径必须命中 <b>白名单前缀</b>：search / snapshot / submit / watch / verify / mark / cleanup / pan/。</li>
+          <li>路径必须命中 <b>白名单前缀</b>：search / snapshot / submit / watch / pan/。</li>
           <li><b>转发</b> 到后端实际监听地址（端口自增后不能读配置里那个字段），失败回 502 与原因。</li>
         </ol>
         <div class="io"><b>产物：</b>浏览器与后端之间的唯一通道（因此没有 CORS，也不用给后端做鉴权）</div>
@@ -413,7 +413,7 @@
         <div class="stage__mod">console_server/probe_state.py + build_console.py</div>
         <ol>
           <li>写 probe 结果、云盘候选（保留提取码）、本轮状态（context）。</li>
-          <li>组装成面板视图：候选 + 标记 + 迅雷任务 + 本轮状态。</li>
+          <li>组装成面板视图：候选 + 迅雷任务 + 本轮状态。</li>
           <li>面板 <b>每 5 秒轮询</b>；空轮时磁盘上那份候选会被标 <code>previous_round</code>，不冒充新结果。</li>
         </ol>
         <div class="io"><b>产物：</b>state/snapshots/*.json · 面板候选列表与四维拆解</div>
@@ -423,7 +423,7 @@
         <div class="stage__head"><span class="stage__no">9</span><span class="stage__title">选择与提交</span></div>
         <div class="stage__mod">Web/inject_05_render.js → POST /api/submit 或 /api/watch</div>
         <ol>
-          <li>展示总分与 <b>四维拆解</b>、体积、码率、字幕、片源；可设最低分阈值、标记候选。</li>
+          <li>展示总分与 <b>四维拆解</b>、体积、码率、字幕、片源；可设最低分阈值。</li>
           <li>磁力候选两个按钮：<b>后台监控</b>（直接建 watcher）与 <b>提交迅雷</b>（走守门流程）。</li>
           <li>云盘候选只有一个「<b>打开云盘</b>」（转存是浏览器侧动作）。</li>
           <li>端点<b>校验</b> info hash 与分类，再交给后端脚本。</li>
@@ -465,16 +465,6 @@
           <li>需要人工的事（缺集、缺字幕、码率不合规、疑似硬字幕）<b>列成清单</b>，不静默吞掉。</li>
         </ol>
         <div class="io"><b>产物：</b>媒体库里的规范文件 + 库刷新 ｜ <b>失败：</b>校验不过 → <code>invalid</code>，<b>文件留在原地</b>供排查</div>
-      </article>
-
-      <article class="stage s-verify">
-        <div class="stage__head"><span class="stage__no">13</span><span class="stage__title">清理残留</span></div>
-        <div class="stage__mod">POST /api/cleanup → download/cleanup_download.py</div>
-        <ol>
-          <li><b>audit</b> 只报告，<b>prune-orphans</b> 才真删——默认不删。</li>
-          <li>需要动迅雷任务文件时先绕一圈重启迅雷。</li>
-        </ol>
-        <div class="io"><b>产物：</b>清理报告 / 已清残留</div>
       </article>
 
     </div>
@@ -622,7 +612,7 @@
       <summary>与仓库里那份旧流程图的关系</summary>
       <div>
         根目录另有一份 <code>JMD操作流程图.html</code>（2026-10-13，未入库），画的是 skill 侧那份代码：七段主线里包含
-        <code>series_queue.py</code>——它属于 skill 侧独有，当前后端并不包含；那份图也没有 C# 插件层、同源代理、双通道与快照/标记体系。
+        <code>series_queue.py</code>——它属于 skill 侧独有，当前后端并不包含；那份图也没有 C# 插件层、同源代理、双通道与快照体系。
         本页按插件 <code>backend/</code> 的现状重画，替换了那份的定位。
       </div>
     </details>

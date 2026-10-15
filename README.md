@@ -45,13 +45,11 @@
                       Python 后端 127.0.0.1:8123（仅本机）
                       console_server.py（标准库 http.server，零依赖）
                         /api/search      建候选池 + 打分排名（资源站逐个搜 + 云盘网页搜索）
-                        /api/snapshot    面板快照（任务/候选/标记）
+                        /api/search/status  轮询这一轮的进度
+                        /api/snapshot    面板快照（本轮状态/候选/任务）
                         /api/submit      提交迅雷
                         /api/watch       起 watcher（下载→校验→归档）
-                        /api/cleanup     清理残留
-                        /api/pan/*       云盘转存/取回状态机
-                        /api/mark        人工标记
-                        /api/publish     面板产物发布/回滚
+                        /api/pan/*       云盘取回状态机
                                           │
                         后端脚本（backend/*.py）│
                         ├─ 迅雷数据库 / 云盘缓存（只读）
@@ -100,7 +98,7 @@ python3 --version
 
 > Linux / Windows 的安装命令不在这里重复：`apt-get install -y python3` / `dnf install -y python3` / `winget install Python.Python.3.12`（Windows 上记得勾 “Add python.exe to PATH”）写在 [PythonInstaller.cs](Jellyfin.Plugin.JellyfinDownloader/PythonInstaller.cs)。插件只做**探测**不代装：解释器装好后由 `PythonLocator` 自动找到；那个文件现在只剩这份跨平台安装指引，没有调用者，读数时按文档看。
 
-`install.sh` 会：先停掉 Jellyfin → 复制 DLL / `meta.json` / `icon.png` / `backend/` → 保留原有的 `backend/state/`（历史快照与标记不丢）→ `open -n /Applications/Jellyfin.app` 重新拉起。
+`install.sh` 会：先停掉 Jellyfin → 复制 DLL / `meta.json` / `icon.png` / `backend/` → 保留原有的 `backend/state/`（历史快照不丢）→ `open -n /Applications/Jellyfin.app` 重新拉起。
 
 > 之所以先停服再覆盖：运行中的进程可能在复制途中读到半个 DLL，触发 `BadImageFormatException: Bad IL range`。
 
@@ -185,8 +183,8 @@ jellyfin-plugin-downloader/
 │   ├── probe/                              # 探针链：健康度 → metadata → 打分 → 交付
 │   ├── search/                             # 取源链：diao 索引 + torrents-csv + 池合并
 │   ├── pan/                                # 云盘分享：找链接 / 入池 / 转存取回
-│   ├── download/                           # 提交迅雷 → 监视 → 校验 → 清理
-│   └── state/                              # 运行时数据（不入库）：pool / watches / snapshots / pan / marks
+│   ├── download/                           # 提交迅雷 → 监视 → 校验 → 归档
+│   └── state/                              # 运行时数据（不入库）：pool / watches / snapshots / pan
 
 > 为什么这四个模块留在 `backend/` 根、其余进子包：`console_server.py` 由插件按
 > `backend/console_server.py` 固定路径启动；`build_console.py` 所在目录同时是脚本查找根与
@@ -206,7 +204,7 @@ jellyfin-plugin-downloader/
 |---|---|
 | 插件本体 | `~/Library/Application Support/jellyfin/plugins/JellyfinDownloader_1.0.0.0/` |
 | 插件配置 | `…/jellyfin/plugins/configurations/Jellyfin.Plugin.JellyfinDownloader.xml` |
-| 后端数据 | `…/JellyfinDownloader_1.0.0.0/backend/state/`（候选池、watcher、快照、云盘、人工标记） |
+| 后端数据 | `…/JellyfinDownloader_1.0.0.0/backend/state/`（候选池、watcher、快照、云盘） |
 | 后端日志 | `…/plugins/configurations/jellyfin-downloader-backend.log` |
 | 下载暂存 | 媒体根同盘的 `.staging/`（迅雷只允许写这里） |
 | 卸载留档 | `backups/jellyfin-downloader-uninstall-<时间戳>/`（已 gitignore） |

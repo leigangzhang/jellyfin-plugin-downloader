@@ -243,9 +243,7 @@ class ConsoleRoundStatusTests(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="jmd-round-status-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.snapshots = os.path.join(self.tmp, "snapshots")
-        self.marks = os.path.join(self.tmp, "marks")
         os.makedirs(self.snapshots)
-        os.makedirs(self.marks)
         import console_server as cs  # 懒加载：控制台栈的入口
         import build_console as bc
 
@@ -273,7 +271,6 @@ class ConsoleRoundStatusTests(unittest.TestCase):
     def run_round(self, stream_result):
         patchers = [
             mock.patch.object(self.bc, "SNAPSHOTS_DIR", self.snapshots),
-            mock.patch.object(self.bc, "MARKS_DIR", self.marks),
             mock.patch.object(self.bc, "list_thunder_tasks", lambda: []),
             mock.patch.object(self.bc, "list_watches", lambda: []),
             mock.patch.object(self.cs, "run_cli", lambda *a, **k: (0, "", "")),

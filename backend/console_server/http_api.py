@@ -6,10 +6,8 @@ Handler 的实现从 `backend/console_server.py` 搬来。入口以它的子类�
 """
 from __future__ import annotations
 
-import glob
 import json
 import os
-import re
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
@@ -19,18 +17,6 @@ from media_download_lib import MEDIA_ROOT, STAGING_ROOT, path_is_within
 from . import jobs as jobs_mod
 from . import probe_state
 from . import service
-
-WEB_DIR = bc.WEB_DIR
-PUBLISH_HISTORY = probe_state.PUBLISH_HISTORY
-
-MIME = {
-    ".html": "text/html; charset=utf-8",
-    ".js": "application/javascript; charset=utf-8",
-    ".css": "text/css; charset=utf-8",
-    ".json": "application/json; charset=utf-8",
-    ".png": "image/png",
-    ".svg": "image/svg+xml",
-}
 
 
 def _target_dir_ok(value) -> bool:
@@ -47,24 +33,6 @@ def _target_dir_ok(value) -> bool:
 # 才生效。包内不复制那些定量与函数。不经过入口直接 import 本包（没有这种用法）时，
 # valid_target_dir 仍是可用的实现，dispatch_search 会明确报错而不是静默不起搜索。
 valid_target_dir = _target_dir_ok
-
-
-def render_index(css: str, body_html: str) -> str:
-    return (
-        "<!doctype html>\n<html lang=\"zh-CN\">\n<head>\n"
-        "<meta charset=\"utf-8\">\n"
-        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
-        "<title>Jellyfin 下载控制台</title>\n"
-        "<style>\n" + (css or "") + "\n</style>\n"
-        "</head>\n<body>\n" + (body_html or "") + "\n"
-        "<script src=\"/app.js\"></script>\n</body>\n</html>\n"
-    )
-
-
-def _body_inner(html: str) -> str:
-    """GrapesJS 的 getHtml() 可能带 <body> 包裹，这里剥离成纯 body 内容。"""
-    m = re.search(r"<body[^>]*>(.*)</body>", html, re.S | re.I)
-    return m.group(1) if m else html
 
 
 def dispatch_search(jid, params):
@@ -117,18 +85,6 @@ class ConsoleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
-        if path in ("/", "/index.html"):
-            return self._serve_static("index.html")
-        if path == "/editor.html":
-            return self._serve_static("editor.html")
-        if path == "/app.js":
-            return self._serve_static("app.js")
-        if path == "/console.css":
-            return self._serve_static("console.css")
-        if path.startswith("/vendor/"):
-            name = os.path.basename(path)
-            if name in ("grapes.min.js", "grapes.min.css"):
-                return self._serve_static(os.path.join("vendor", name))
         if path == "/api/snapshot":
             return self._get_snapshot(parsed)
         if path == "/api/search/status":
@@ -147,30 +103,10 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             return self._api_submit(body)
         if path == "/api/watch":
             return self._api_watch(body)
-        if path == "/api/cleanup":
-            return self._api_cleanup(body)
-        if path == "/api/mark":
-            return self._api_mark(body)
-        if path == "/api/publish":
-            return self._api_publish(body)
-        if path == "/api/publish/rollback":
-            return self._api_publish_rollback()
         if path.startswith("/api/pan/"):
             sub = path[len("/api/pan/"):]
             return self._api_pan(sub, body)
         return self._send(404, {"error": "not found"})
-
-    # ---- static -----------------------------------------------------------
-    def _serve_static(self, rel):
-        full = os.path.normpath(os.path.join(WEB_DIR, rel))
-        if not full.startswith(os.path.normpath(WEB_DIR)):
-            return self._send(403, {"error": "forbidden"})
-        if not os.path.isfile(full):
-            return self._send(404, {"error": "not found"})
-        ext = os.path.splitext(full)[1].lower()
-        with open(full, "rb") as fh:
-            data = fh.read()
-        return self._send(200, data, MIME.get(ext, "application/octet-stream"))
 
     # ---- snapshot ---------------------------------------------------------
     def _get_snapshot(self, parsed):
@@ -317,17 +253,6 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         rc, out, err = service.run_cli(cmd, 60)
         return self._ok({"ok": rc == 0, "rc": rc, "stdout": out, "stderr": err})
 
-    def _api_cleanup(self, body):
-        target = body.get("dir") or ""
-        mode = body.get("mode") or "audit"
-        if not valid_target_dir(target):
-            return self._bad("dir must be inside staging or Media")
-        if mode not in ("audit", "prune-orphans"):
-            return self._bad("invalid mode")
-        flag = "--audit" if mode == "audit" else "--prune-orphans"
-        rc, out, err = service.run_cli(["download/cleanup_download.py", "", target, flag], 300)
-        return self._ok({"ok": rc == 0, "rc": rc, "stdout": out, "stderr": err})
-
     # ---- pan --------------------------------------------------------------
     def _api_pan(self, sub, body):
         allowed = {"plan", "verify-transfer", "set-save-path", "verify-retrieve", "watch", "status"}
@@ -353,46 +278,3 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             cmd += ["--detach"]
         rc, out, err = service.run_cli(cmd, 600)
         return self._ok({"ok": rc == 0, "rc": rc, "stdout": out, "stderr": err})
-
-    # ---- mark -------------------------------------------------------------
-    def _api_mark(self, body):
-        slug = body.get("slug") or ""
-        key = body.get("key") or body.get("ih") or ""
-        mark = body.get("mark") or ""
-        if not bc.valid_slug(slug):
-            return self._bad("invalid slug")
-        if not key:
-            return self._bad("key is required")
-        if mark not in bc.MARK_SET:
-            return self._bad("invalid mark")
-        marks = bc.read_marks(slug)
-        marks[key] = mark
-        bc.write_marks(slug, marks)
-        return self._ok({"ok": True, "key": key, "mark": mark, "marks": marks})
-
-    # ---- publish ----------------------------------------------------------
-    def _api_publish(self, body):
-        html = _body_inner(body.get("html") or "")
-        css = body.get("css") or ""
-        final = render_index(css, html)
-        index_path = os.path.join(WEB_DIR, "index.html")
-        probe_state._snapshot_history(index_path)
-        with open(index_path, "w", encoding="utf-8") as fh:
-            fh.write(final)
-        return self._ok({"ok": True, "published": True})
-
-    def _api_publish_rollback(self):
-        index_path = os.path.join(WEB_DIR, "index.html")
-        history = sorted(glob.glob(os.path.join(PUBLISH_HISTORY, "index-*.html")))
-        if not history:
-            return self._send(404, {"error": "no history"})
-        latest = history[-1]
-        with open(latest, encoding="utf-8") as fh:
-            content = fh.read()
-        with open(index_path, "w", encoding="utf-8") as fh:
-            fh.write(content)
-        try:
-            os.remove(latest)
-        except OSError:
-            pass
-        return self._ok({"ok": True, "rolled_back": os.path.basename(latest)})
