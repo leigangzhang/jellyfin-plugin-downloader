@@ -32,7 +32,6 @@ from media_download_lib import (
     finalize_download,
     find_task_by_hash,
     human_gb,
-    pause_task_row,
     pid_is_running,
     read_watcher_state,
     task_status,
@@ -108,7 +107,22 @@ def start_detached(args):
 
 
 def abort_slow_task(info_hash, download_dir, status, reason):
-    pause_task_row(status["taskid"])
+    """放弃一条持续超 ETA 的任务：**只记录，不改迅雷的库、不动文件**。
+
+    根因 #4（2026-10-15，见 ROOTCAUSE-4-reject-deletes-data.md）：旧实现直接
+    `pause_task_row(status["taskid"])`（`UPDATE etm_task SET state = 2`），绕过客户端改库
+    —— 与「插件删了数据、迅雷记录还写着有」的同一条错误路线。迅雷没有暂停/删除类
+    URL scheme（`plutil -p /Applications/Thunder.app/Contents/Info.plist` 只注册
+    thunder / ed2k / magnet / birdcmd / xunleiapp / thunderExtension，全是「加任务」类），
+    所以这里不写库、不删文件：把判定与「任务仍在下」写进日志与 watcher 状态，
+    由用户决定暂停还是丢弃。慢任务判定策略本身不变（调用方照旧按 strike 计数调用）。
+    """
+    print(
+        f"ABORT_SLOW_TASK taskid={status.get('taskid')} "
+        f"eta={status.get('eta_hours')} reason={reason} "
+        "(task left running; no client DB write, no file removal)",
+        flush=True,
+    )
     return {"files": [], "bytes": 0, "dirs": []}
 
 
@@ -334,8 +348,8 @@ def run_watch(args):
             )
             write_watcher_state(info_hash, payload)
             log(
-                f"ETA abort cleanup removed={len(cleanup['files'])} "
-                "files (only this task's local payload)"
+                f"ETA abort: taskid={status.get('taskid')} left running "
+                "(no client DB write, no files removed)"
             )
             return 4
 

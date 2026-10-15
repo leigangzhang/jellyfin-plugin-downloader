@@ -40,6 +40,53 @@ def dispatch_search(jid, params):
     raise RuntimeError("搜索调度未接线：请经 backend/console_server.py 入口启动服务")
 
 
+def _publisher_only_from_config(kind: str) -> bool:
+    """按类型取「单源」缺省值；`source_config` 的接口没就绪就退回 True。
+
+    退回 True 是**修复前的行为**：接口缺席时宁可少一个按类型的优待，也不要让
+    整个搜索变成 500。接口在、但形态不符（签名变了、抛错）同样退回，只是会打一行
+    WARNING 留痕 —— 静默退回会让这个接线坏了半年都没人知道。
+    """
+    try:
+        import source_config
+    except ImportError:
+        return True
+    resolve = getattr(source_config, "publisher_only_default", None)
+    if resolve is None:
+        return True
+    try:
+        return bool(resolve(kind))
+    except Exception as exc:  # noqa: BLE001 —— 接口坏了不能拖垮搜索，但必须留痕
+        print(f"WARNING publisher_only_default({kind!r}) 调用失败：{exc!r}", flush=True)
+        return True
+
+
+def resolve_publisher_only(kind: str, body: dict) -> bool:
+    """单源开关的取值顺序：请求显式给了就以请求为准，没给才问按类型的缺省。"""
+    if "publisher_only" in body:
+        return bool(body["publisher_only"])
+    return _publisher_only_from_config(kind)
+
+
+def resolve_year(body: dict, title: str) -> str:
+    """年份：请求优先，缺了回落到该条目的搜索上下文（`<slug>.context.json`）。
+
+    实测（F2，2026-10-15）：面板提交时 `year` 可能是空串，`final_dir` 因此丢掉
+    `(年份)`，归档目录与迅雷任务目录对不上。两处都没有就返回空串 —— 不编年份。
+    """
+    year = str(body.get("year") or "").strip()
+    if year:
+        return year
+    if not title:
+        return ""
+    try:
+        ctx = bc.read_context(bc.slugify(title)) or {}
+    except Exception as exc:  # noqa: BLE001 —— 读不到上下文不该让提交失败
+        print(f"WARNING 读条目上下文取年份失败：{exc!r}", flush=True)
+        return ""
+    return str(ctx.get("year") or "").strip()
+
+
 class ConsoleHandler(BaseHTTPRequestHandler):
     server_version = "JMDConsole/1.0"
 
@@ -129,7 +176,8 @@ class ConsoleHandler(BaseHTTPRequestHandler):
     # ---- search -----------------------------------------------------------
     def _api_search(self, body):
         title = (body.get("title") or "").strip()
-        kind = body.get("kind") or "episode"
+        # 归一化后再判合法性与查缺省值：`" Movie "` 与 `"movie"` 必须是同一个答案
+        kind = str(body.get("kind") or "episode").strip().lower()
         if not title:
             return self._bad("title is required")
         if kind not in bc.VALID_KINDS:
@@ -151,10 +199,11 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         # 严格按季：只跑季关键词，不带基础片名（默认开；关掉则整剧+季词都跑）
         strict_season = bool(body.get("strict_season", True))
         # 单源：只跑配置的 L1 关键字档（发布者署名），并只保留该源候选。
-        # **默认开**（2026-10-13 使用者要求「开启单源」）：候选面收窄成一家源。
-        # 仍可用 body 里的 "publisher_only": false 单次关掉——关键字没有资源的片名
-        # 会搜不到候选，所以保留这个退路，且空结果会被打印成 PUBLISHER_ONLY_EMPTY。
-        publisher_only = bool(body.get("publisher_only", True))
+        # 缺省值由 `source_config.publisher_only_default(kind)` 按**类型**决定
+        # （拿不到那个接口时退回 True = 修复前的行为）；请求显式传了
+        # `"publisher_only": true/false` 就以请求为准 —— 关键字没有资源的片名
+        # 仍可用它单次关掉，空结果会被打印成 PUBLISHER_ONLY_EMPTY。
+        publisher_only = resolve_publisher_only(kind, body)
         final_dir = body.get("final_dir") or bc.derive_final_dir(title, kind, year)
         if not valid_target_dir(final_dir):
             return self._bad("final_dir must be inside staging or Media")
@@ -197,19 +246,18 @@ class ConsoleHandler(BaseHTTPRequestHandler):
     def _api_submit(self, body):
         ih = (body.get("ih") or "").strip()
         final_dir = body.get("final_dir") or ""
-        kind = body.get("kind") or "episode"
+        kind = str(body.get("kind") or "episode").strip().lower()
         if not bc.valid_ih(ih):
             return self._bad("invalid info hash")
+        series_name = (body.get("series_name") or "").strip()
+        # 年份可能在请求里、也可能只在条目上下文里；两处都看，否则 final_dir
+        # 会丢掉 (年份)（F2 实测载荷恒为 "year":""）。
+        year = resolve_year(body, series_name)
         category = (body.get("category") or "").strip()
         if category:
             if category not in bc.CATEGORIES:
                 return self._bad("invalid category")
-            final_dir = bc.derive_final_dir(
-                (body.get("series_name") or "").strip(),
-                kind,
-                str(body.get("year") or ""),
-                category,
-            )
+            final_dir = bc.derive_final_dir(series_name, kind, year, category)
         if not valid_target_dir(final_dir):
             return self._bad("final_dir must be inside staging or Media")
         probe_kind = bc.PROBE_KIND.get(kind, "episode")
@@ -220,10 +268,14 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             "--eta-max-hours", str(eta),
             "--no-watch",
         ]
-        if body.get("series_name"):
-            cmd += ["--series-name", body["series_name"]]
-        if body.get("year"):
-            cmd += ["--year", str(body["year"])]
+        if series_name:
+            cmd += ["--series-name", series_name]
+        if year:
+            cmd += ["--year", year]
+        # 逃生开关：缺省 false，命令行与修复前逐字一致（向后兼容）；true 时由
+        # submit_xunlei.py 决定「元数据窗口拿不到文件列表就按磁力直连放行」。
+        if bool(body.get("trust_magnet", False)):
+            cmd += ["--trust-magnet"]
         rc, out, err = service.run_cli(cmd, 900)
         return self._ok({"ok": rc == 0, "rc": rc, "stdout": out, "stderr": err})
 
@@ -232,24 +284,29 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         final_dir = body.get("final_dir") or ""
         if not bc.valid_ih(ih):
             return self._bad("invalid info hash")
+        series_name = (body.get("series_name") or "").strip()
+        # 年份与 /api/submit 同源：都走这一个 resolve_year（请求优先、缺了回落到
+        # 条目上下文）。t24（P1b）实测面板给 watch 传空 year 时，watcher 的监控/
+        # 归档目录会丢掉 (年份)，与 submit 的落点对不上 —— 修 submit 时漏了这里。
+        year = resolve_year(body, series_name)
         category = (body.get("category") or "").strip()
         if category:
             if category not in bc.CATEGORIES:
                 return self._bad("invalid category")
             final_dir = bc.derive_final_dir(
-                (body.get("series_name") or "").strip(),
+                series_name,
                 body.get("kind") or "episode",
-                str(body.get("year") or ""),
+                year,
                 category,
             )
         if not valid_target_dir(final_dir):
             return self._bad("final_dir must be inside staging or Media")
         interval = int(body.get("interval") or 900)
         cmd = ["download/watch_download.py", ih, final_dir, "--detach", "--interval", str(interval)]
-        if body.get("series_name"):
-            cmd += ["--series-name", body["series_name"]]
-        if body.get("year"):
-            cmd += ["--year", str(body["year"])]
+        if series_name:
+            cmd += ["--series-name", series_name]
+        if year:
+            cmd += ["--year", year]
         rc, out, err = service.run_cli(cmd, 60)
         return self._ok({"ok": rc == 0, "rc": rc, "stdout": out, "stderr": err})
 

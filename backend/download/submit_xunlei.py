@@ -25,23 +25,22 @@ if _BOOTSTRAP_ROOT not in _bootstrap_sys.path:
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 
 from media_download_lib import (
     GB,
     STAGING_ROOT,
     VIDEO_EXTS,
     active_download_snapshot,
-    cleanup_task_files,
-    delete_task_row,
+    find_release_dirs,
     find_task_by_hash,
     find_task_by_id,
-    human_gb,
     patch_download_path,
     patch_task_files,
-    pause_task_row,
     probe_torrent_files,
     staging_dir_for_final,
     task_file_names,
@@ -264,40 +263,201 @@ def verify_task_patch(taskid, download_dir, selected_indices):
     return True, ""
 
 
-def reject_and_cleanup(
+REJECTED_ROOT_NAME = ".rejected"  # <staging>/.rejected/<info_hash>/：可回滚的隔离区
+DEFAULT_REJECTED_BY = "submit_xunlei.py"
+
+
+def _rejected_dir(info_hash, rejected_root=None):
+    """隔离区的落点：`<staging>/.rejected/<INFO_HASH>/`（大写，和任务库里的写法一致）。"""
+    root = rejected_root or STAGING_ROOT
+    return os.path.join(root, REJECTED_ROOT_NAME, (info_hash or "UNKNOWN").upper())
+
+
+def _utc_now():
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def quarantine_task_files(
+    download_dir,
+    info_hash,
+    file_names,
+    dest,
+    reason="",
+    rejected_by=DEFAULT_REJECTED_BY,
+    taskid=None,
+):
+    """把这条任务的产物**移动**到 `dest`（可回滚），返回记录字典；一个字节都不删。
+
+    只搬「属于这条任务」的东西：优先整个发布目录（`find_release_dirs` 认得 `.magent_*`、
+    `.<hash>.js` 与任务文件名），没有发布目录时退化成按任务文件名逐个搬。
+    `<片名 (年份)>` 这一层**留着不动** —— 同一目录里可能坐着别的任务（2026-10-15 的
+    297/299 就同在 `一战再战 (2025)/`）。
+    """
+    real_dir = os.path.realpath(download_dir)
+    names = set(file_names or ())
+    os.makedirs(dest, exist_ok=True)
+
+    sources = find_release_dirs(real_dir, info_hash, names)
+    if not sources:
+        sources = [
+            os.path.join(root, name)
+            for root, _, files in os.walk(real_dir)
+            for name in files
+            if name in names
+            or (name.lower().startswith(".magent_") and info_hash.lower() in name.lower())
+        ]
+
+    moved = []
+    for source in sorted(set(sources), key=len):
+        if not os.path.exists(source):
+            continue  # 父目录已经被搬走了
+        target = os.path.join(dest, os.path.relpath(source, real_dir))
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        if os.path.exists(target):
+            target += ".dup"
+        shutil.move(source, target)
+        moved.append({"from": source, "to": target})
+
+    record = {
+        "info_hash": (info_hash or "").upper(),
+        "taskid": taskid,
+        "reason": reason,
+        "rejected_by": rejected_by,
+        "rejected_at": _utc_now(),
+        "moved_from": real_dir,
+        "moved_to": dest,
+        "files": moved,
+    }
+    with open(os.path.join(dest, "REJECTED.json"), "w", encoding="utf-8") as handle:
+        json.dump(record, handle, ensure_ascii=False, indent=2)
+    return record
+
+
+def reject_and_preserve(
     task,
     download_dir,
     reason,
     output_label="ETA_REJECTED",
     restart_thunder=False,
+    quarantine=False,
+    rejected_by=DEFAULT_REJECTED_BY,
 ):
-    file_names = task_file_names(task)
+    """拒绝一条任务：**默认只记录，不动文件也不动库**（数据保留 + 可回滚）。
+
+    根因 #4（2026-10-15，见 ROOTCAUSE-4-reject-deletes-data.md）：旧实现
+    `reject_and_cleanup()` 先 `pause_task_row` + `delete_task_row`（直接改迅雷 SQLite），
+    再 `cleanup_task_files(include_videos=True)` 删掉刚下好的文件 —— 迅雷那边任务还在、
+    数据没了，用户「暂停后再继续」就报「获取种子文件失败 / 请检查文件是否丢失」。
+
+    迅雷没有暂停/删除类的 URL scheme（`plutil -p /Applications/Thunder.app/Contents/Info.plist`
+    只注册 thunder / ed2k / magnet / birdcmd / xunleiapp / thunderExtension，全是「加任务」类），
+    所以正确做法是**什么都不写**：任务留给用户，数据留给用户。
+
+    确需清理时传 `quarantine=True`：文件被**移动**到 `<staging>/.rejected/<info_hash>/`，
+    并写一份 `REJECTED.json`（谁/何时/为什么/搬去哪）。任务行仍然不动。
+    """
     taskid = task["taskid"]
-    info_hash = json.loads(task["create_param"]).get("info_hash", "")
+    info_hash = json.loads(task.get("create_param") or "{}").get("info_hash", "")
     print(f"  Rejecting task: {reason}", flush=True)
     if restart_thunder:
-        kill_thunder()
-    else:
-        pause_task_row(taskid)
-    delete_task_row(taskid)
-    cleanup = cleanup_task_files(download_dir, info_hash, file_names)
-    if restart_thunder:
-        subprocess.run(["open", "-a", "Thunder"], check=False)
-    if output_label:
+        # 旧参数是给「改完库再让客户端读回来」收尾的；保留语义下不改库，也就无需重启。
         print(
-            output_label
-            + " "
+            "  NOTE restart_thunder 已忽略：保留语义下不改写迅雷数据库，不需要重启它",
+            flush=True,
+        )
+
+    quarantined_to = ""
+    moved = 0
+    if quarantine:
+        dest = _rejected_dir(info_hash)
+        record = quarantine_task_files(
+            download_dir, info_hash, task_file_names(task), dest,
+            reason=reason, rejected_by=rejected_by, taskid=taskid,
+        )
+        quarantined_to = dest
+        moved = len(record["files"])
+        print(
+            "  QUARANTINED "
             + json.dumps(
-                {
-                    "taskid": taskid,
-                    "reason": reason,
-                    "removed_files": len(cleanup["files"]),
-                    "removed_gb_logical": human_gb(cleanup["bytes"]),
-                },
+                {"taskid": taskid, "dest": dest, "moved_files": moved},
                 ensure_ascii=False,
             ),
             flush=True,
         )
+
+    payload = {
+        "taskid": taskid,
+        "reason": reason,
+        "task_kept": True,
+        "data_preserved": True,
+        "db_untouched": True,
+        # 兼容既有读者：这个键现在的语义是「一个字节都没删」
+        "removed_files": 0,
+        "moved_files": moved,
+        "quarantined_to": quarantined_to,
+        "action_required": (
+            "任务仍在迅雷里、已下载数据保留在原处；需要人工处理（重试或换候选，"
+            "或在迅雷客户端里自行删除该任务）"
+        ),
+    }
+    if output_label:
+        print(output_label + " " + json.dumps(payload, ensure_ascii=False), flush=True)
+    return payload
+
+
+def reject_patch_failure(
+    taskid,
+    download_dir,
+    patch_reason,
+    restart_thunder=False,
+    quarantine=False,
+    rejected_by=DEFAULT_REJECTED_BY,
+):
+    """`rc=5`（在线 patch 没生效）的收口：**保留任务与数据**，只报告，返回 5。
+
+    patch 没生效时任务其实正常在下（只是选片不合我们的意图），所以这里既不删任务行
+    也不删文件 —— 返回码与 `PATCH_NOT_APPLIED` 标签保持不变，语义改成「任务仍在、
+    数据保留、需要人工/重试」。任务行已经不在了就只记一行 `CLEANUP_SKIPPED`。
+    """
+    latest = find_task_by_id(taskid)
+    if latest:
+        reject_and_preserve(
+            latest,
+            download_dir,
+            f"online patch did not persist: {patch_reason}",
+            output_label=None,
+            restart_thunder=restart_thunder,
+            quarantine=quarantine,
+            rejected_by=rejected_by,
+        )
+    else:
+        print(
+            "CLEANUP_SKIPPED "
+            + json.dumps(
+                {"taskid": taskid, "reason": "task row already gone"},
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
+    print(
+        "PATCH_NOT_APPLIED "
+        + json.dumps(
+            {
+                "reason": patch_reason,
+                "taskid": taskid,
+                "task_kept": latest is not None,
+                "data_preserved": True,
+                "db_untouched": True,
+                "removed_files": 0,
+                "action_required": (
+                    "任务未被删除、已下载数据保留；选片没生效需要人工重试或在迅雷里处理"
+                ),
+            },
+            ensure_ascii=False,
+        ),
+        flush=True,
+    )
+    return 5
 
 
 def start_watcher(
@@ -426,12 +586,18 @@ def main():
     parser.add_argument(
         "--replace-existing",
         action="store_true",
-        help="Explicitly delete an existing task with the same info hash",
+        help=(
+            "同 info hash 已有任务时不再复用，改为按保留语义处理：**不删任务、不删数据**，"
+            "打印 REPLACE_BLOCKED 并以 7 退出（旧行为是删任务+删文件，见根因 #4）"
+        ),
     )
     parser.add_argument(
         "--probe-only",
         action="store_true",
-        help="Measure actual Thunder speed, then delete the trial task",
+        help=(
+            "Measure actual Thunder speed; the trial task is **kept** "
+            "（插件不删任务、不删数据，需要丢弃请在迅雷客户端里删）"
+        ),
     )
     parser.add_argument(
         "--probe-seconds",
@@ -440,9 +606,22 @@ def main():
         help="Fixed speed-test window for --probe-only",
     )
     parser.add_argument(
+        "--quarantine-rejected",
+        action="store_true",
+        help=(
+            "拒绝时把该任务的产物**移动**到 <暂存根>/.rejected/<info_hash>/（可回滚 + "
+            "写 REJECTED.json 记录），而不是留在原处；默认不搬 —— 插件一个字节都不删"
+        ),
+    )
+    parser.add_argument(
+        "--rejected-by",
+        default=DEFAULT_REJECTED_BY,
+        help="写进隔离记录 REJECTED.json 的「谁」：默认脚本名，调用方可填自己",
+    )
+    parser.add_argument(
         "--restart-thunder",
         action="store_true",
-        help="Legacy mode: restart Thunder during submission",
+        help="Legacy mode: restart Thunder during submission（保留语义下已不需要，会被忽略）",
     )
     args = parser.parse_args()
 
@@ -492,12 +671,33 @@ def main():
                     detach=not args.wait,
                 )
             return 0
-        reject_and_cleanup(
+        reject_and_preserve(
             task,
             staging_dir,
             "replace-existing requested",
+            output_label=None,
             restart_thunder=args.restart_thunder,
+            rejected_by=args.rejected_by,
         )
+        print(
+            "REPLACE_BLOCKED "
+            + json.dumps(
+                {
+                    "taskid": task["taskid"],
+                    "reason": "replace-existing requested",
+                    "task_kept": True,
+                    "data_preserved": True,
+                    "db_untouched": True,
+                    "action_required": (
+                        "保留语义下插件不删任务、不删数据；要替换请在迅雷客户端里"
+                        "先自行删除该任务，再重试本次提交"
+                    ),
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
+        return 7
 
     print("2. Probe torrent files...")
     files = probe_torrent_files(info_hash)
@@ -665,11 +865,13 @@ def main():
             selected_indices.append(int(sub.get("index", -1)))
         selected_indices = sorted(index for index in selected_indices if index >= 0)
         if not selected_indices:
-            reject_and_cleanup(
+            reject_and_preserve(
                 task,
                 staging_dir,
                 "Thunder file list contained no matching video",
                 restart_thunder=args.restart_thunder,
+                quarantine=args.quarantine_rejected,
+                rejected_by=args.rejected_by,
             )
             return 3
         print(
@@ -692,32 +894,22 @@ def main():
         selected_indices,
     )
     if not patch_ok:
-        latest = find_task_by_id(taskid)
-        if latest:
-            reject_and_cleanup(
-                latest,
-                staging_dir,
-                f"online patch did not persist: {patch_reason}",
-                restart_thunder=args.restart_thunder,
-            )
-        print(
-            "PATCH_NOT_APPLIED "
-            + json.dumps({"reason": patch_reason}, ensure_ascii=False)
+        return reject_patch_failure(
+            taskid,
+            staging_dir,
+            patch_reason,
+            restart_thunder=args.restart_thunder,
         )
-        return 5
 
     if args.probe_only:
         measurement = measure_task_speed(taskid, seconds=args.probe_seconds)
         measurement["info_hash"] = info_hash
-        latest = find_task_by_id(taskid)
-        if latest:
-            reject_and_cleanup(
-                latest,
-                staging_dir,
-                "probe-only trial completed",
-                output_label=None,
-                restart_thunder=args.restart_thunder,
-            )
+        # 试用任务是插件自己造的，但它下的正是用户要的那个候选：同样**不删**
+        # （根因 #4 里旧实现会把刚下到的数据一起删掉）。留给用户处置。
+        measurement["trial_task_kept"] = find_task_by_id(taskid) is not None
+        measurement["action_required"] = (
+            "试用任务保留在迅雷里（插件不删任务、不删数据）；如不需要请在迅雷客户端里删除"
+        )
         print(
             "SPEED_PROBE_JSON "
             + json.dumps(measurement, ensure_ascii=False),
@@ -738,11 +930,13 @@ def main():
     if not accepted:
         latest = find_task_by_id(taskid)
         if latest:
-            reject_and_cleanup(
+            reject_and_preserve(
                 latest,
                 staging_dir,
                 payload["reason"],
                 restart_thunder=args.restart_thunder,
+                quarantine=args.quarantine_rejected,
+                rejected_by=args.rejected_by,
             )
         else:
             print(f"ETA_REJECTED {json.dumps(payload, ensure_ascii=False)}")
