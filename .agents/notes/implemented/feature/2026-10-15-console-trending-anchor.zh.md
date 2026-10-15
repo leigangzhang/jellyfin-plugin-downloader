@@ -81,5 +81,5 @@ TV Shows/<title> (<year>)/Season 01/<title> S01E01 - zz placeholder.mp4
 - [A8] `tests/backend_trending/test_backend_trending_check_exists.py` 以子进程跑 `backend/download/check_exists.py`，对同时放着占位与真文件的临时媒体根要求输出 `ALREADY_EXISTS`；只有占位的目录仍报 `NEEDS_DOWNLOAD`。 归属 `tests`。
 - [A9] `tests/backend_trending/test_backend_trending_watchlist.py` 钉住重复关注报已存在且不重写文件；占位侧（`AnchorEnabled` 关闭零写入、已存在的占位绝不重写）由 `tests/backend_retired/test_backend_retired_trending_anchor_naming.py` 与真机验收钉住。 归属 `tests`。
 - [A10] `tests/backend_trending/test_backend_trending_no_machine_paths.py` 拒绝 `backend/trending/` 下由 `__file__` 推导的数据路径、机器相关绝对路径与第三方 import；仓库级的另一半是 `tools/check-invariants.py` 里的 `no-secrets` 与 `source-budget` 两条检查。 归属 `source-budget`, `no-secrets`。
-- [A11] 交付报告里的真机验收：`./build.sh` 与 `./install.sh` 成功，配置页出现「热门」分组，`/JellyfinDownloader/script` 带第六片，覆盖层能渲染——用浏览器工具对着运行中的 Jellyfin 做，榜单响应在浏览器侧替换，因为这台机器出不了 TMDb。 归属 `source`。
+- [A11] 交付报告里的真机验收：`./build.sh` 与 `./install.sh` 成功，配置页出现「热门」分组，`/JellyfinDownloader/script` 带第六片，覆盖层能渲染——用浏览器工具对着运行中的 Jellyfin 做，榜单由后端自己的缓存提供（喂了一份真实结构的条目），因为这台机器出不了 TMDb。 归属 `source`。
 - [A12] 带上这一对记录后 `python3 tools/gen-docs.py --check` 与 `python3 tools/pair-docs.py --check` 全绿。 归属 `i18n`, `docs`。
