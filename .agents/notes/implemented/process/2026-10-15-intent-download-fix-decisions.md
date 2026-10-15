@@ -141,6 +141,16 @@ Deliberately left out, each with the condition that should reopen it:
   confirmed on 2026-10-15 that today's behaviour stands — only `episode` is single-source, and
   `movie`, `record` and `variety` keep the full ladder. Revisit if variety candidates get thin,
   or if a variety search comes back empty.
+- Zero-seeder candidates: the same person tightened this on 2026-10-15 — a magnet candidate with
+  `seeds <= 0` (or no reading at all) is dropped while the resources are being fetched, so it is
+  never stored and never listed; the cloud-disk channel has no such notion and passes through. The
+  revision that had kept `0 seed / N peers` rows was reversed on real-machine evidence: one such row
+  was accepted and became a task that then ran at a few KB/s, a day or more from finishing.
+- The submit-time ETA limit and any automatic monitoring after a submit are deliberately left as they
+  are (decided 2026-10-15). Revisit at the next task that is accepted and then proves far slower than
+  its probe suggested, with nothing watching it.
+- The rejected-reason string the panel counts still reads `dead_swarm_filtered` while the rule it now
+  records is "no seeder". Revisit when the Web shards are next touched, and align the two.
 
 ## Testing
 
