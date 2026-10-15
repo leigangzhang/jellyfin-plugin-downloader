@@ -173,7 +173,9 @@ def collect(args, sites=None, keywords=None):
     if sites is None:
         sites = source_config.load_sites()[0]
     if keywords is None:
-        keywords = source_config.load_keywords()[0]
+        # 兜底路径（测试直接调 collect 时才走）：类型同样要带下去，否则
+        # 「product 侧传了 --kind、兜底却仍用剧集三条」会变成一条看不见的分叉。
+        keywords = source_config.load_keywords(kind=getattr(args, "kind", ""))[0]
     # 只有带接口地址的站才取磁力；只填网页搜索地址的云盘专用站两个都不是
     # （见 source_config.magnet_sites）。
     api_sites, extra_sites = source_config.magnet_sites(sites)
@@ -352,6 +354,14 @@ def parse_args():
     parser.add_argument("--alt-title", action="append", default=[])
     parser.add_argument("--year", default="")
     parser.add_argument(
+        "--kind",
+        default="",
+        help=(
+            "条目类型（movie / episode / variety / record）：决定 anchor 档用哪组关键字"
+            "（`source_config.keywords_for`）。默认空串 = 与接线前一致（剧集那三条）"
+        ),
+    )
+    parser.add_argument(
         "--collection-hint",
         action="append",
         default=None,
@@ -453,7 +463,7 @@ def main():
     ns = Loaders(globals())
     args = ns.parse_args()
     prepare_args(ns, args)
-    sites, keywords, code = load_sources()
+    sites, keywords, code = load_sources(kind=getattr(args, "kind", ""))
     if code:
         return code
     print_source_banner(args, sites, keywords)

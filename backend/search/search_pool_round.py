@@ -58,10 +58,15 @@ def prepare_args(ns, args):
         args.json_out = f"/tmp/{slug}.search.json"
 
 
-def load_sources():
-    """读资源站 / 关键字配置；配置坏了就带早退码返回，不拿默认值兜底。"""
+def load_sources(kind=""):
+    """读资源站 / 关键字配置；配置坏了就带早退码返回，不拿默认值兜底。
+
+    `kind` 决定 anchor 档用哪组关键字（`source_config.keywords_for`）：电影/纪录片是
+    电影组，剧集是那三条剧集署名。**默认空串** —— 与接线前 `load_keywords()` 的
+    结果逐字一致（未识别的类型一律回落剧集组）。
+    """
     sites, site_errors = source_config.load_sites()
-    keywords, keyword_errors = source_config.load_keywords()
+    keywords, keyword_errors = source_config.load_keywords(kind=kind)
     for error in site_errors + keyword_errors:
         print("SOURCE_CONFIG_ERROR " + json.dumps({"error": error}, ensure_ascii=False))
     if not sites:

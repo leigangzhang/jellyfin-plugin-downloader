@@ -37,6 +37,11 @@
 一条一个词、以及 BBHDTV 的命中率问题，见 `DEFAULT_ANCHOR_KEYWORDS` 上面那段实测。
 这保证老安装的 XML 里没有这两个键时行为与设定一致。
 
+**默认值按条目类型分档**（2026-10-15 新增，接口是 `keywords_for` 与
+`publisher_only_default`）：上面那三条是**剧集发布组**的签名，电影/纪录片用它们搜不到
+候选；所以 `movie` / `record` 改用 `DEFAULT_FILM_ANCHOR_KEYWORDS`，并且默认**不再单源**
+（走全阶梯）。未识别的 kind 一律回落这里写的老行为，老调用方不受影响。
+
 坏配置不静默
 ------------
 解析或校验失败时**不回落默认值**：返回空清单 + 错误明细，由调用方决定怎么报。
@@ -97,6 +102,21 @@ DEFAULT_SITES = (
 # 这是 AND 语义下唯一稳的形态——某一行空转时，其它行照常按先后顺序跑。
 DEFAULT_ANCHOR_KEYWORDS = ("高清剧集网", "DDHDTV", "BBHDTV")
 
+# 电影 / 纪录片侧的发布者署名档位。上面那三条是剧集发布组的签名，电影与纪录片
+# 基本搜不到它们，所以按类型分表（见 `keywords_for`）。
+#
+# 2026-10-15 实测（本机直打两个站点接口、按第一页计数，8 个真实片名 = 电影 4 +
+# 纪录片 4，原始表 /tmp/jmd-test/evidence/FIX-P1a/source-keyword-grid.json）：
+#   diao.im      `高清影视之家` -> 覆盖 5/8（41 条），`HDBTHD` -> 5/8（38 条），
+#                `DreamHD` -> 3/8，`BBQDDQ` -> 2/8，剧集三条 -> 4/8、2/8、1/8，
+#                裸片名 -> 7/8
+#   torrents-csv 上面每一条署名 -> 0/8（该索引里的电影/纪录片没有这些署名），
+#                裸片名 -> 4/8
+# 所以这一组的并集覆盖由前两条达成（`高清影视之家` 与 `HDBTHD` 是同一家发布线的
+# 「名号」与「域名」两种写法，8 个片名上命中集合相同，保留两条只是给分词差异留退路）。
+# 一组**一条一个词**的理由与上面那段相同：该索引对一行里的多个词是 AND 语义。
+DEFAULT_FILM_ANCHOR_KEYWORDS = ("高清影视之家", "HDBTHD")
+
 # 边界（P10：批量操作与外部输入都要有上限）。站点数决定每站分到的墙钟预算，
 # 关键字组合数决定阶梯长度，两个都必须有限。
 MAX_SITES = 8
@@ -104,6 +124,69 @@ MAX_KEYWORDS = 8
 MAX_URL_LEN = 300
 MAX_NAME_LEN = 40
 MAX_KEYWORD_LEN = 64
+
+# 条目类型：取值由 `build_console.KIND_TO_CATEGORY` 定死（movie / episode / variety /
+# record）。这两张表只回答「哪一类走哪套默认」，表里没有的 kind 一律回落老行为。
+KIND_MOVIE = "movie"
+KIND_EPISODE = "episode"
+KIND_VARIETY = "variety"
+KIND_RECORD = "record"
+
+# 单源（只跑 anchor 档、只留该源候选）的缺省值：只有剧集继续单源。依据见
+# `DEFAULT_FILM_ANCHOR_KEYWORDS` 上面那段实测——电影/纪录片的候选主要落在裸片名档
+# （7/8），单源会把阶梯裁掉这一档，等于搜不到；综艺连带按非剧集处理（它由调用方
+# 传入的 kind 决定，见 `publisher_only_default`）。
+_PUBLISHER_ONLY_BY_KIND = {
+    KIND_EPISODE: True,
+    KIND_MOVIE: False,
+    KIND_RECORD: False,
+    KIND_VARIETY: False,
+}
+
+_ANCHOR_KEYWORDS_BY_KIND = {
+    KIND_EPISODE: DEFAULT_ANCHOR_KEYWORDS,
+    KIND_VARIETY: DEFAULT_ANCHOR_KEYWORDS,
+    KIND_MOVIE: DEFAULT_FILM_ANCHOR_KEYWORDS,
+    KIND_RECORD: DEFAULT_FILM_ANCHOR_KEYWORDS,
+}
+
+
+def normalise_kind(kind):
+    """kind 归一化：压掉空白、转小写；非字符串当空串。
+
+    HTTP 面已经归一化过一次（`console_server/http_api.py`），这里再归一化一次是为了让
+    直接 import 本模块的脚本（`search_pool_round.load_sources` 一类）拿到同一个答案：
+    `" Movie "` 与 `"movie"` 必须一致。
+    """
+    if not isinstance(kind, str):
+        return ""
+    return " ".join(kind.split()).lower()
+
+
+def publisher_only_default(kind):
+    """按条目类型给出的「单源」缺省值；未识别的 kind 回落 True（= 修复前的行为）。
+
+    为什么必须按类型分：单源把搜索阶梯裁到只剩「片名 + 发布者署名」那一档，而内置的
+    三条署名是**剧集发布组**的签名。2026-10-15 实测（8 个电影/纪录片片名）里，单源
+    那一档即使换成新的电影/纪录片署名也只覆盖 5/8，而单源砍掉的裸片名档覆盖 7/8。
+    剧集继续单源是使用方 2026-10-13 的要求，不动。
+
+    判定只看 `kind` 这一个入参：调用方**按条目类型**传值，不看 Jellyfin 的
+    `Type`、也不看保存到哪个库——「Series 但存进纪录片库」这种条目要拿到纪录片分支，
+    必须由调用方把有效类型（`record`）传进来，见模块顶部与调用契约的说明。
+    """
+    return _PUBLISHER_ONLY_BY_KIND.get(normalise_kind(kind), True)
+
+
+def keywords_for(kind):
+    """按条目类型给出的 anchor 关键字组；未识别的 kind 回落剧集那三条。
+
+    返回 tuple（与 `DEFAULT_ANCHOR_KEYWORDS` 同形），并在这里就截到 `MAX_KEYWORDS`：
+    调用方不必再自己防一次越界。
+    """
+    group = _ANCHOR_KEYWORDS_BY_KIND.get(normalise_kind(kind), DEFAULT_ANCHOR_KEYWORDS)
+    return tuple(group[:MAX_KEYWORDS])
+
 
 _WHITESPACE_RE = re.compile(r"\s")
 _SCHEME_RE = re.compile(r"^https?://", re.IGNORECASE)
@@ -331,17 +414,18 @@ def load_sites(text=None):
     return sites, errors
 
 
-def load_keywords(text=None):
+def load_keywords(text=None, kind=None):
     """解析 L1 关键字组合，返回 (keywords, errors)。
 
     环境变量既接受 JSON 数组，也接受换行/逗号分隔的纯文本（手改时更省事）。空配置
-    → 默认组合（向后兼容）。
+    → 按**条目类型**取默认组（`keywords_for(kind)`；不传 kind 时就是剧集那三条，
+    与修复前完全一致）。显式配置永远优先：按类型的默认只是兜底。
     """
     if text is None:
         text = environ.get(ENV_KEYWORDS, "")
     text = (text or "").strip()
     if not text:
-        return list(DEFAULT_ANCHOR_KEYWORDS), []
+        return list(keywords_for(kind)), []
 
     payload = None
     if text.startswith("["):

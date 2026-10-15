@@ -110,6 +110,10 @@ def build_search_cmd(p):
         search_cmd += _season_cmd_args(p)
     if p.get("publisher_only"):
         search_cmd += ["--publisher-only"]
+    # 条目类型要跟到子进程：它决定 anchor 档用哪组关键字（`source_config.keywords_for`）。
+    # 缺省不发这一项，argv 与接线前逐字一致（`search_pool.py` 的 `--kind` 默认空串）。
+    if p.get("kind"):
+        search_cmd += ["--kind", str(p["kind"])]
     return search_cmd
 
 
