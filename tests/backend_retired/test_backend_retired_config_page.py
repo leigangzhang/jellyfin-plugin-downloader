@@ -169,14 +169,43 @@ class ConfigPageGuardTests(unittest.TestCase):
                          "说明元素必须无条件创建，空的时候隐藏")
         self.assertIn("row._field.caption = hint;", page)
 
-    def test_placeholders_follow_the_current_defaults(self):
-        """输入框的示例文案要跟当前默认值一致，否则用户看到的「默认」是过期的。"""
+    def test_page_does_not_hardcode_the_keyword_defaults(self):
+        """配置页不得把关键字清单抄进 HTML —— 清单的唯一出处是 backend/source_config.py。
+
+        这条断言原来是反过来的：它要求页面**必须**出现
+        `source_config.DEFAULT_ANCHOR_KEYWORDS[0]`。要求页面抄一份默认值，正是漂移的来源
+        —— 后端改了默认值、页面留着旧值，用户看到的「默认」就是过期的。2026-10-15
+        默认值已按条目类型分档（剧集/综艺一组、电影/纪录片另一组），页面那句只举剧集
+        发布组的示例随之作废；现在页面只讲规则、不列清单，由这条断言钉住「不列」。
+
+        两侧默认值是否与 C# 侧一致，仍由 `test_keyword_defaults_are_one_word_per_row` 盯着；
+        本条只管「页面不要再抄一份」。
+        """
         page = (ROOT / "Jellyfin.Plugin.JellyfinDownloader" / "Configuration" / "configPage.html").read_text(encoding="utf-8")
-        self.assertIn("如：高清剧集网", page)
         import source_config
 
-        self.assertIn(source_config.DEFAULT_ANCHOR_KEYWORDS[0], page,
-                      "示例文案要取默认里的第一个关键词")
+        hardcoded = (*source_config.DEFAULT_ANCHOR_KEYWORDS,
+                     *source_config.DEFAULT_FILM_ANCHOR_KEYWORDS)
+        # 清单被清空时这条断言会退化成摆设，先钉住它非空
+        self.assertTrue(hardcoded, "默认关键词清单为空，这条守卫会失去判别力")
+        for keyword in hardcoded:
+            self.assertNotIn(
+                keyword, page,
+                f"配置页不该抄关键字清单（规则留在页面、清单留在 source_config.py），但它含 {keyword!r}")
+
+    def test_page_states_the_by_kind_default_rule(self):
+        """页面必须写明「留空按条目类型取默认、填写覆盖所有类型」——这是留空与填写的唯一区别。
+
+        依据是 `source_config.load_keywords` 的 docstring：「空配置 → 按条目类型取默认组；
+        显式配置永远优先」。只写「一行都没有时用内置默认」是不够的：默认值按类型分档之后，
+        用户看不出一旦填了就电影/剧集都按同一份走。这两句是那条规则的可判定代表，
+        比原来的占位符示例更贴近真实行为（示例可以过时，规则不会）。
+        """
+        page = (ROOT / "Jellyfin.Plugin.JellyfinDownloader" / "Configuration" / "configPage.html").read_text(encoding="utf-8")
+        self.assertIn("按条目类型", page,
+                      "页面要说明留空时按条目类型取默认，否则用户不知道默认是按类型分的")
+        self.assertIn("覆盖所有类型", page,
+                      "页面要说明填写会覆盖所有类型的默认，否则用户不知道填写的作用范围")
 
     def test_keyword_defaults_are_one_word_per_row(self):
         """默认关键词必须一条一个词——使用方拍板「不要多词组合」。
