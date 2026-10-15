@@ -21,7 +21,8 @@
 //   R10 进行中旋转指示器（点下去就插 .jdl-spinner，响应后摘掉）+ 0 种子候选的一行提示
 //      （候选已在 backend/probe/probe_round.py 交付前丢弃，面板只报「已过滤 N 条 0 种子候选」，
 //      不列行、不给开关；N=0 时不显示）。
-//   R11 进行中文案如实且带「已用」：提交写「探测元数据 25 s + 测速最长 180 s（已用 …）」，
+//   R11 进行中文案如实且带「已用」：提交写「探测元数据（约 25 s）（已用 …）」——t55 之后提交
+//      只等元数据探测（测速在后台监控阶段，阶段态用「下载超时」表达），所以文案里不再有 180 s；
 //      监控写自己的口径；已用随时钟增长，响应到达后连同 spinner 一起还原。
 //   R12 「提交迅雷」按钮状态机：阶段（后端 /api/stages）→ 提交中/下载监控中/检测归档中/下载完成/
 //      四种失败/已暂停 的标签与图标；进行中点击冻结（零请求）、失败态点击重试一次、完成态不可点。
@@ -32,7 +33,7 @@
 //
 // How to run (from the repository root):
 //   node tools/checks/check-p2-ui.mjs                 # green iff all 69 checks hold
-//   node tools/checks/check-p2-ui.mjs --mutate        # revert sixteen fixed behaviours, one
+//   node tools/checks/check-p2-ui.mjs --mutate        # revert seventeen fixed behaviours, one
 //                                                     # at a time, and require each to go red
 //   node tools/checks/check-p2-ui.mjs --web-dir DIR   # check another copy of the shards
 //
@@ -623,13 +624,15 @@ async function runChecks(bundleSrc) {
     doc.t.setPanel({ categorySelect: { value: 'Records' }, trustMagnet: false, form: null, item: docItem });
     const ui = busyButton('提交迅雷');
     doc.t.submitAction({ ih: 'J'.repeat(40) }, docSnapshot('record'), 'submit', '已提交迅雷', ui.button);
+    // t58：提交走 wait_eta:false 之后只等元数据探测，文案不得再出现 180 s 测速窗口
     ok('R11-submit-label-honest-and-elapsed',
-      ui.text.textContent.indexOf('测速最长 180 s') >= 0
-        && ui.text.textContent.indexOf('探测元数据 25 s') >= 0
+      ui.text.textContent.indexOf('探测元数据') >= 0
+        && ui.text.textContent.indexOf('25 s') >= 0
         && ui.text.textContent.indexOf('已用') >= 0,
       ui.text.textContent);
-    ok('R11-submit-label-no-stale-25-only',
-      ui.text.textContent.indexOf('\u7ea6 25 s') < 0,
+    ok('R11-submit-label-no-180s-claim',
+      ui.text.textContent.indexOf('180') < 0
+        && ui.text.textContent.indexOf('测速最长') < 0,
       ui.text.textContent);
     doc.t.setBusyElapsed(ui.button, 72);          // 拨到「已用 1 分 12 秒」
     ok('R11-elapsed-grows-with-the-clock',
@@ -861,7 +864,10 @@ const MUTATIONS = [
     '        if (false) { return; }'],
   ['提交响应不再落阶段',
     "          setStageForHash(candidate.ih, result.stage || 'monitoring', button);",
-    '          /* MUTATED: 阶段不再落地 */']
+    '          /* MUTATED: 阶段不再落地 */'],
+  ['文案又声称要等 180 s 测速',
+    "    submit: '\\u63d0\\u4ea4\\u4e2d\\u2026 \\u63a2\\u6d4b\\u5143\\u6570\\u636e\\uff08\\u7ea6 25 s\\uff09',",
+    "    submit: '\\u63d0\\u4ea4\\u4e2d\\u2026 \\u63a2\\u6d4b\\u5143\\u6570\\u636e 25 s + \\u6d4b\\u901f\\u6700\\u957f 180 s',"]
 ];
 
 const EXPECT = {
@@ -880,7 +886,8 @@ const EXPECT = {
   '「已用」时长不再随时钟增长': 'R11-elapsed-grows-with-the-clock',
   '阶段标签不再写进按钮': 'R12-label-submitting',
   '进行中的冻结被拆掉': 'R12-frozen-clicks-send-nothing',
-  '提交响应不再落阶段': 'R12-submit-response-moves-to-monitoring'
+  '提交响应不再落阶段': 'R12-submit-response-moves-to-monitoring',
+  '文案又声称要等 180 s 测速': 'R11-submit-label-no-180s-claim'
 };
 
 // A shard that cannot be read is a failure of this guard, not a crash of the command that

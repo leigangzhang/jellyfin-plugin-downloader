@@ -487,15 +487,16 @@
   //     `probe_torrent_files(info_hash, timeout=25)` → aria2c `--bt-stop-timeout=25`（:57）；
   //     拿不到 metadata 就 RESOURCE_REJECTED（真机 26.3 s 回 rc=3）。
   //   * 测速外推 ETA：backend/download/submit_xunlei.py:566-569 的 `--eta-probe-seconds`
-  //     **默认 180**。任务在测速**之前**就已建好，所以「迅雷里已有任务 + 面板还在转」是
-  //     正常中途态（队长真机实测一次完整提交 195.6 s）。
+  //     （默认 180）。t55 起提交走 `wait_eta:false` → `--eta-probe-seconds 0`：**测速已经
+  //     不在提交这一步**，ETA 判定挪到后台监控阶段（超时以阶段 `failed_eta`「下载超时」呈现），
+  //     所以按钮文案里不再出现 180 s —— 否则又变成「把等待说错」，用户无法判断是否卡住。
   // 这两个值后端目前**没有任何接口下发**（/JellyfinDownloader/config 只有 minScore /
   // StagingRoot / MediaRoot…；快照与 /api/status 也没有），而 C# 不在本任务范围 —— 所以
   // 这里硬编码一份，出处就是上面两行。**后端改这两个值时必须同步改这里**（更彻底的做法是
   // 后端加字段下发、前端优先读后端值，那要另开一条跨 C#/backend 的任务）。
   // 已用时长是纯客户端 Date.now() 计时，与后端无关。
   var BUSY_LABEL = {
-    submit: '\u63d0\u4ea4\u4e2d\u2026 \u63a2\u6d4b\u5143\u6570\u636e 25 s\uff08\u6d4b\u901f\u6700\u957f 180 s \u8f6c\u540e\u53f0\uff09',
+    submit: '\u63d0\u4ea4\u4e2d\u2026 \u63a2\u6d4b\u5143\u6570\u636e\uff08\u7ea6 25 s\uff09',
     watch: '\u542f\u52a8\u4e2d\u2026 \u6302\u540e\u53f0\u76d1\u63a7\uff08\u901a\u5e38 1\u20132 \u79d2\uff09'
   };
 
