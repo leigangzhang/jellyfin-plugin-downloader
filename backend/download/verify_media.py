@@ -14,6 +14,7 @@ from media_download_lib import (
     VIDEO_EXTS,
     audit_extra_files,
     probe_media,
+    tool_path,
     verify_video,
 )
 
@@ -54,6 +55,11 @@ def stream_layer(path):
 
 
 def sampled_decode_layer(path, duration, sample_seconds=20):
+    # P0：ffmpeg 走与 media_download_lib / probe 同一套解析（JMD_FFMPEG_PATH →
+    # PATH → 插件从记录文件注入的绝对路径）。缺工具时抛可区分的 ToolMissing ——
+    # 裸名调用在 launchd 最小 PATH 下抛的是 FileNotFoundError(⊂ OSError)，会跟
+    # 「解码验证不通过」混成同一个结果字典，分不出是环境问题还是片子问题。
+    ffmpeg = tool_path("ffmpeg")
     samples = []
     positions = [0.05, 0.50, 0.90]
     for ratio in positions:
@@ -61,7 +67,7 @@ def sampled_decode_layer(path, duration, sample_seconds=20):
         try:
             result = subprocess.run(
                 [
-                    "ffmpeg",
+                    ffmpeg,
                     "-v",
                     "error",
                     "-ss",
@@ -109,6 +115,8 @@ def sampled_decode_layer(path, duration, sample_seconds=20):
 
 
 def hard_subtitle_layer(path, duration):
+    # 同上：这一层也调 ffmpeg，同一天平上必须有同一个解析口径。
+    ffmpeg = tool_path("ffmpeg")
     samples = []
     positions = [0.10, 0.50, 0.90]
     for ratio in positions:
@@ -116,7 +124,7 @@ def hard_subtitle_layer(path, duration):
         try:
             result = subprocess.run(
                 [
-                    "ffmpeg",
+                    ffmpeg,
                     "-v",
                     "error",
                     "-ss",

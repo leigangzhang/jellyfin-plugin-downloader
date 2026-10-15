@@ -42,7 +42,13 @@ from .paths import (  # noqa: F401  -- 再导出：调用方按扁平名字 impo
     path_is_within,
     staging_dir_for_final,
 )
-from ._shared import allocated_size  # noqa: F401  -- 再导出
+from ._shared import (  # noqa: F401  -- 再导出
+    INSTALL_HINTS,
+    TOOL_ENV,
+    ToolMissing,
+    allocated_size,
+    tool_path,
+)
 from .db import (  # noqa: F401  -- 再导出
     active_download_snapshot,
     cloud_task_status,

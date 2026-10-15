@@ -193,7 +193,16 @@ class LiveCheckTests(ProbeCase):
 
 class MetadataFetchTests(ProbeCase):
     def _capture_argv(self):
+        """捕获 aria2c 的 argv。
+
+        P0 起 `fetch_metadata` 先解析工具（`JMD_ARIA2C_PATH` → PATH），解析结果必须
+        真实存在且可执行。这里把 `JMD_ARIA2C_PATH` 钉到 `/bin/sh`（哪台机器都有），
+        用例因此不依赖本机装没装 aria2c；`subprocess.run` 是打桩的，不会真执行它。
+        """
         captured = {}
+        env = mock.patch.dict(os.environ, {"JMD_ARIA2C_PATH": "/bin/sh"})
+        env.start()
+        self.addCleanup(env.stop)
 
         def fake_run(cmd, **kwargs):
             captured["cmd"] = cmd

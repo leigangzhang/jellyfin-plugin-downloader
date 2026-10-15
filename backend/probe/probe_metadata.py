@@ -9,7 +9,7 @@ import subprocess
 import time
 import urllib.parse
 
-from media_download_lib import GB, JUNK_EXTS, VIDEO_EXTS
+from media_download_lib import GB, JUNK_EXTS, VIDEO_EXTS, tool_path
 from probe.probe_health import ANNOUNCE_TRACKERS
 from probe.probe_pool import metadata_has_usable_video
 
@@ -65,6 +65,12 @@ def fetch_metadata(info_hash, timeout, deadline=None):
     except FileNotFoundError:
         pass
 
+    # 工具缺失必须在**这里**就抛出来：下面的 `except (OSError, ...)` 是给「工具在、
+    # 这一轮网络/参数出问题」用的。裸名调用时 FileNotFoundError(⊂OSError) 会被它
+    # 接走，于是「没装 aria2c」变成「这个种子里没有可读视频」（实测 105–228ms）。
+    # ToolMissing 继承 RuntimeError，那个 except 捕获不到它。
+    aria2c = tool_path("aria2c")
+
     hard_timeout = timeout + 10
     if deadline is not None:
         hard_timeout = max(min(hard_timeout, deadline - time.monotonic()), 1.0)
@@ -72,7 +78,7 @@ def fetch_metadata(info_hash, timeout, deadline=None):
     try:
         subprocess.run(
             [
-                "aria2c",
+                aria2c,
                 ARIA2_DHT_FLAG,
                 "--bt-metadata-only=true",
                 "--bt-save-metadata=true",
@@ -92,7 +98,7 @@ def fetch_metadata(info_hash, timeout, deadline=None):
         if not os.path.exists(out):
             return None
         result = subprocess.run(
-            ["aria2c", "--show-files", out],
+            [aria2c, "--show-files", out],
             capture_output=True,
             text=True,
             timeout=5,

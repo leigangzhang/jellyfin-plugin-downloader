@@ -111,6 +111,8 @@ public static class BackendManager
         // 配置页那行「服务端口」据此显示原因。
         var portRequested = ConfiguredPort();
         var staging = MediaPaths.ResolveStagingRoot(config?.StagingRoot, MediaPaths.MediaRoot);
+        var tools = ResolveTools(config);
+        var guide = ToolInstaller.Guide(tools);
         var running = false;
         int? pid = null;
         var managed = false;
@@ -152,6 +154,20 @@ public static class BackendManager
             stagingRoot = staging,
             stagingConfigured = !string.IsNullOrWhiteSpace(config?.StagingRoot),
             mediaRootConfigured = !string.IsNullOrWhiteSpace(config?.MediaRoot),
+            // 下载工具：后端探测种子/媒体全靠这三个。配置页据此显示「缺什么、怎么装」，
+            // 而不是等到提交时看一个 rc=3。
+            tools = tools.Select(tool => new
+            {
+                name = tool.Name,
+                path = tool.Path,
+                source = tool.Source,
+                ok = tool.Ok,
+                installHint = tool.InstallHint,
+            }),
+            toolsMissing = guide.Needed ? guide.Detail : string.Empty,
+            toolsMissingNames = tools.Where(tool => !tool.Ok).Select(tool => tool.Name).ToArray(),
+            toolsMissingCommand = guide.Needed ? guide.Command : string.Empty,
+            toolsRecordPath = ToolLocator.RecordPath(),
         };
     }
 
@@ -212,6 +228,18 @@ public static class BackendManager
             // 日志三条路径已经各自加了单引号，保持原样。
             var command = $"exec '{python}' '{script}' >> '{log}' 2>&1";
             var staging = MediaPaths.ResolveStagingRoot(config.StagingRoot, MediaPaths.MediaRoot);
+
+            // 下载工具（aria2c / ffprobe / ffmpeg）：解析结果既前置进子进程 PATH，
+            // 也经 JMD_*_PATH 显式注入（后端 tool_paths.py 优先读它）。缺了不拦启动
+            // ——后端还能读快照——但必须留下**说人话**的记录：以前什么都不说，
+            // 于是「机器上没装工具」在提交时变成 rc=3「种子里没有可读视频」。
+            var tools = ResolveTools(config);
+            var toolGuide = ToolInstaller.Guide(tools);
+            if (toolGuide.Needed)
+            {
+                AppendLog("WARN " + toolGuide.Detail);
+            }
+
             var info = new ProcessStartInfo
             {
                 FileName = "/bin/sh",
@@ -240,6 +268,23 @@ public static class BackendManager
 
             // 端口：后端 console_server.py 的 --port 默认值取自这个变量。
             info.Environment["JMD_PORT"] = port.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+            // 工具目录前置进 PATH：launchd 启动的 Jellyfin 只有最小 PATH，不前置的话
+            // 后端里任何按裸名调用这三个工具的地方都会 FileNotFoundError。
+            var toolPrefix = ToolLocator.ToolPathPrefix(tools);
+            if (toolPrefix.Length > 0)
+            {
+                var inherited = info.Environment.TryGetValue("PATH", out var current) ? current : string.Empty;
+                info.Environment["PATH"] = inherited is { Length: > 0 }
+                    ? toolPrefix + Path.PathSeparator + inherited
+                    : toolPrefix;
+            }
+
+            // 显式路径：后端 backend/tool_paths.py 的第一优先级来源。
+            foreach (var tool in tools.Where(item => item.Ok))
+            {
+                info.Environment[tool.EnvVar] = tool.Path!;
+            }
 
             // 路径来源：媒体库根 = Jellyfin 库配置解析结果；暂存区 = 配置页（或默认）。
             // 后端 media_download_lib 读这两个变量，读不到才用它自己的硬编码兜底。
@@ -408,6 +453,31 @@ public static class BackendManager
         catch (InvalidOperationException)
         {
             return false;
+        }
+    }
+
+    /// <summary>
+    /// 解析三个下载工具：配置项 → install.sh 记录文件 → PATH → 常见前缀
+    /// （顺序的定义在 <see cref="ToolLocator.ResolveAll"/>）。
+    /// </summary>
+    private static IReadOnlyList<ToolLocator.Resolution> ResolveTools(PluginConfiguration? config)
+        => ToolLocator.ResolveAll(config?.BackendAria2c, config?.BackendFfprobe, config?.BackendFfmpeg);
+
+    /// <summary>
+    /// 往后端日志文件追加一行（与后端 stdout 同一个文件）。日志写不进去不影响启动：
+    /// 配置页的 backend/status 是同一份信息，丢一条日志不至于让人看不到缺失项。
+    /// </summary>
+    private static void AppendLog(string line)
+    {
+        try
+        {
+            File.AppendAllText(
+                LogPath(),
+                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {line}{Environment.NewLine}");
+        }
+        catch (Exception)
+        {
+            // ignore
         }
     }
 

@@ -24,6 +24,25 @@ public class PluginConfiguration : BasePluginConfiguration
     public int BackendPort { get; set; } = 8123;
 
     /// <summary>
+    /// Gets or sets the aria2c executable. Empty means "let ToolLocator decide":
+    /// the path recorded by install.sh, then PATH, then the common prefixes.
+    /// <c>aria2c</c> is what the backend uses to fetch torrent metadata.
+    /// </summary>
+    public string BackendAria2c { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the ffprobe executable. Empty means "let ToolLocator decide"。
+    /// 后端用它读媒体的元信息（时长、流、字幕轨）。
+    /// </summary>
+    public string BackendFfprobe { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the ffmpeg executable. Empty means "let ToolLocator decide"。
+    /// 后端用它做整段解码体检。
+    /// </summary>
+    public string BackendFfmpeg { get; set; } = string.Empty;
+
+    /// <summary>
     /// Gets or sets the staging directory the downloader writes into before
     /// finalizing. Empty means the same-volume default: the sibling
     /// <c>.staging</c> directory of the media root.

@@ -105,6 +105,14 @@
       gap: 8px;
     }
 
+    /* 下载工具那三行：ok/缺失一眼可辨，等宽字体让路径好读。 */
+    #JellyfinDownloaderConfigPage .jdl-tool-row {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.92em;
+      line-height: 1.6;
+      word-break: break-all;
+    }
+
     /* 这两个按钮跟端口行同一字号（不吃主题按钮的放大字号/大内边距），
        尺寸压到和这行文字一个量级。 */
     #JellyfinDownloaderConfigPage .jdl-port-btn {
@@ -209,6 +217,14 @@
               <div class="fieldDescription">
                 <span id="jdl-port-note"></span>
                 <span id="jdl-port-hint">后端在本机监听的端口，默认 8123；启动时若端口被占用会自动往后取（8123 → 8124 → …）。</span>
+              </div>
+            </div>
+
+            <div class="inputContainer">
+              <div id="jdl-tools" class="jdl-list"></div>
+              <div class="fieldDescription">
+                <span id="jdl-tools-note"></span>
+                <span id="jdl-tools-hint">下载工具 aria2c / ffprobe / ffmpeg：后端探测种子与媒体时要用。安装插件时若本机没有会自动用 Homebrew 装上，并把绝对路径记进插件目录的 backend-tools.json；后端启动时按这份记录调用，不依赖 PATH。</span>
               </div>
             </div>
 
@@ -517,6 +533,33 @@
         }
         if (status.scriptExists === false) {
           note('后端脚本不存在：' + (status.script || '?'));
+        }
+        renderTools(status);
+      }
+
+      // 三个下载工具（aria2c / ffprobe / ffmpeg）：就地显示「缺哪个、怎么装」。
+      // 不用 alert——它会在每次打开配置页时弹一次；这条信息常驻在这一行。
+      function renderTools(status) {
+        var list = q('jdl-tools');
+        var text = q('jdl-tools-note');
+        if (!list || !text) { return; }
+        list.innerHTML = '';
+        var tools = (status && status.tools) || [];
+        tools.forEach(function (tool) {
+          var row = document.createElement('div');
+          row.className = 'jdl-tool-row';
+          var mark = tool.ok ? '✓' : '✗';
+          var where = tool.ok ? (' ' + (tool.path || '') + '（' + (tool.source || '') + '）') : '';
+          row.textContent = mark + ' ' + (tool.name || '?') + where;
+          list.appendChild(row);
+        });
+        var missing = (status && status.toolsMissingNames) || [];
+        if (missing.length) {
+          // 说人话：缺什么、装什么。不再让提交以 rc=3「种子里没有可读视频」收场。
+          text.textContent = (status.toolsMissing || ('缺少下载工具：' + missing.join('、')))
+            + (status.toolsMissingCommand ? '（' + status.toolsMissingCommand + '）' : '');
+        } else {
+          text.textContent = tools.length ? '三个下载工具都已就绪。' : '';
         }
       }
 

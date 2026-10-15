@@ -10,7 +10,7 @@ import os
 import re
 import subprocess
 
-from ._shared import allocated_size
+from ._shared import ToolMissing, allocated_size, tool_path
 from .paths import MIN_VIDEO_BYTES, SUBTITLE_EXTS, VIDEO_EXTS
 
 __all__ = [
@@ -23,9 +23,13 @@ __all__ = [
 
 
 def probe_media(path):
+    # 缺 ffprobe 时抛 ToolMissing（⊂ RuntimeError，不是 OSError）：裸名调用会让
+    # subprocess 抛 FileNotFoundError，而 verify_video 的 `except (OSError, ...)`
+    # 正好接走它，于是「没装 ffprobe」被记成「这个文件探测失败」。
+    ffprobe = tool_path("ffprobe")
     result = subprocess.run(
         [
-            "ffprobe",
+            ffprobe,
             "-v",
             "error",
             "-show_entries",
@@ -81,9 +85,15 @@ def validate_subtitle_file(path):
 
 def decode_check(path, timeout=300):
     try:
+        ffmpeg = tool_path("ffmpeg")
+    except ToolMissing as exc:
+        # 文案里点名缺哪个工具 + 安装命令：调用方（体检报告 / 日志）要能一眼看出
+        # 这是环境问题，不是这个文件的问题。
+        return False, f"tool missing: {exc}", ""
+    try:
         process = subprocess.run(
             [
-                "ffmpeg",
+                ffmpeg,
                 "-v",
                 "error",
                 "-xerror",
@@ -180,6 +190,12 @@ def verify_video(
 
     try:
         payload = probe_media(path)
+    except ToolMissing as exc:
+        # 工具缺失单独分类：它说的是「这台机器上没装 ffprobe」，不是
+        # 「这个文件的元信息读不出来」。调用方据此走环境错误的文案。
+        result["reason"] = f"tool missing: {exc}"
+        result["tool_missing"] = exc.name
+        return result
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
         result["reason"] = f"ffprobe failed: {exc}"
         return result
