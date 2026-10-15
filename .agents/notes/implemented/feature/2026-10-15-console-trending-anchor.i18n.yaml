@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-10-15-console-trending-anchor.md (docs/i18n.md): per heading section, a hash
+# of its English and Chinese blocks outside fenced code blocks.
+# After editing either side, bring the other along and re-record with:
+#   python3 tools/pair-docs.py --write .agents/notes/implemented/feature/2026-10-15-console-trending-anchor.md
+/decision-a-trending-entry-in-the-downloader-plugin-with-a-followed-title-anchored-into-the-jellyfin-library:
+  en: b486b6b6538722b8
+  zh: b59176c5c37cb904
+/decision-a-trending-entry-in-the-downloader-plugin-with-a-followed-title-anchored-into-the-jellyfin-library/problem:
+  en: 48878e35157d2f61
+  zh: 391df1aa3425a928
+/decision-a-trending-entry-in-the-downloader-plugin-with-a-followed-title-anchored-into-the-jellyfin-library/decision:
+  en: 4f5c6925a7dde62d
+  zh: baaa0e23b1842ef7
+/decision-a-trending-entry-in-the-downloader-plugin-with-a-followed-title-anchored-into-the-jellyfin-library/alternatives-considered:
+  en: 83b3aa63eb57adf4
+  zh: 8b51bec189112e84
+/decision-a-trending-entry-in-the-downloader-plugin-with-a-followed-title-anchored-into-the-jellyfin-library/consequences:
+  en: df39d0ef5a301be6
+  zh: 618f316f8699549d
+/decision-a-trending-entry-in-the-downloader-plugin-with-a-followed-title-anchored-into-the-jellyfin-library/testing:
+  en: 6321abf9a823352d
+  zh: 6e26ad97ae5cae1e

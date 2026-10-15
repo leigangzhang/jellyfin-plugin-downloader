@@ -2,7 +2,8 @@
 
 ## 本仓库是什么
 
-一个 .NET 9 的 Jellyfin 插件（`Jellyfin.Plugin.JellyfinDownloader`），把「下载控制台」入口做进 Jellyfin 详情页。
+一个 .NET 9 的 Jellyfin 插件（`Jellyfin.Plugin.JellyfinDownloader`），把「下载控制台」入口做进 Jellyfin 详情页；
+右上角另有「热门」入口（`Web/inject_06_trending.js`，TMDb 榜单），关注条目可经 `POST /JellyfinDownloader/trending/anchor` 在媒体库里写占位文件。
 插件自带一份 Python 后端（`backend/`，零第三方依赖），由插件进程托管在 `127.0.0.1` 上。
 
 ## 硬性约束（必须）
