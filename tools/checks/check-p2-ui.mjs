@@ -1,6 +1,6 @@
 // Behaviour guard for the P2 UI fixes (evidence directory → repository, task t28).
 //
-// What it guards (32 checks, one failure each):
+// What it guards (40 checks, one failure each):
 //   R1 threshold is read-only: no 60/65/70/75/80 dial, nothing reads panel.threshold,
 //      the note node carries jdl-threshold-note, and configuredMinScore() falls back to
 //      60 for a missing, zero, or non-numeric config value.
@@ -14,14 +14,16 @@
 //   R7 纪录片（Jellyfin 认成 Series）走详情页入口：目标库 = Records 时 /api/search 与
 //      /api/submit 的有效类型都是 record，且监控轮询（refreshTasks 重写整份快照，
 //      后端快照 kind 是探针口径 movie）之后提交第 2 条仍是 record；TV Shows 路径不变。
+//   R8 提交/监控的进行中状态：点下去同一帧就 disabled 且文案含「提交中… 正在探测元数据」，
+//      响应放行后恢复可点；失败 toast 带 rc 与耗时秒数，成功 toast 仍是既有文案。
 //
 // How it works: the five Web shards are concatenated in the controller's ScriptSegments
 // order and run in node:vm against a minimal DOM stub; a ApiClient.ajax stub captures the
 // payload the panel really posts. No browser, no Jellyfin, no network.
 //
 // How to run (from the repository root):
-//   node tools/checks/check-p2-ui.mjs                 # green iff all 32 checks hold
-//   node tools/checks/check-p2-ui.mjs --mutate        # revert five fixed behaviours, one
+//   node tools/checks/check-p2-ui.mjs                 # green iff all 40 checks hold
+//   node tools/checks/check-p2-ui.mjs --mutate        # revert eight fixed behaviours, one
 //                                                     # at a time, and require each to go red
 //   node tools/checks/check-p2-ui.mjs --web-dir DIR   # check another copy of the shards
 //
@@ -82,12 +84,16 @@ const EXPORT_HOOK = `
     submitAction: submitAction,
     runSearch: runSearch,
     refreshTasks: refreshTasks,
+    searchTick: searchTick,
     setConfig: function (c) { state.config = c; },
     setManual: function (m) { for (var k in m) { manual[k] = m[k]; } },
     setPanel: function (p) { state.panel = p; },
     setSlug: function (s) { state.slug = s; },
     setSnapshot: function (s) { state.snapshot = s; },
-    getSnapshot: function () { return state.snapshot; }
+    getSnapshot: function () { return state.snapshot; },
+    setSearch: function (s) { state.search = s; },
+    getSearch: function () { return state.search; },
+    getTimer: function () { return state.timer; }
   };
 `;
 
@@ -104,21 +110,45 @@ function readBundle() {
 }
 
 function makeNode(tag) {
-  return {
+  const node = {
     tagName: tag, children: [], style: {}, attributes: {}, className: '', textContent: '',
     innerHTML: '', title: '', value: '', checked: false, type: '', dataset: {},
+    // disabled 在 DOM 里是 reflected 属性：getAttribute('disabled') 也要跟着变，
+    // 否则「点一下就禁用」这种断言在桩里看不见。
     classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
     appendChild(c) { this.children.push(c); c.parentElement = this; return c; },
-    setAttribute(k, v) { this.attributes[k] = v; },
-    removeAttribute() {}, remove() {}, focus() {},
-    addEventListener() {}, querySelector() { return null; }, querySelectorAll() { return []; }
+    setAttribute(k, v) { this.attributes[k] = v; if (k === 'disabled') { this.disabled = true; } },
+    getAttribute(k) { return Object.prototype.hasOwnProperty.call(this.attributes, k) ? this.attributes[k] : null; },
+    removeAttribute(k) { delete this.attributes[k]; if (k === 'disabled') { this.disabled = false; } },
+    remove() {}, focus() {},
+    addEventListener() {},
+    // 只支持 ".class" 选择器（够面板用）：按类名递归找第一个后代。
+    querySelector(sel) {
+      const want = String(sel || '').replace(/^\./, '');
+      const walk = (parent) => {
+        for (const child of parent.children || []) {
+          if (String(child.className || '').split(/\s+/).indexOf(want) >= 0) { return child; }
+          const deeper = walk(child);
+          if (deeper) { return deeper; }
+        }
+        return null;
+      };
+      return want ? walk(this) : null;
+    },
+    querySelectorAll() { return []; }
   };
+  return node;
 }
 
-function load(bundleSrc, snapshotReply) {
+function load(bundleSrc, snapshotReply, options) {
   const src = bundleSrc.replace(/\}\)\(\);\s*$/, EXPORT_HOOK + '})();');
   const calls = [];
+  const toasts = [];
+  const held = [];                     // R8：被挂住、等放行的 ajax
+  const hold = !!(options && options.hold);
+  const heldReply = (options && options.reply) || { ok: true, rc: 0 };
   const body = makeNode('body');
+  body.appendChild = function (child) { toasts.push(child); child.parentElement = body; return child; };
   const sandbox = {
     console: { log() {} },
     setTimeout: () => 0, clearTimeout() {}, setInterval: () => 0, clearInterval() {},
@@ -134,6 +164,10 @@ function load(bundleSrc, snapshotReply) {
     getUrl: (p) => p,
     ajax: (req) => {
       calls.push(req);
+      // R8：把响应挂住，模拟「闸门正在跑」的 25 s 窗口。
+      if (hold) {
+        return new Promise((resolve) => { held.push(() => resolve(heldReply)); });
+      }
       // 只有 R7 的监控轮询需要「后端回一份快照」；其余检查沿用原来的空回复。
       if (snapshotReply && String(req.url).indexOf('snapshot') >= 0) {
         return Promise.resolve(snapshotReply());
@@ -151,7 +185,7 @@ function load(bundleSrc, snapshotReply) {
     // reported as one failure instead of escaping as a stack trace.
     loadError = error;
   }
-  return { t: sandbox.__jdlTest, calls, loadError };
+  return { t: sandbox.__jdlTest, calls, toasts, loadError, heldCount: () => held.length, release: () => held.splice(0).forEach((fn) => fn()) };
 }
 
 async function runChecks(bundleSrc) {
@@ -161,7 +195,7 @@ async function runChecks(bundleSrc) {
   const { t, calls, loadError } = load(bundleSrc);
   if (loadError) {
     failures.push('LOAD :: the Web shards did not load: ' + loadError.message);
-    return { failures, checks: 32 };
+    return { failures, checks: 40 };
   }
 
   // ---- acceptance 1：不再暴露阈值档位，阈值只取配置 ----
@@ -297,7 +331,73 @@ async function runChecks(bundleSrc) {
       'kind=' + doc.t.getSnapshot().kind);
   }
 
-  return { failures, checks: 32 };
+  // ---- R8 提交/监控的进行中状态：点击同一帧就禁用+换文案，响应后恢复 ----
+  // 真机复现：元数据闸门跑了 26.3 s 才回 rc=3，期间界面毫无反应。
+  const busyButton = (label) => {
+    // actionButton 用 innerHTML 生成 <span class="material-icons">+<span class="jdl-btn__label">；
+    // 桩不解析 innerHTML，这里搭一份等价结构。
+    const button = makeNode('button');
+    button.className = 'jdl-btn jdl-btn--primary';
+    const text = makeNode('span');
+    text.className = 'jdl-btn__label';
+    text.textContent = label;
+    button.appendChild(text);
+    return { button, text };
+  };
+  const lastToastText = (doc) => (doc.toasts.length
+    ? String(doc.toasts[doc.toasts.length - 1].textContent || '')
+    : '');
+
+  {
+    // 提交：响应挂住 → 断言「点击瞬间」的进行中状态
+    const doc = load(bundleSrc, null, { hold: true, reply: { ok: false, rc: 3 } });
+    doc.t.setPanel({ categorySelect: { value: 'Records' }, trustMagnet: false, form: null, item: docItem });
+    const ui = busyButton('提交迅雷');
+    doc.t.submitAction({ ih: 'F'.repeat(40) }, docSnapshot('record'), 'submit', '已提交迅雷', ui.button);
+    ok('R8-submit-busy-disabled-on-click', ui.button.disabled === true, 'disabled=' + ui.button.disabled);
+    ok('R8-submit-busy-label-on-click',
+      ui.text.textContent.indexOf('提交中') >= 0 && ui.text.textContent.indexOf('元数据') >= 0,
+      'label=' + ui.text.textContent);
+    ok('R8-submit-inflight', doc.heldCount() === 1, 'held=' + doc.heldCount());
+    doc.release();
+    await tick(); await tick();
+    ok('R8-submit-restored-after-reply',
+      ui.button.disabled === false && ui.text.textContent === '提交迅雷',
+      'disabled=' + ui.button.disabled + ' label=' + ui.text.textContent);
+    const failToast = lastToastText(doc);
+    ok('R8-submit-failure-toast-has-rc-and-seconds',
+      failToast.indexOf('rc=3') >= 0 && failToast.indexOf('用时') >= 0 && failToast.indexOf(' s') >= 0,
+      failToast);
+  }
+  {
+    // 提交成功：文案仍是既有那句
+    const doc = load(bundleSrc, null, { hold: true, reply: { ok: true, rc: 0 } });
+    doc.t.setPanel({ categorySelect: { value: 'TV Shows' }, trustMagnet: false, form: null, item: docItem });
+    doc.t.setSlug('kind-test');
+    const ui = busyButton('提交迅雷');
+    doc.t.submitAction({ ih: 'G'.repeat(40) }, docSnapshot('episode'), 'submit', '已提交迅雷', ui.button);
+    doc.release();
+    await tick(); await tick();
+    ok('R8-submit-success-toast', lastToastText(doc) === '已提交迅雷', lastToastText(doc));
+  }
+  {
+    // 后台监控：同一套进行中状态（它通常很快，但同样不得静默）
+    const doc = load(bundleSrc, null, { hold: true, reply: { ok: true, rc: 0 } });
+    doc.t.setPanel({ categorySelect: { value: 'Records' }, trustMagnet: false, form: null, item: docItem });
+    doc.t.setSlug('kind-test');
+    const ui = busyButton('后台监控');
+    doc.t.submitAction({ ih: 'H'.repeat(40) }, docSnapshot('record'), 'watch', '已启动后台监控', ui.button);
+    ok('R8-watch-busy-on-click',
+      ui.button.disabled === true && ui.text.textContent.indexOf('启动中') >= 0,
+      'disabled=' + ui.button.disabled + ' label=' + ui.text.textContent);
+    doc.release();
+    await tick(); await tick();
+    ok('R8-watch-restored-and-toast',
+      ui.button.disabled === false && lastToastText(doc) === '已启动后台监控',
+      'disabled=' + ui.button.disabled + ' toast=' + lastToastText(doc));
+  }
+
+  return { failures, checks: 40 };
 }
 
 const MUTATIONS = [
@@ -309,7 +409,13 @@ const MUTATIONS = [
   ['详情页/手动面板的纪录片类型改写被拆掉', "    if (wantsRecordKind()) { params.kind = 'record'; }\n", ''],
   ['监控轮询回写快照时的 kind 对齐被拆掉',
     '      rememberSnapshotKind(snapshot.kind);\n      syncSnapshotKind();\n      renderTasks(snapshot.tasks || []);',
-    '      renderTasks(snapshot.tasks || []);']
+    '      renderTasks(snapshot.tasks || []);'],
+  ['提交/监控的进行中状态被拆掉',
+    '    var idleLabel = setBusy(button, busyLabelFor(endpoint));\n',
+    "    var idleLabel = '';\n"],
+  ['响应到达后的恢复可点被拆掉',
+    '      clearBusy(button, idleLabel);\n      if (!result || result.error)',
+    '      if (!result || result.error)']
 ];
 
 const EXPECT = {
@@ -317,7 +423,9 @@ const EXPECT = {
   'Season 副标题退回「电影」': 'R2-season-not-movie',
   '类型→库联动被拆掉': 'R3-manual-spec-record',
   '详情页/手动面板的纪录片类型改写被拆掉': 'R7-search-record-when-records',
-  '监控轮询回写快照时的 kind 对齐被拆掉': 'R7-poll-keeps-record'
+  '监控轮询回写快照时的 kind 对齐被拆掉': 'R7-poll-keeps-record',
+  '提交/监控的进行中状态被拆掉': 'R8-submit-busy-disabled-on-click',
+  '响应到达后的恢复可点被拆掉': 'R8-submit-restored-after-reply'
 };
 
 // A shard that cannot be read is a failure of this guard, not a crash of the command that
@@ -346,7 +454,7 @@ try {
   console.log(failures.length === 0 ? 'P2 UI CHECK PASS' : 'P2 UI CHECK FAIL');
   process.exit(failures.length === 0 ? 0 : 1);
 } catch (error) {
-  console.log('检查项 32，失败 1');
+  console.log('检查项 40，失败 1');
   console.log('FAIL  LOAD :: ' + (error && error.message ? error.message : String(error)));
   console.log(MUTATE ? 'MUTATION CHECK FAIL' : 'P2 UI CHECK FAIL');
   process.exit(1);

@@ -526,6 +526,10 @@
 
 .jdl-btn:disabled { opacity: .45; cursor: not-allowed; }
 
+/* 进行中（提交迅雷 / 后台监控）：闸门最长 25 s+，这段时间按钮要自己说话 */
+.jdl-btn--busy:disabled { opacity: .8; cursor: progress; }
+.jdl-btn--busy .jdl-btn__label { max-width: none; white-space: nowrap; }
+
 .jdl-empty {
   padding: 48px 20px;
   text-align: center;

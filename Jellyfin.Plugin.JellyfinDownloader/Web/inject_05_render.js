@@ -410,11 +410,11 @@
           .then(function () { toast('\u5df2\u590d\u5236\u78c1\u529b'); })
           .catch(function () { toast('\u590d\u5236\u5931\u8d25'); });
       }));
-      actions.appendChild(actionButton('monitor_heart', '\u540e\u53f0\u76d1\u63a7', 'jdl-btn--ghost', function () {
-        submitAction(candidate, snapshot, 'watch', '\u5df2\u542f\u52a8\u540e\u53f0\u76d1\u63a7');
+      actions.appendChild(actionButton('monitor_heart', '\u540e\u53f0\u76d1\u63a7', 'jdl-btn--ghost', function (button) {
+        submitAction(candidate, snapshot, 'watch', '\u5df2\u542f\u52a8\u540e\u53f0\u76d1\u63a7', button);
       }));
-      actions.appendChild(actionButton('download', '\u63d0\u4ea4\u8fc5\u96f7', 'jdl-btn--primary', function () {
-        submitAction(candidate, snapshot, 'submit', '\u5df2\u63d0\u4ea4\u8fc5\u96f7');
+      actions.appendChild(actionButton('download', '\u63d0\u4ea4\u8fc5\u96f7', 'jdl-btn--primary', function (button) {
+        submitAction(candidate, snapshot, 'submit', '\u5df2\u63d0\u4ea4\u8fc5\u96f7', button);
       }));
     }
     row.appendChild(actions);
@@ -453,7 +453,44 @@
     return '';
   }
 
-  function submitAction(candidate, snapshot, endpoint, successText) {
+  // 进行中状态：元数据闸门最长要 25 s 以上，这段时间按钮必须自己说话，
+  // 否则用户看到的就是「点了没反应」（真机复现：26.3 s 才回 rc=3）。
+  var BUSY_LABEL = {
+    submit: '\u63d0\u4ea4\u4e2d\u2026 \u6b63\u5728\u63a2\u6d4b\u5143\u6570\u636e\uff08\u7ea6 25 s\uff09',
+    watch: '\u542f\u52a8\u4e2d\u2026 \u6b63\u5728\u6302\u540e\u53f0\u76d1\u63a7\uff08\u7ea6\u51e0\u79d2\uff09'
+  };
+
+  function busyLabelFor(endpoint) {
+    return endpoint === 'watch' ? BUSY_LABEL.watch : BUSY_LABEL.submit;
+  }
+
+  // 返回按钮原来的文案（恢复时用）；按钮是 innerHTML 造的，
+  // 所以文案节点只能靠 .jdl-btn__label 找。
+  function setBusy(button, text) {
+    if (!button) { return ''; }
+    var label = button.querySelector ? button.querySelector('.jdl-btn__label') : null;
+    var idle = '';
+    if (label) {
+      if (label.getAttribute && label.getAttribute('data-jdl-idle-label') == null) {
+        label.setAttribute('data-jdl-idle-label', label.textContent || '');
+      }
+      idle = (label.getAttribute && label.getAttribute('data-jdl-idle-label')) || '';
+      label.textContent = text;
+    }
+    button.disabled = true;
+    if (button.classList) { button.classList.add('jdl-btn--busy'); }
+    return idle;
+  }
+
+  function clearBusy(button, idleLabel) {
+    if (!button) { return; }
+    var label = button.querySelector ? button.querySelector('.jdl-btn__label') : null;
+    if (label && idleLabel) { label.textContent = idleLabel; }
+    button.disabled = false;
+    if (button.classList) { button.classList.remove('jdl-btn--busy'); }
+  }
+
+  function submitAction(candidate, snapshot, endpoint, successText, button) {
     var panel = state.panel;
     var payload = {
       ih: candidate.ih,
@@ -465,15 +502,24 @@
     };
     // trust-magnet 逃生开关：只在勾选时带上参数，默认（关闭）与旧行为逐字一致
     if (panel && panel.trustMagnet) { payload.trust_magnet = true; }
+    // 点击的同一帧内就进入进行中（同步代码，不等任何 await）
+    var startedAt = Date.now();
+    var idleLabel = setBusy(button, busyLabelFor(endpoint));
+    var elapsedSeconds = function () { return ((Date.now() - startedAt) / 1000).toFixed(1); };
     api(endpoint, { type: 'POST', data: payload }).then(function (result) {
+      clearBusy(button, idleLabel);
       if (!result || result.error) { toast(result && result.error ? result.error : '\u8bf7\u6c42\u5931\u8d25'); return; }
       if (result.ok) {
         toast(successText);
         startMonitoring();
       } else {
-        toast('\u5931\u8d25\uff08rc=' + result.rc + '\uff09');
+        // 失败时把闸门实际花了多久写出来（本地计时，不用后端字段）
+        toast('\u5931\u8d25\uff08rc=' + result.rc + '\uff0c\u7528\u65f6 ' + elapsedSeconds() + ' s\uff09');
       }
-    }).catch(function () { toast('\u540e\u7aef\u4e0d\u53ef\u8fbe'); });
+    }).catch(function () {
+      clearBusy(button, idleLabel);
+      toast('\u540e\u7aef\u4e0d\u53ef\u8fbe');
+    });
   }
 
   function startMonitoring() {
