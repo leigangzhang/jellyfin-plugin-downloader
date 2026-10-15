@@ -28,6 +28,35 @@ DDHDTV_SOURCE_BONUS = 4.0
 SPEED_UNMEASURED_NEUTRAL = 0.40
 SPEED_DEAD_SWARM = 0.05
 
+# `breakdown["speed"]["mode"]` 里的取值中，只有这一个不是「分数估计」而是**可达性
+# 判决**：announce/live-check 没看到任何不是本机的外部 peer，metadata 必然取不到。
+# 排序（`score.rank_candidates`）与候选对象上那个给 UI 读的判据字段都用它，所以写成
+# 常量，别在几处各拼一遍字符串。
+DEAD_SWARM_MODE = "dead-swarm"
+
+
+def is_dead_swarm(candidate):
+    """这条候选是不是「判定不可达」：过不了提交前的元数据探测。
+
+    两个来源都要认，因为它们出现在不同时机，而且**显式布尔位优先**：
+
+    * 候选对象上的 `dead_swarm` 布尔位——`probe/probe_round.py:188` 在 announce 报
+      `external_peers == 0` 时写下的原始判决；live-check 复核拿到 metadata 后会把它
+      翻回 False。这个键在就用它，**不再看 breakdown**：否则一条已被复核救回的候选会
+      被上一轮的旧明细继续判死。
+    * 只有在**没有这个键**时才回落到 `breakdown["speed"]["mode"] == "dead-swarm"`——
+      那是 `_speed_score` 落进明细的同一个判决，后端快照与面板读到的 JSON 里只有它。
+
+    只看 `mode == "unknown"` 不算 dead：那是 tracker 抓不到读数，属于「不知道」，不是
+    「不可达」——把它当闸门会把新种、私有 tracker 的候选一起沉底。
+    """
+    if not isinstance(candidate, dict):
+        return False
+    if "dead_swarm" in candidate:
+        return bool(candidate["dead_swarm"])
+    speed = (candidate.get("breakdown") or {}).get("speed") or {}
+    return speed.get("mode") == DEAD_SWARM_MODE
+
 
 
 # 外部索引快照（第二磁力源 torrents-csv）的种子数折扣（t9 报告 F4 的接口契约）：
@@ -137,9 +166,9 @@ def _speed_score(candidate, policy):
     if candidate.get("dead_swarm"):
         # A live announce showed no peer that is not this machine, so the
         # torrent cannot even produce metadata, let alone download.
-        parts["mode"] = "dead-swarm"
+        parts["mode"] = DEAD_SWARM_MODE
         parts["external_peers"] = 0
-        parts["score_source"] = "dead-swarm"
+        parts["score_source"] = DEAD_SWARM_MODE
         return SPEED_DEAD_SWARM, parts
 
     if seed_source == "none":

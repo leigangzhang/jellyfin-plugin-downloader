@@ -26,6 +26,7 @@ from .speed import (
     DDHDTV_SOURCE_BONUS,
     DDHDTV_SOURCE_TOKENS,
     _speed_score,
+    is_dead_swarm,
 )
 
 
@@ -223,6 +224,14 @@ def score_candidate(candidate, policy=None):
 
 def apply_score(candidate, policy=None):
     """Attach score fields to a candidate dict in place and return it."""
+    # 先读**旧**判据再重算：候选上没有 `dead_swarm` 键、只有上一轮落进
+    # `breakdown.speed.mode` 的判决时（后端快照/面板 JSON 就是这个形态），直接重算会把
+    # 它降级成 `unknown` 而丢掉「不可达」这条信息。读到的判决要**喂回打分**，否则重算出的
+    # 明细会写 `mode="unknown"`、与候选上的 `dead_swarm=True` 互相矛盾，前端读哪个都能被
+    # 带偏。显式布尔位（live-check 救回的 False）优先，不受旧明细影响。
+    judged_dead = is_dead_swarm(candidate)
+    if judged_dead:
+        candidate["dead_swarm"] = True
     result = score_candidate(candidate, policy)
     candidate["score"] = result["score"]
     candidate["provisional"] = result["provisional"]
@@ -232,16 +241,31 @@ def apply_score(candidate, policy=None):
         if key in ("subtitle_kind", "subtitle_score") or candidate.get(key):
             continue
         candidate[key] = value
+    # 可达性判决落成两个前端能直接读的字段：`dead_swarm`（判决本身，归一化成布尔，
+    # 免得有的候选有键、有的没键）与 `submittable`（正向说法，面板据此把行标成
+    # 「过不了闸门」，不必让用户点一下等 26 秒才发现）。判据见 `speed.is_dead_swarm`。
+    candidate["dead_swarm"] = judged_dead or is_dead_swarm(candidate)
+    candidate["submittable"] = not candidate["dead_swarm"]
     return candidate
 
 
 def rank_candidates(candidates, policy=None):
-    """Score every candidate and return them sorted best-first."""
+    """Score every candidate and return them sorted best-first.
+
+    主序是**「能不能过闸门」**，不是分数：`dead_swarm` 的候选（announce/live-check
+    判定没有任何外部 peer，metadata 必然取不到）排在所有可提交候选之后。理由是
+    score 修不平这个差：真机那一对里 0 种子的候选靠「体验 93 / 适配 94」拿到 69.62，
+    压过有 6 个 peer 的 67.76——`speed` 维度只占 28% 权重，填不平 17+43 分的体验/适配
+    差；而点这颗死种提交，用户要等 26.3 秒才看到 `rc=3 RESOURCE_REJECTED`。
+    两类内部都保持原来的 `score → seeds → 体积接近度` 顺序；全部候选都 dead 时，
+    首位键恒定 → 顺序与改前完全一致。
+    """
     policy = normalize_policy(policy)
     for candidate in candidates:
         apply_score(candidate, policy)
     candidates.sort(
         key=lambda item: (
+            not item.get("dead_swarm"),
             item.get("score", 0.0),
             item.get("seeds", 0),
             -abs(float(item.get("main_video_gb") or 0)),
