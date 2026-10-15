@@ -46,15 +46,48 @@
   function closePanel() {
     if (state.timer) { clearInterval(state.timer); state.timer = null; }
     if (state.monitorTimer) { clearInterval(state.monitorTimer); state.monitorTimer = null; }
+    var opened = state.panel;
+    if (opened && opened.cacheTimer) { clearTimeout(opened.cacheTimer); opened.cacheTimer = null; }
     var panel = document.querySelector('[data-jdl-panel]');
     if (panel) { panel.remove(); }
     state.panel = null;
     document.removeEventListener('keydown', onKeyDown);
   }
 
+  // 「纪录片」不是一个 Jellyfin 条目类型：纪录片库里的条目被 Jellyfin 认成 Series，
+  // 而 /api/search 的 kind 决定后端取哪一组默认值（关不关单源、用哪组署名关键字、
+  // 探针按什么策略算体积）。所以有效类型不能只看 item.Type，还要看目标库/用户选型：
+  //   · 保存到哪个库 = Records（详情页/季页手动选）→ record
+  //   · 手动面板「类型」选「纪录片」→ record
+  // 电影仍是 movie、剧集仍是 episode（这两条不经过这里，params.kind 保持 searchParams 的结果）。
+  function wantsRecordKind() {
+    var panel = state.panel;
+    if (!panel) { return false; }
+    if (panel.form && panel.form.kind && panel.form.kind.value === 'record') { return true; }
+    return !!(panel.categorySelect && panel.categorySelect.value === 'Records');
+  }
+
+  // 快照里的 kind 是后端探针口径（record 会被探针按 PROBE_KIND 写成 movie），
+  // 而提交要发「本面板的有效类型」→ 读回快照时记下原始值，再按当前选择对齐。
+  function rememberSnapshotKind(kind) {
+    var panel = state.panel;
+    if (panel) { panel.baseKind = kind; }
+  }
+
+  function syncSnapshotKind() {
+    var panel = state.panel;
+    var snapshot = state.snapshot;
+    if (!panel || !snapshot || !snapshot.kind) { return; }
+    var base = panel.baseKind || snapshot.kind;
+    snapshot.kind = wantsRecordKind() ? 'record' : base;
+  }
+
   function runSearch(item) {
     var current = state.panel;
-    if (!searchParams(item).title) {
+    var params = searchParams(item);
+    // 纪录片：把有效类型从 episode 改写成 record（后端按 record 关单源 + 换署名组）
+    if (wantsRecordKind()) { params.kind = 'record'; }
+    if (!params.title) {
       toast('\u5148\u586b\u7247\u540d');
       if (current && current.form && current.form.title) { current.form.title.focus(); }
       return;
@@ -68,7 +101,7 @@
       current.progress.classList.remove('jdl-progress--done');
       setStage(current.progress, '\u6b63\u5728\u8fde\u63a5\u540e\u7aef\u2026');
     }
-    api('search', { type: 'POST', data: searchParams(item) }).then(function (result) {
+    api('search', { type: 'POST', data: params }).then(function (result) {
       if (!result || result.error) {
         failSearch(result && result.error ? result.error : '\u641c\u7d22\u8bf7\u6c42\u5931\u8d25');
         return;
@@ -119,6 +152,8 @@
           finishProgress('\u83b7\u53d6\u5b8c\u6210');
           state.slug = result.slug || state.slug;
           state.snapshot = result.snapshot || {};
+          rememberSnapshotKind(state.snapshot.kind);
+          syncSnapshotKind();
           var status = result.search_status;
           panel.summary.textContent = status && status !== 'ok'
             ? '\u641c\u7d22\u5b8c\u6210\uff08' + status + '\uff09'

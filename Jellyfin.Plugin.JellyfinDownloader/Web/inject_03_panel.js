@@ -15,6 +15,20 @@
         manual[name] = input.value;
         markManualDirty();
       });
+      // 手动面板也要吃磁盘缓存：片名敲完后回读一次已有快照（读不到仍等用户点「搜索」，
+      // 绝不自动开抓）。旧版本只在开面板那一刻用空片名查过一次 → 永远读不到缓存。
+      if (name === 'title') {
+        input.addEventListener('input', function () {
+          var panel = state.panel;
+          if (!panel || !panel.cacheOnly || state.timer) { return; }
+          if (panel.cacheTimer) { clearTimeout(panel.cacheTimer); }
+          panel.cacheTimer = setTimeout(function () {
+            panel.cacheTimer = null;
+            if (!manualSpec().title) { return; }
+            loadExisting(manualItem());
+          }, 700);
+        });
+      }
       input.addEventListener('keydown', function (event) {
         if (event.key === 'Enter') {
           event.preventDefault();
@@ -34,12 +48,15 @@
     var kindWrap = el('label', 'jdl-field jdl-field--narrow');
     kindWrap.appendChild(el('span', 'jdl-field__label', '\u7c7b\u578b'));
     var kindSelect = el('select', 'jdl-select');
-    [['episode', '\u5267\u96c6 / \u7efc\u827a'], ['movie', '\u7535\u5f71']].forEach(function (pair) {
+    // 「纪录片」按 episode 口径检索（Jellyfin 里纪录片多被识别为 Series），
+    // 与其它类型的区别只体现在默认目标库：Movies / Records / TV Shows。
+    [['episode', '\u5267\u96c6 / \u7efc\u827a'], ['movie', '\u7535\u5f71'], ['record', '\u7eaa\u5f55\u7247']].forEach(function (pair) {
       var option = el('option', null, pair[1]);
       option.value = pair[0];
       if (manual.kind === pair[0]) { option.selected = true; }
       kindSelect.appendChild(option);
     });
+    kindSelect.title = '\u51b3\u5b9a\u68c0\u7d22\u53e3\u5f84\uff08\u7eaa\u5f55\u7247\u6309\u5267\u96c6\u53e3\u5f84\u641c\uff09\u4e0e\u300c\u4fdd\u5b58\u5230\u54ea\u4e2a\u5e93\u300d\u7684\u9ed8\u8ba4\u503c';
     kindWrap.appendChild(kindSelect);
     node.appendChild(kindWrap);
     inputs.kind = kindSelect;
@@ -58,6 +75,10 @@
     kindSelect.addEventListener('change', function () {
       manual.kind = kindSelect.value;
       syncKind();
+      // 类型 → 目标库联动：用户没手动改过「保存到哪个库」就跟着类型走
+      syncManualCategoryDefault();
+      // 「纪录片」档同样要把有效类型抬成 record（提交/监控也要一致）
+      syncSnapshotKind();
       markManualDirty();
     });
     syncKind();
@@ -68,6 +89,26 @@
     return { node: node, inputs: inputs };
   }
 
+  // 手动面板：类型变了就把「保存到哪个库」拉回该类型的默认值；
+  // 用户手动改过库（categoryTouched）之后不再覆盖他的选择。
+  function syncManualCategoryDefault() {
+    var panel = state.panel;
+    if (!panel || !panel.categorySelect || panel.categoryTouched) { return; }
+    panel.categorySelect.value = defaultCategoryForKind(manual.kind);
+  }
+
+  // trust-magnet 开关的文案：勾上时必须说清代价（跳过元数据闸门）
+  function syncTrustTitle(box, label) {
+    var on = !!(box && box.checked);
+    var text = on
+      ? '\u5f00\uff1a\u8df3\u8fc7\u300c\u63a2\u6d4b torrent \u5143\u6570\u636e\u300d\u8fd9\u9053\u95f8\u95e8\u76f4\u63a5\u4ea4\u8fc5\u96f7\u3002'
+        + '\u5143\u6570\u636e\u62ff\u4e0d\u5230\uff08\u6b7b\u79cd\uff09\u65f6\u4efb\u52a1\u4f1a\u5360\u7528\u8fc5\u96f7\u4efb\u52a1\u4f4d\u4e14\u4e0b\u4e0d\u52a8\uff0c\u8bf7\u786e\u8ba4\u79cd\u5b50\u53ef\u7528\u518d\u5f00\u3002'
+      : '\u5173\uff08\u9ed8\u8ba4\uff09\uff1a\u63d0\u4ea4\u524d\u5148\u63a2\u6d4b torrent \u5143\u6570\u636e\uff0c\u62ff\u4e0d\u5230\u5c31\u62d2\u7edd\uff08\u7ea6 25 s\uff09\u3002'
+        + '\u52fe\u4e0a\u53ef\u8df3\u8fc7\u8fd9\u9053\u95f8\u95e8\uff08\u98ce\u9669\uff1a\u6b7b\u79cd\u4f1a\u767d\u5360\u4efb\u52a1\u4f4d\uff09\u3002';
+    if (label) { label.title = text; }
+    if (box) { box.title = text; }
+  }
+
   function openPanel(item) {
     var opened = document.querySelector('[data-jdl-panel]');
     if (opened) {
@@ -76,6 +117,10 @@
       if (open && item && open.Id === item.Id) { return; }
       closePanel();
     }
+    // 换了条目：先清掉上一条的快照，否则新面板在快照读回来之前会渲染上一条的候选行
+    //（实测过「面板标题是条目 A、候选行却是条目 B」的串片现象）。
+    state.snapshot = {};
+    state.slug = '';
     log('openPanel', item.Type, item.Name, '-> search title =', searchParams(item).title);
     var backdrop = el('div', 'jdl-backdrop');
     backdrop.setAttribute('data-jdl-panel', '1');
@@ -161,15 +206,12 @@
     packLabel.style.display = 'none';
     controls.appendChild(packLabel);
 
-    var threshold = el('select', 'jdl-select');
-    [60, 65, 70, 75, 80].forEach(function (value) {
-      var option = el('option', null, '\u2265 ' + value + ' \u5206');
-      option.value = String(value);
-      if (value === Math.round(state.config.minScore || 60)) { option.selected = true; }
-      threshold.appendChild(option);
-    });
-    threshold.addEventListener('change', renderCandidates);
-    controls.appendChild(threshold);
+    // 阈值固定取插件配置的 MinScore（用户已定：控件不调整、页面不显示档位）。
+    // 这里只留一行只读文案，不再有 select —— 旧 select 的「降低阈值」(value-5=55)
+    // 会把 select 置成空值、阈值失效（状态行显示「≥0 分」、候选一次全放）。
+    var thresholdNote = el('span', 'jdl-threshold-note', '');
+    thresholdNote.title = '\u9608\u503c\u7531\u63d2\u4ef6\u914d\u7f6e MinScore \u51b3\u5b9a\uff08\u9ed8\u8ba4 60\uff09\uff0c\u9762\u677f\u4e0d\u518d\u63d0\u4f9b\u6863\u4f4d\u9009\u62e9';
+    controls.appendChild(thresholdNote);
 
     // 保存到哪个库（分类目录）：默认按条目类型，提交迅雷 / 后台监控时生效，
     // 落点 = 媒体库根/<分类>/片名 (年份)。
@@ -184,12 +226,34 @@
       option.value = pair[0];
       categorySelect.appendChild(option);
     });
-    var defaultCategory = (item.Manual && manualSpec().kind === 'movie') || item.Type === 'Movie'
-      ? 'Movies'
-      : 'TV Shows';
+    // 默认值：手动面板跟着「类型」；详情页/季页按条目类型。
+    // 用户手动改过之后（categoryTouched）不再被联动覆盖。
+    var defaultCategory = item.Manual
+      ? manualSpec().category
+      : defaultCategoryForKind(item.Type === 'Movie' ? 'movie' : 'episode');
     categorySelect.value = defaultCategory;
     categorySelect.title = '\u4fdd\u5b58\u5230\u54ea\u4e2a\u5e93\uff08\u63d0\u4ea4\u8fc5\u96f7 / \u540e\u53f0\u76d1\u63a7\u65f6\u751f\u6548\uff09';
+    categorySelect.addEventListener('change', function () {
+      if (state.panel) { state.panel.categoryTouched = true; }
+      // 目标库变了 → 提交/监控的有效类型跟着变（Records → record）
+      syncSnapshotKind();
+    });
     controls.appendChild(categorySelect);
+
+    // trust-magnet 逃生开关（默认关）：跳过「探测 torrent 元数据」这道闸门，
+    // 直接交给迅雷。对应 /api/submit 的 trust_magnet 参数。
+    var trustLabel = el('label', 'jdl-toggle');
+    var trustBox = el('input');
+    trustBox.type = 'checkbox';
+    trustBox.checked = false;
+    trustBox.addEventListener('change', function () {
+      if (state.panel) { state.panel.trustMagnet = trustBox.checked; }
+      syncTrustTitle(trustBox, trustLabel);
+    });
+    trustLabel.appendChild(trustBox);
+    trustLabel.appendChild(el('span', null, '\u4fe1\u4efb\u78c1\u529b'));
+    syncTrustTitle(trustBox, trustLabel);
+    controls.appendChild(trustLabel);
 
     var onlyEpisode = el('label', 'jdl-toggle');
     var onlyCheckbox = el('input');
@@ -256,11 +320,12 @@
     state.panel = {
       item: item,
       backdrop: backdrop, summary: summary, progress: progress, log: logEl,
-      list: list, tasks: tasks, threshold: threshold, onlyEpisode: onlyCheckbox,
+      list: list, tasks: tasks, thresholdNote: thresholdNote, onlyEpisode: onlyCheckbox,
       backend: backend, refetch: refetch, kindFilter: 'magnet',
       segAll: segAll, segMagnet: segMagnet, segPan: segPan,
       seasonSelect: seasonSelect,
-      categorySelect: categorySelect,
+      categorySelect: categorySelect, categoryTouched: false,
+      trustMagnet: false, trustBox: trustBox, trustLabel: trustLabel,
       strictSeason: true, strictBox: strictBox, strictLabel: strictLabel,
       includePacks: false, packBox: packBox, packLabel: packLabel,
       showAll: false, hidePacks: false,
@@ -430,6 +495,10 @@
       snapshot = snapshot || {};
       var list = snapshot.candidates || [];
       state.snapshot = snapshot;
+      // 读回的快照按当前「保存到哪个库」对齐有效类型（Records → record），
+      // 否则提交会沿用后端探针写进快照的 movie/episode 口径。
+      rememberSnapshotKind(snapshot.kind);
+      syncSnapshotKind();
       state.slug = snapshot.slug || '';
       if (list.length) {
         log('showing cached candidates', list.length);

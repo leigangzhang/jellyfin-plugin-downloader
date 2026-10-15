@@ -4,7 +4,7 @@
   function candidatePool() {
     var snapshot = state.snapshot || {};
     var panel = state.panel;
-    var minScore = panel ? parseFloat(panel.threshold.value) : state.config.minScore;
+    var minScore = configuredMinScore();
     var onlyEpisode = panel && panel.onlyEpisode && panel.onlyEpisode.checked;
     var hasEpisode = snapshot.season != null && snapshot.episode != null;
     var wanted = wantedSeason();
@@ -74,6 +74,13 @@
     });
   }
 
+  // 只读阈值文案：面板不再有档位选择器，这里显示当前实际生效的阈值（配置 MinScore）
+  function renderThresholdNote() {
+    var panel = state.panel;
+    if (!panel || !panel.thresholdNote) { return; }
+    panel.thresholdNote.textContent = '\u2265 ' + Math.round(configuredMinScore()) + ' \u5206';
+  }
+
   function renderCandidates() {
     var panel = state.panel;
     if (!panel) { return; }
@@ -115,12 +122,17 @@
     if (seasonPicked && (snapshot.strict_season !== false) !== (panel.strictSeason !== false)) {
       wanted.push(panel.strictSeason !== false ? '\u4e25\u683c\u6309\u5b63' : '\u5bbd\u6cdb\u5173\u952e\u8bcd');
     }
+    // 状态行的阈值与实际筛选口径必须同源：都取 configuredMinScore()。
+    renderThresholdNote();
+    var folded = pool.hiddenSeason + pool.hiddenPack + pool.hiddenNoise + pool.hiddenEpisodePack;
     panel.summary.textContent = eligible.length
       ? (panel.fromCache
           ? (when ? '\u5df2\u52a0\u8f7d ' + when + ' \u7684\u7ed3\u679c' : '\u5df2\u52a0\u8f7d\u5386\u53f2\u7ed3\u679c')
           : '\u521a\u521a\u83b7\u53d6')
-        + ' \u00b7 \u2265' + Math.round(panel.threshold.value) + ' \u5206 ' + shown.length + ' \u4e2a'
-      : '\u6ca1\u6709\u5019\u9009';
+        + ' \u00b7 \u2265' + Math.round(configuredMinScore()) + ' \u5206 ' + shown.length + ' \u4e2a'
+      : (folded
+          ? '\u6ca1\u6709\u5019\u9009\uff08' + folded + ' \u6761\u5df2\u6298\u53e0\uff09'
+          : '\u6ca1\u6709\u5019\u9009');
     // 选择与上次抓取不一致时，独立提示条 + 一键重抓按钮（不再挤在状态行里）
     if (panel.hint) {
       if (panel.cacheOnly && panel.dirtySpec) {
@@ -256,14 +268,9 @@
             below.appendChild(showPacks);
           }
         } else {
-          below.appendChild(el('div', 'jdl-empty__text', '\u6ca1\u6709\u8fbe\u5230\u5f53\u524d\u9608\u503c\u7684\u8d44\u6e90\u3002'));
-          var relax = el('button', 'jdl-btn jdl-btn--ghost', '\u964d\u4f4e\u9608\u503c');
-          relax.type = 'button';
-          relax.addEventListener('click', function () {
-            panel.threshold.value = String(Math.max(0, Math.round(panel.threshold.value) - 5));
-            renderCandidates();
-          });
-          below.appendChild(relax);
+          below.appendChild(el('div', 'jdl-empty__text',
+            '\u6ca1\u6709\u8fbe\u5230\u5f53\u524d\u9608\u503c\uff08\u2265' + Math.round(configuredMinScore())
+            + ' \u5206\uff09\u7684\u8d44\u6e90\uff1b\u9608\u503c\u7531\u63d2\u4ef6\u914d\u7f6e\u51b3\u5b9a\uff0c\u9762\u677f\u4e0d\u518d\u63d0\u4f9b\u6863\u4f4d\u3002'));
         }
       }
       panel.list.appendChild(below);
@@ -436,15 +443,28 @@
       .catch(function () { toast('\u5df2\u6253\u5f00\u4e91\u76d8\uff0c\u63d0\u53d6\u7801\uff1a' + code); });
   }
 
+  // 提交载荷里的年份：快照没有年份时回落到当前表单/条目。
+  // 旧版本只发 snapshot.year —— 手动搜索实测恒为 ""，导致 final_dir 少了「 (年份)」。
+  function submitYear(snapshot) {
+    var panel = state.panel;
+    if (snapshot && snapshot.year) { return snapshot.year; }
+    if (panel && panel.form) { return manualSpec().year || ''; }
+    if (panel && panel.item && panel.item.ProductionYear) { return String(panel.item.ProductionYear); }
+    return '';
+  }
+
   function submitAction(candidate, snapshot, endpoint, successText) {
+    var panel = state.panel;
     var payload = {
       ih: candidate.ih,
       final_dir: snapshot.final_dir,
       kind: snapshot.kind,
       series_name: snapshot.query,
-      year: snapshot.year,
-      category: state.panel && state.panel.categorySelect ? state.panel.categorySelect.value : ''
+      year: submitYear(snapshot),
+      category: panel && panel.categorySelect ? panel.categorySelect.value : ''
     };
+    // trust-magnet 逃生开关：只在勾选时带上参数，默认（关闭）与旧行为逐字一致
+    if (panel && panel.trustMagnet) { payload.trust_magnet = true; }
     api(endpoint, { type: 'POST', data: payload }).then(function (result) {
       if (!result || result.error) { toast(result && result.error ? result.error : '\u8bf7\u6c42\u5931\u8d25'); return; }
       if (result.ok) {
@@ -468,6 +488,11 @@
     api('snapshot?slug=' + encodeURIComponent(state.slug)).then(function (snapshot) {
       if (!snapshot || snapshot.error) { return; }
       state.snapshot = snapshot;
+      // 监控轮询每 5 秒把整份快照换掉：后端快照的 kind 是**探针口径**（record 会被写成
+      // movie），不在这里对齐的话，「提交第 1 条 → 开始监控 → 再提交第 2 条」时第 2 条
+      // 的 /api/submit 会退回 movie（目标库仍是 Records，落点不受影响）。
+      rememberSnapshotKind(snapshot.kind);
+      syncSnapshotKind();
       renderTasks(snapshot.tasks || []);
     }).catch(function () {});
   }

@@ -193,7 +193,10 @@
       title: String(manual.title || '').trim(),
       original_title: String(manual.alt || '').trim(),
       year: String(manual.year || '').trim(),
+      // 搜索口径只有 movie / episode 两种：纪录片在 Jellyfin 里按剧集（Series）组织，
+      // 所以「纪录片」走 episode 口径，区别只体现在默认目标库（Records）。
       kind: manual.kind === 'movie' ? 'movie' : 'episode',
+      category: defaultCategoryForKind(manual.kind),
       season: toInt(manual.season),
       episode: toInt(manual.episode)
     };
@@ -230,6 +233,8 @@
     var bits = ['\u624b\u52a8\u641c\u7d22'];
     if (spec.kind === 'movie') {
       bits.push('\u7535\u5f71');
+    } else if (manual.kind === 'record') {
+      bits.push('\u7eaa\u5f55\u7247');
     } else if (spec.season != null && spec.episode != null) {
       bits.push('S' + ('0' + spec.season).slice(-2) + 'E' + ('0' + spec.episode).slice(-2));
     } else if (spec.season != null) {
@@ -296,7 +301,11 @@
       var number = String(item.IndexNumber == null ? 0 : item.IndexNumber);
       return (item.SeriesName || '') + ' · S' + ('0' + season).slice(-2) + 'E' + ('0' + number).slice(-2);
     }
-    return base + (item.Type === 'Series' ? ' · 剧集整季' : ' · 电影');
+    // 只有 Movie 才写「电影」：Season/Series（含纪录片库里的条目，Jellyfin 视为 Series）
+    // 都属于剧集口径。旧版本没处理 Season，季页会被写成「第 2 季 (2025) · 电影」。
+    if (item.Type === 'Movie') { return base + ' · 电影'; }
+    if (item.Type === 'Series') { return base + ' · 剧集整季'; }
+    return base + ' · 剧集';
   }
 
   // 表单改动 → 提示「按新条件搜索」（不自动开抓：搜索一次要几分钟）

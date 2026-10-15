@@ -91,6 +91,24 @@
     return 'jdl-score--ok';
   }
 
+  // 阈值只有一个来源：插件配置的 MinScore（默认 60）。
+  // 面板不再暴露档位选择器 —— 旧版本的 select 只有 60/65/70/75/80 五档，
+  // 而「降低阈值」按钮做的是 value-5（=55）→ 没有对应 option → select 变空值、
+  // 阈值实际失效（状态行显示「≥0 分」、候选一次全放）。用户决定：控件不调整、
+  // 页面不显示档位、固定取配置值，所以这里只读、不再可改。
+  function configuredMinScore() {
+    var value = Number(state.config && state.config.minScore);
+    return isFinite(value) && value > 0 ? value : 60;
+  }
+
+  // 类型 → 默认目标库。「保存到哪个库」的默认值只由这一张表决定，
+  // 手动搜索面板切「类型」时按它联动（用户手动改过之后不再覆盖）。
+  function defaultCategoryForKind(kind) {
+    if (kind === 'movie') { return 'Movies'; }
+    if (kind === 'record') { return 'Records'; }
+    return 'TV Shows';
+  }
+
   function themeClass() {
     try {
       var background = window.getComputedStyle(document.body).backgroundColor || '';

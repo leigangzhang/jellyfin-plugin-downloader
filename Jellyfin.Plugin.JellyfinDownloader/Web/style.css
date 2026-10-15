@@ -166,6 +166,14 @@
 
 .jdl-bar__controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
+/* 只读阈值文案：面板不再有档位选择器，这里只说明当前生效的阈值（配置 MinScore） */
+.jdl-threshold-note {
+  color: var(--jdl-text-2);
+  opacity: 0.75;
+  white-space: nowrap;
+  cursor: default;
+}
+
 .jdl-hint {
   display: flex;
   align-items: center;
