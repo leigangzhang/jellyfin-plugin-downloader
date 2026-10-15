@@ -56,8 +56,10 @@ public class JellyfinDownloaderController : ControllerBase
     private static readonly string[] DefaultKeywords = { "高清剧集网", "DDHDTV", "BBHDTV" };
 
     // 「关注」占位文件的命名（相对媒体根）：{0} = 清洗后的片名，{1} = 年份段。
-    //   movie  → Movies/<safeTitle><year>/<safeTitle><year> - zz placeholder.mp4
-    //   series → TV Shows/<safeTitle><year>/Season 01/<safeTitle> S01E01 - zz placeholder.mp4
+    //   movie / record → <分类目录>/<safeTitle><year>/<safeTitle><year> - zz placeholder.mp4
+    //   series        → TV Shows/<safeTitle><year>/Season 01/<safeTitle> S01E01 - …mp4
+    // 分类目录随归一后的落点类别走：movie → Movies，series → TV Shows，record → Records
+    //（纪录片与电影同形：一个目录 + 一部片，所以 record 复用 movie 的文件名形状）。
     // PlaceholderLabel 是占位与后端归档真文件之间**唯一**的区分（同名同目录，只差这一段），
     // 少了它就会撞名、静默丢文件。守卫逐条对照两边落点，见
     // tests/backend_retired/test_backend_retired_trending_anchor_naming.py。
@@ -72,6 +74,17 @@ public class JellyfinDownloaderController : ControllerBase
 
     private static readonly string SeriesRelativeTemplate =
         "TV Shows/{0}{1}/Season 01/{0} S01E01" + PlaceholderLabel + PlaceholderExtension;
+
+    private static readonly string RecordRelativeTemplate =
+        "Records/{0}{1}/{0}{1}" + PlaceholderLabel + PlaceholderExtension;
+
+    /// <summary>
+    /// 没有 TMDb key 时下发给 UI 的中文引导（单一事实源）：配置页与热门面板都用这一句。
+    /// 面板优先读 <c>config.guidance</c>，它自己那句硬编码只是老版本兜底——文案只在这里维护，
+    /// 免得两处各写一份漂移（review r1 的 F3）。后端 /api/trending 的 guidance 字段保留：
+    /// 那是对直连 API 的消费者的契约，UI 不再依赖它。
+    /// </summary>
+    private const string TmdbGuidance = "尚未配置 TMDb API Key：在插件配置页的「热门」分组里填好后再打开本面板（榜单与海报都需要它）。";
 
     /// <summary>内嵌占位模板资源（<c>Web/placeholder.mp4</c>，csproj 登记）。</summary>
     private const string PlaceholderResource = "Jellyfin.Plugin.JellyfinDownloader.Web.placeholder.mp4";
@@ -151,6 +164,9 @@ public class JellyfinDownloaderController : ControllerBase
             backendPort = BackendManager.EffectivePort,
             // 热门（TMDb）：只回「配没配」，绝不下发 key 本身（浏览器不需要它）。
             tmdbApiKeyConfigured = (config?.TmdbApiKey ?? string.Empty).Trim().Length > 0,
+            // 无 key 时下发引导（面板据此直接渲染提示，不再打榜单接口）；有 key 时是 null，
+            // 面板不能把 null/空当成「没配」。
+            guidance = (config?.TmdbApiKey ?? string.Empty).Trim().Length > 0 ? null : TmdbGuidance,
             tmdbLanguage = LanguageOrDefault(config?.TmdbLanguage),
             // 回显生效的榜单清单：留空时就是内置默认那四个。
             trendingLists = TrendingListsOrDefault(config?.TrendingLists),
@@ -449,9 +465,15 @@ public class JellyfinDownloaderController : ControllerBase
     }
 
     /// <summary>
-    /// 「热门」页的批量查库：按 标题(+年份) 回答条目是否已在媒体库里，只回真假、不写任何
-    /// 东西。请求 {"items":[{"title","year","kind"}]}，响应同序同长；items 缺失/非法
-    /// （不是数组、某项缺 title/kind 或类别/年份不合法）时整批回 {"items":[]}，不半答。
+    /// 「热门」页的批量查库：按 标题+年份 回答条目是否已在媒体库里，只回真假、不写任何
+    /// 东西。请求 {"items":[{"title","year","kind"}]}，响应同序同长（回显的 kind 是归一
+    /// 后的 movie/series）；items 缺失/非法（不是数组、某项缺 title/kind 或类别/年份不合法）
+    /// 时整批回 {"items":[]}，不半答。
+    ///
+    /// **没有年份就不断言 exists**：一律回 false。这是有意的保守策略——TMDb 缺年份的老片
+    /// 很常见，按标题匹配会把「同名不同年」的库内条目判成命中，而命中会让卡片显示「已在库」
+    /// 并禁用「关注」按钮（用户就下不了片了）；假阴性只是卡片显示成未入库，危害小得多。
+    /// 守卫：tests/backend_retired/test_backend_retired_trending_anchor_naming.py 里钉住了这条。
     /// </summary>
     [HttpPost("trending/library-status")]
     [Authorize(Policy = "RequiresElevation")]
@@ -472,9 +494,10 @@ public class JellyfinDownloaderController : ControllerBase
                 title = query.Title,
                 year = query.Year,
                 kind = query.Kind,
-                exists = known.Any(item => item.Kind == query.Kind
-                    && item.Title == query.Normalized
-                    && (!query.Year.HasValue || item.Year == query.Year.Value)),
+                exists = query.Year.HasValue
+                    && known.Any(item => query.LibraryKinds.Contains(item.Kind, StringComparer.Ordinal)
+                        && item.Title == query.Normalized
+                        && item.Year == query.Year.Value),
             })
             .ToList();
 
@@ -484,6 +507,10 @@ public class JellyfinDownloaderController : ControllerBase
     /// <summary>
     /// 「关注」时在媒体库里写一个占位文件，让条目先在 Jellyfin 里可见（管理员端点）。
     /// AnchorEnabled = false 时**零写入**（不解析媒体根、不建目录、不落文件）回 disabled。
+    /// 类别接受平台词表（movie | series | episode | variety | record）并归一到落点类别，
+    /// 决定落 Movies / TV Shows / Records；认不出的类别回 400 invalid kind。
+    /// **必须有 4 位年份**，缺失回 400 year is required：无年份落点是 <title>/，与真条目的
+    /// <title> (<year>)/ 永不相等，必然多造一个重复条目（正是本提案要防的库污染）。
     /// </summary>
     [HttpPost("trending/anchor")]
     [Authorize(Policy = "RequiresElevation")]
@@ -503,17 +530,25 @@ public class JellyfinDownloaderController : ControllerBase
             return BadRequest(new { error = "title is required" });
         }
 
-        var normalizedKind = kind.Length == 0 ? "movie" : kind.ToLowerInvariant();
-        if (normalizedKind is not ("movie" or "series"))
+        // 类别归一后再判：面板发的类别来自 TMDb 的口径（剧集是 episode/tv），不归一的话
+        // 剧集卡片点「关注」会被判成非法 kind → 占位永不落盘（review r1 的 F1）。
+        var normalizedKind = NormalizeKind(kind);
+        if (normalizedKind is null)
         {
             return BadRequest(new { error = "invalid kind" });
         }
 
-        var yearText = year.HasValue ? year.Value.ToString(CultureInfo.InvariantCulture) : string.Empty;
+        // 年份是落点的一部分，不能缺：缺了会落到 <title>/，与真条目 <title> (<year>)/ 不相等。
+        if (!year.HasValue)
+        {
+            return BadRequest(new { error = "year is required" });
+        }
+
+        var yearText = year.Value.ToString(CultureInfo.InvariantCulture);
         var safeTitle = CleanTitle(title);
         if (safeTitle.Length == 0
             || title.Contains("..", StringComparison.Ordinal)
-            || (yearText.Length > 0 && !FourDigitYearRegex.IsMatch(yearText)))
+            || !FourDigitYearRegex.IsMatch(yearText))
         {
             return BadRequest(new { error = "invalid title or year" });
         }
@@ -528,7 +563,7 @@ public class JellyfinDownloaderController : ControllerBase
         // 媒体根是静态缓存（平时由配置页/启动后端刷新），这条链路要自己刷。
         RefreshMediaPaths();
         var root = Path.GetFullPath(MediaPaths.MediaRoot);
-        var relative = PlaceholderRelativePath(safeTitle, yearText, normalizedKind == "series");
+        var relative = PlaceholderRelativePath(safeTitle, yearText, normalizedKind);
         var finalPath = Path.GetFullPath(Path.Combine(root, relative));
         if (!IsWithinRoot(finalPath, root))
         {
@@ -586,15 +621,15 @@ public class JellyfinDownloaderController : ControllerBase
     /// 解析 {"items":[…]}：标题/类别必须是非空字符串（类别只认 movie|series），年份要么
     /// 缺失/空串、要么是能解析成整数的数字（`"2024"` 与 `2024` 都收）。非法返回 null。
     /// </summary>
-    private static List<(string Title, int? Year, string Kind, string Normalized)>? ReadTrendingQueries(
-        TrendingStatusRequest? body)
+    private static List<(string Title, int? Year, string Kind, string[] LibraryKinds, string Normalized)>?
+        ReadTrendingQueries(TrendingStatusRequest? body)
     {
         if (body?.Items is not { } items || items.ValueKind != JsonValueKind.Array)
         {
             return null;
         }
 
-        var queries = new List<(string Title, int? Year, string Kind, string Normalized)>();
+        var queries = new List<(string Title, int? Year, string Kind, string[] LibraryKinds, string Normalized)>();
         foreach (var element in items.EnumerateArray())
         {
             if (element.ValueKind != JsonValueKind.Object)
@@ -610,13 +645,16 @@ public class JellyfinDownloaderController : ControllerBase
             }
 
             if (!TryGetField(element, "kind", out var kindField)
-                || !TryReadStringValue(kindField, out var kind))
+                || !TryReadStringValue(kindField, out var kind)
+                || kind.Length == 0)
             {
                 return null;
             }
 
-            kind = kind.ToLowerInvariant();
-            if (kind is not ("movie" or "series"))
+            // 与 anchor 同一套词汇归一（面板可能发 episode/tv），但**缺 kind 仍然非法**：
+            // 查库得知道该跟 Movie 还是 Series 比。回显的是归一后的值。
+            var matchKind = NormalizeKind(kind);
+            if (matchKind is null)
             {
                 return null;
             }
@@ -628,7 +666,7 @@ public class JellyfinDownloaderController : ControllerBase
                 return null;
             }
 
-            queries.Add((title, year, kind, NormalizeTitle(title)));
+            queries.Add((title, year, matchKind, LibraryKindsFor(matchKind), NormalizeTitle(title)));
         }
 
         return queries;
@@ -768,14 +806,20 @@ public class JellyfinDownloaderController : ControllerBase
 
     /// <summary>
     /// 占位文件的相对路径（相对 <see cref="MediaPaths.MediaRoot"/>）。纯函数，模板/标签/
-    /// 年份段都是显式常量，守卫按名字读出来逐条对照后端落点。
+    /// 年份段都是显式常量，守卫按名字读出来逐条对照后端落点。<paramref name="kind"/> 是
+    /// <see cref="NormalizeKind"/> 归一后的落点类别（movie / series / record）。
     /// </summary>
-    private static string PlaceholderRelativePath(string safeTitle, string year, bool series)
+    private static string PlaceholderRelativePath(string safeTitle, string year, string kind)
     {
         var segment = year.Length > 0
             ? string.Format(CultureInfo.InvariantCulture, YearSegmentTemplate, year)
             : string.Empty;
-        var template = series ? SeriesRelativeTemplate : MovieRelativeTemplate;
+        var template = kind switch
+        {
+            "series" => SeriesRelativeTemplate,
+            "record" => RecordRelativeTemplate,
+            _ => MovieRelativeTemplate,
+        };
         return string.Format(CultureInfo.InvariantCulture, template, safeTitle, segment);
     }
 
@@ -814,6 +858,44 @@ public class JellyfinDownloaderController : ControllerBase
         {
             // 清理失败不影响结论：.tmp-<guid> 后缀不会被 Jellyfin 扫成媒体。
         }
+    }
+
+    /// <summary>
+    /// 类别归一：把三套口径折算成插件自己的**落点类别** movie / series / record。
+    /// 面板发的是后端 VALID_KINDS（movie | episode | variety | record），TMDb 说 tv，
+    /// 库里说 Series——端点只认归一后的值，不再只认 movie|series：不归一的话，剧集
+    /// 「关注」会被判成非法 kind，占位永不落盘（review r1 的 F1 就是这条跨层分叉）。
+    /// 归一是端点自己的责任，不要求客户端二次翻译。
+    ///   movie | film            → movie   （Movies/，与电影同形）
+    ///   series | episode | tv | show | variety → series（TV Shows/Season 01/，剧集形状）
+    ///   record | records        → record  （Records/，与电影同形）
+    /// 空串按 movie 处理（老调用方不带类别时的既有行为）；认不出的类别返回 null，
+    /// 由调用方决定拒绝还是整批回空。
+    /// </summary>
+    private static string? NormalizeKind(string? kind)
+    {
+        return (kind ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "" or "movie" or "film" => "movie",
+            "series" or "episode" or "tv" or "show" or "variety" => "series",
+            "record" or "records" => "record",
+            _ => null,
+        };
+    }
+
+    /// <summary>
+    /// 查库时该跟哪些库内类别比：电影只比 Movie，剧集/综艺只比 Series；纪录片（record）
+    /// 两种形态在 Jellyfin 里都可能存在（单集纪录片像 Movie、系列纪录片像 Series），
+    /// 所以它同时比这两类——Records 只是媒体根下的分类目录，不是库内条目类型。
+    /// </summary>
+    private static string[] LibraryKindsFor(string kind)
+    {
+        return kind switch
+        {
+            "series" => new[] { "series" },
+            "record" => new[] { "movie", "series" },
+            _ => new[] { "movie" },
+        };
     }
 
     /// <summary>片名归一化（查库匹配用）：见 <see cref="TitleCleanPattern"/> 的说明。</summary>
