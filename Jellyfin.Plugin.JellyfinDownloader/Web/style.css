@@ -630,3 +630,157 @@
   .jdl-row { grid-template-columns: 52px minmax(0, 1fr); }
   .jdl-actions { grid-column: 1 / -1; justify-content: flex-end; }
 }
+
+/* ---- 热门（TMDb 榜单海报墙，inject_06_trending.js） ----
+   外观基类复用 .jdl-backdrop/.jdl-dialog/.jdl-head/.jdl-iconbtn/.jdl-btn，
+   这里只补海报墙自己的网格、卡片与徽标。变量沿用 .jdl-backdrop 里的 --jdl-*。 */
+.jdl-trending__dialog { width: min(1080px, calc(100vw - 32px)); }
+
+.jdl-trending__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 20px 20px;
+}
+
+.jdl-trending__list {
+  margin: 14px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  color: var(--jdl-text-2);
+  text-transform: none;
+}
+
+.jdl-trending__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 14px;
+}
+
+.jdl-trending__card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.jdl-trending__pick {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 1px solid var(--jdl-line);
+  border-radius: 4px;
+  background: var(--jdl-surface-2);
+  cursor: pointer;
+  overflow: hidden;
+  font: inherit;
+  transition: border-color .15s ease-out, transform .15s ease-out;
+}
+
+.jdl-trending__pick:hover,
+.jdl-trending__pick:focus-visible {
+  border-color: var(--jdl-accent);
+  transform: translateY(-1px);
+}
+
+.jdl-trending__poster {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 2 / 3;
+  width: 100%;
+  overflow: hidden;
+}
+
+.jdl-trending__img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* 没海报或 CDN 图挂了：色块占位，不留破图 */
+.jdl-trending__poster--missing {
+  background: linear-gradient(135deg, var(--jdl-surface-2), var(--jdl-line));
+  color: var(--jdl-text-2);
+}
+
+.jdl-trending__poster--missing .material-icons { font-size: 34px; opacity: .6; }
+
+.jdl-trending__info { min-width: 0; }
+
+.jdl-trending__name {
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--jdl-text);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.jdl-trending__meta {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--jdl-text-2);
+}
+
+.jdl-trending__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.jdl-trending__watch { border: 1px solid var(--jdl-line); }
+
+.jdl-trending__watch:hover:not([disabled]) {
+  border-color: var(--jdl-accent);
+  color: var(--jdl-accent);
+}
+
+.jdl-trending__watch[disabled] { cursor: default; opacity: .75; }
+
+.jdl-trending__card--watched .jdl-trending__watch,
+.jdl-trending__card--in-library .jdl-trending__watch {
+  border-color: var(--jdl-accent);
+  color: var(--jdl-accent);
+  background: transparent;
+}
+
+.jdl-trending__badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--jdl-surface-2);
+  border: 1px solid var(--jdl-line);
+  font-size: 11.5px;
+  color: var(--jdl-text-2);
+}
+
+/* 空徽标不占位：徽标文案由 JS 在关注/入库后填入 */
+.jdl-trending__badge:empty { display: none; }
+
+.jdl-trending__notice {
+  margin: 18px 0;
+  padding: 14px 16px;
+  border: 1px solid var(--jdl-line);
+  border-left: 3px solid var(--jdl-accent);
+  border-radius: 3px;
+  background: var(--jdl-surface-2);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--jdl-text-2);
+  white-space: pre-line;
+}
+
+@media (max-width: 720px) {
+  /* 窄屏一列：海报墙在手机上堆成一列，卡片横排（海报 + 文案 + 关注） */
+  .jdl-trending__grid { grid-template-columns: 1fr; }
+  .jdl-trending__card {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .jdl-trending__pick { flex: 0 0 92px; }
+  .jdl-trending__info { flex: 1; }
+  .jdl-trending__actions { flex-direction: column; align-items: flex-start; }
+}

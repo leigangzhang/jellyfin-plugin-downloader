@@ -566,4 +566,3 @@
       panel.tasks.appendChild(item);
     });
   }
-})();
