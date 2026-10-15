@@ -106,6 +106,8 @@
     var seasonPicked = activeSeason() != null;
     if (panel.strictLabel) { panel.strictLabel.style.display = seasonPicked ? '' : 'none'; }
     if (panel.packLabel) { panel.packLabel.style.display = seasonPicked ? '' : 'none'; }
+    stageButtons = {};              // \u884c\u8981\u91cd\u5efa\uff0c\u6309\u94ae\u8868\u8ddf\u7740\u91cd\u5efa
+    ensureStagePolling(true);       // \u6253\u5f00/\u5237\u65b0\u9762\u677f\u65f6\u7acb\u523b\u62c9\u4e00\u6b21\u540e\u7aef\u9636\u6bb5
     var pool = candidatePool();
     var eligible = pool.kept;
     var magnets = eligible.filter(function (c) { return c.kind !== 'pan'; }).length;
@@ -430,9 +432,19 @@
       actions.appendChild(actionButton('monitor_heart', '\u540e\u53f0\u76d1\u63a7', 'jdl-btn--ghost', function (button) {
         submitAction(candidate, snapshot, 'watch', '\u5df2\u542f\u52a8\u540e\u53f0\u76d1\u63a7', button);
       }));
-      actions.appendChild(actionButton('download', '\u63d0\u4ea4\u8fc5\u96f7', 'jdl-btn--primary', function (button) {
+      var submitButton = actionButton('download', '\u63d0\u4ea4\u8fc5\u96f7', 'jdl-btn--primary', function (button) {
+        var stage = stageFor(candidate.ih);
+        // \u8bf7\u6c42\u5728\u98de\uff08\u63d0\u4ea4\u4e2d\uff09\u2192 \u51bb\u7ed3\uff1a\u4e0d\u53d1\u4efb\u4f55\u8bf7\u6c42
+        if (button && button.__jdlBusy) { return; }
+        if (stageView(stage) && stageView(stage).freeze) { return; }
+        // \u4e0b\u8f7d\u5b8c\u6210 \u2192 \u4e0d\u518d\u53ef\u70b9\uff08\u9ed8\u8ba4\u53e3\u5f84\uff1a\u8981\u91cd\u65b0\u4e0b\u8f7d\u5148\u5220\u6389\u8fc5\u96f7\u91cc\u7684\u4efb\u52a1\uff09
+        if (stageView(stage) && stageView(stage).terminal) { return; }
+        // \u9996\u6b21 / \u5931\u8d25\u6001 / \u5df2\u6682\u505c \u2192 \u8d70\u5b8c\u6574\u6d41\u7a0b\uff08\u91cd\u65b0\u63d0\u4ea4\u8fc5\u96f7\uff09
         submitAction(candidate, snapshot, 'submit', '\u5df2\u63d0\u4ea4\u8fc5\u96f7', button);
-      }));
+      });
+      stageButtons[String(candidate.ih || '').toUpperCase()] = submitButton;
+      applyStageToButton(submitButton, stageFor(candidate.ih));
+      actions.appendChild(submitButton);
     }
     row.appendChild(actions);
     return row;
@@ -483,7 +495,7 @@
   // 后端加字段下发、前端优先读后端值，那要另开一条跨 C#/backend 的任务）。
   // 已用时长是纯客户端 Date.now() 计时，与后端无关。
   var BUSY_LABEL = {
-    submit: '\u63d0\u4ea4\u4e2d\u2026 \u63a2\u6d4b\u5143\u6570\u636e 25 s + \u6d4b\u901f\u6700\u957f 180 s',
+    submit: '\u63d0\u4ea4\u4e2d\u2026 \u63a2\u6d4b\u5143\u6570\u636e 25 s\uff08\u6d4b\u901f\u6700\u957f 180 s \u8f6c\u540e\u53f0\uff09',
     watch: '\u542f\u52a8\u4e2d\u2026 \u6302\u540e\u53f0\u76d1\u63a7\uff08\u901a\u5e38 1\u20132 \u79d2\uff09'
   };
 
@@ -557,6 +569,93 @@
     if (button.classList) { button.classList.remove('jdl-btn--busy'); }
   }
 
+  // ---- \u63d0\u4ea4\u6309\u94ae\u7684\u72b6\u6001\u673a\uff08\u552f\u4e00\u4e8b\u5b9e\u6765\u6e90 = \u540e\u7aef\u9636\u6bb5\uff0c\u7ecf GET /api/stages \u66b4\u9732\uff09----
+  //   \u9636\u6bb5\u679a\u4e3e\uff08backend/download/watch_download.py \u7684 STAGES\uff09\uff1a
+  //     submitting / monitoring / paused / verifying / done /
+  //     failed_submit / failed_download / failed_eta / failed_verify
+  //   \u524d\u7aef\u53ea\u505a\u300c\u9636\u6bb5 \u2192 \u6807\u7b7e + \u56fe\u6807\u300d\u7684\u5c55\u793a\u4e0e\u4ea4\u4e92\u5224\u5b9a\uff08\u51bb\u7ed3 / \u53ef\u91cd\u8bd5 / \u4e0d\u53ef\u70b9\uff09\uff0c**\u4e0d\u731c\u9636\u6bb5**\uff1a
+  //   \u9636\u6bb5\u6765\u81ea\u540e\u7aef\u843d\u76d8\u7684 watch \u6587\u4ef6\uff0c\u9875\u9762\u5237\u65b0\u540e\u91cd\u62c9\u4e00\u6b21\uff0c\u6240\u4ee5\u72b6\u6001\u4e0d\u4e22\u3002
+  var STAGE_VIEW = {
+    submitting: { label: '\u63d0\u4ea4\u4e2d', icon: 'autorenew', freeze: true },
+    monitoring: { label: '\u4e0b\u8f7d\u76d1\u63a7\u4e2d', icon: 'download', freeze: true },
+    verifying: { label: '\u68c0\u6d4b\u5f52\u6863\u4e2d', icon: 'fact_check', freeze: true },
+    done: { label: '\u4e0b\u8f7d\u5b8c\u6210', icon: 'check_circle', terminal: true },
+    paused: { label: '\u5df2\u6682\u505c', icon: 'pause_circle_filled', retry: true },
+    failed_submit: { label: '\u63d0\u4ea4\u5931\u8d25', icon: 'error_outline', retry: true },
+    failed_download: { label: '\u4e0b\u8f7d\u5931\u8d25', icon: 'error_outline', retry: true },
+    failed_eta: { label: '\u4e0b\u8f7d\u8d85\u65f6', icon: 'timer_off', retry: true },
+    failed_verify: { label: '\u5f52\u6863\u5931\u8d25', icon: 'rule_folder', retry: true }
+  };
+  // \u540e\u7aef\u53d1\u73b0\u300c\u6682\u505c / \u5220\u9664\u300d\u8981 15\u201330 s\uff08t55\uff09\uff0c\u524d\u7aef 5 s \u4e00\u8f6e \u2192 \u6700\u8fdf 10 s \u540c\u6b65\uff0c\u6ee1\u8db3 15 s \u89c4\u683c\u3002
+  var STAGE_POLL_MS = 5000;
+  var stageByHash = {};      // info_hash\uff08\u5927\u5199\uff09\u2192 \u9636\u6bb5
+  var stageButtons = {};     // info_hash\uff08\u5927\u5199\uff09\u2192 \u63d0\u4ea4\u6309\u94ae\uff08\u6bcf\u6b21\u91cd\u6e32\u67d3\u91cd\u5efa\uff09
+  var stagePollTimer = null;
+
+  function stageFor(ih) {
+    return stageByHash[String(ih || '').toUpperCase()] || '';
+  }
+
+  function stageView(stage) {
+    return STAGE_VIEW[stage] || null;
+  }
+
+  function applyStageToButton(button, stage) {
+    var view = stageView(stage);
+    if (!button || !view) { return; }
+    // \u672c\u5730\u63d0\u4ea4\u8bf7\u6c42\u8fd8\u5728\u98de\uff1a\u4ee5\u300c\u63d0\u4ea4\u4e2d\u300d\u4e3a\u51c6\uff0c\u522b\u88ab\u4e0a\u4e00\u8f6e\u7684\u65e7\u9636\u6bb5\u8986\u76d6
+    if (button.__jdlBusy) { return; }
+    var label = button.querySelector ? button.querySelector('.jdl-btn__label') : null;
+    var icon = button.querySelector ? button.querySelector('.material-icons') : null;
+    if (label) { label.textContent = view.label; }
+    if (icon) { icon.textContent = view.icon; }
+    button.disabled = !!view.terminal;
+    if (label && label.setAttribute) { label.setAttribute('data-jdl-idle-label', view.label); }
+  }
+
+  function refreshStageButtons() {
+    Object.keys(stageButtons).forEach(function (ih) {
+      applyStageToButton(stageButtons[ih], stageFor(ih));
+    });
+  }
+
+  function applyStages(payload) {
+    var stages = (payload && payload.stages) || {};
+    Object.keys(stages).forEach(function (ih) {
+      var row = stages[ih] || {};
+      stageByHash[String(ih).toUpperCase()] = row.stage || '';
+    });
+    refreshStageButtons();
+    return stages;
+  }
+
+  // \u672c\u5730\u5148\u843d\u4e00\u4e2a\u9636\u6bb5\uff08\u63d0\u4ea4\u6210\u529f/\u5931\u8d25\u7684\u90a3\u4e00\u5e27\uff09\uff0c\u4e0b\u4e00\u6b21\u8f6e\u8be2\u5c31\u7528\u540e\u7aef\u503c\u8986\u76d6 \u2014\u2014
+  // \u524d\u7aef\u53ea\u662f\u7acb\u523b\u628a\u6309\u94ae\u5207\u5230\u5bf9\u7684\u72b6\u6001\uff0c\u5224\u65ad\u6743\u59cb\u7ec8\u5728\u540e\u7aef\u3002
+  function setStageForHash(ih, stage, button) {
+    var key = String(ih || '').toUpperCase();
+    stageByHash[key] = stage || '';
+    if (button) { applyStageToButton(button, stageFor(key)); }
+    return stageFor(key);
+  }
+
+  function pollStages() {
+    return api('stages').then(function (payload) {
+      applyStages(payload);
+      return payload;
+    }).catch(function () {
+      return null;   // \u540e\u7aef\u4e0d\u53ef\u8fbe\uff1a\u4fdd\u7559\u4e0a\u4e00\u6b21\u9636\u6bb5\uff0c\u4e0d\u5f39\u9519\u3001\u4e0d\u81c6\u6d4b
+    });
+  }
+
+  function ensureStagePolling(immediate) {
+    if (immediate) { pollStages(); }
+    if (!stagePollTimer) { stagePollTimer = setInterval(pollStages, STAGE_POLL_MS); }
+  }
+
+  function stopStagePolling() {
+    if (stagePollTimer) { clearInterval(stagePollTimer); stagePollTimer = null; }
+  }
+
   function submitAction(candidate, snapshot, endpoint, successText, button) {
     var panel = state.panel;
     var payload = {
@@ -567,6 +666,9 @@
       year: submitYear(snapshot),
       category: panel && panel.categorySelect ? panel.categorySelect.value : ''
     };
+    // \u4e0d\u7b49 ETA\uff08t55\uff09\uff1a\u63d0\u4ea4\u53ea\u8dd1\u5143\u6570\u636e\u63a2\u6d4b\u5c31\u8fd4\u56de\uff0c\u968f\u540e\u7531\u540e\u7aef\u81ea\u52a8\u6302\u76d1\u63a7\uff1b
+    // \u54cd\u5e94\u5e26 stage\uff0c\u524d\u7aef\u636e\u6b64\u8fdb\u5165\u300c\u4e0b\u8f7d\u76d1\u63a7\u4e2d\u300d\u3002watch \u7aef\u70b9\u4e0d\u4f20\u8fd9\u4e2a\u5b57\u6bb5\u3002
+    if (endpoint === 'submit') { payload.wait_eta = false; }
     // trust-magnet 逃生开关：只在勾选时带上参数，默认（关闭）与旧行为逐字一致
     if (panel && panel.trustMagnet) { payload.trust_magnet = true; }
     // 点击的同一帧内就进入进行中（同步代码，不等任何 await）
@@ -578,6 +680,11 @@
       if (!result || result.error) { toast(result && result.error ? result.error : '\u8bf7\u6c42\u5931\u8d25'); return; }
       if (result.ok) {
         toast(successText);
+        if (endpoint === 'submit') {
+          // \u9636\u6bb5\u4ee5\u540e\u7aef\u4e3a\u51c6\uff1a\u54cd\u5e94\u91cc\u7684 stage\uff08t55\uff09\u4f18\u5148\uff0c\u6ca1\u6709\u5c31\u6309\u4e0b\u9650\u300c\u5df2\u6302\u76d1\u63a7\u300d
+          setStageForHash(candidate.ih, result.stage || 'monitoring', button);
+          ensureStagePolling(true);
+        }
         startMonitoring();
       } else {
         // 失败时把闸门实际花了多久写出来（本地计时，不用后端字段）
@@ -585,6 +692,7 @@
       }
     }).catch(function () {
       clearBusy(button, idleLabel);
+      if (endpoint === 'submit') { setStageForHash(candidate.ih, 'failed_submit', button); }
       toast('\u540e\u7aef\u4e0d\u53ef\u8fbe');
     });
   }

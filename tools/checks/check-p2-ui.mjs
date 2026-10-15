@@ -1,6 +1,6 @@
 // Behaviour guard for the P2 UI fixes (evidence directory → repository, task t28).
 //
-// What it guards (54 checks, one failure each):
+// What it guards (69 checks, one failure each):
 //   R1 threshold is read-only: no 60/65/70/75/80 dial, nothing reads panel.threshold,
 //      the note node carries jdl-threshold-note, and configuredMinScore() falls back to
 //      60 for a missing, zero, or non-numeric config value.
@@ -23,14 +23,16 @@
 //      不列行、不给开关；N=0 时不显示）。
 //   R11 进行中文案如实且带「已用」：提交写「探测元数据 25 s + 测速最长 180 s（已用 …）」，
 //      监控写自己的口径；已用随时钟增长，响应到达后连同 spinner 一起还原。
+//   R12 「提交迅雷」按钮状态机：阶段（后端 /api/stages）→ 提交中/下载监控中/检测归档中/下载完成/
+//      四种失败/已暂停 的标签与图标；进行中点击冻结（零请求）、失败态点击重试一次、完成态不可点。
 //
 // How it works: the six Web shards are concatenated in the controller's ScriptSegments
 // order and run in node:vm against a minimal DOM stub; a ApiClient.ajax stub captures the
 // payload the panel really posts. No browser, no Jellyfin, no network.
 //
 // How to run (from the repository root):
-//   node tools/checks/check-p2-ui.mjs                 # green iff all 54 checks hold
-//   node tools/checks/check-p2-ui.mjs --mutate        # revert thirteen fixed behaviours, one
+//   node tools/checks/check-p2-ui.mjs                 # green iff all 69 checks hold
+//   node tools/checks/check-p2-ui.mjs --mutate        # revert sixteen fixed behaviours, one
 //                                                     # at a time, and require each to go red
 //   node tools/checks/check-p2-ui.mjs --web-dir DIR   # check another copy of the shards
 //
@@ -101,6 +103,8 @@ const EXPORT_HOOK = `
     setSnapshot: function (s) { state.snapshot = s; },
     getSnapshot: function () { return state.snapshot; },
     setSearch: function (s) { state.search = s; },
+    // 阶段轮询（守卫用它推进桩时钟/喂阶段序列；生产路径由 ensureStagePolling 的 5 s 定时器调）
+    pollStages: pollStages,
     // 只有守卫用：把按钮的忙碌起点往回拨 seconds 秒，再重渲染一次文案，
     // 这样不必真的 sleep 一秒就能断言「已用」在增长。
     setBusyElapsed: function (button, seconds) {
@@ -133,7 +137,24 @@ function makeNode(tag) {
     // （panel.list.innerHTML = ''）：桩必须两头都像样，否则行数会一直累加。
     _html: '',
     get innerHTML() { return this._html; },
-    set innerHTML(v) { this._html = String(v == null ? '' : v); if (this._html === '') { this.children.length = 0; } },
+    set innerHTML(v) {
+      this._html = String(v == null ? '' : v);
+      this.children.length = 0;
+      // 生产代码用 innerHTML 造结构（actionButton 的图标+文案、renderRow 的 chips）。
+      // 桩若只存字符串，`button.querySelector('.jdl-btn__label')` 永远取不到东西 ——
+      // 「按钮换文案」这类断言会假绿。这里按浏览器行为把顶层 `<span class="x">文本</span>`
+      // 变成子节点（不处理嵌套，生产代码里也没有嵌套的 span）。
+      const re = /<span class="([^"]+)"[^>]*>([\s\S]*?)<\/span>/g;
+      let match;
+      while ((match = re.exec(this._html)) !== null) {
+        const child = makeNode('span');
+        child.className = match[1];
+        child.textContent = match[2];
+        child._html = match[2];
+        this.children.push(child);
+        child.parentElement = this;
+      }
+    },
     title: '', value: '', checked: false, type: '', dataset: {},
     // disabled 在 DOM 里是 reflected 属性：getAttribute('disabled') 也要跟着变，
     // 否则「点一下就禁用」这种断言在桩里看不见。
@@ -639,7 +660,163 @@ async function runChecks(bundleSrc) {
       ui.text.textContent);
   }
 
-  return { failures, checks: 54 };
+  // ---- R12 「提交迅雷」按钮状态机：阶段 → 标签/图标；冻结不发请求；失败态重试；暂停/消失同步 ----
+  // 阶段是唯一事实来源（后端 t55 按 info_hash 落盘并经 GET /api/stages 暴露），
+  // 前端只做展示与交互判定；桩在这里「喂阶段序列」，不模拟后端逻辑。
+  {
+    const HASH = 'F'.repeat(40);
+    let stages = {};
+    const stageDoc = () => load(bundleSrc, null, {
+      respond: (req) => {
+        if (String(req.url).indexOf('/api/stages') >= 0) {
+          return Promise.resolve({ stages: stages, count: Object.keys(stages).length });
+        }
+        return Promise.resolve({ ok: true, rc: 0, stage: 'monitoring', eta_deferred: true, taskid: '307' });
+      }
+    });
+    const rowPanel = () => {
+      const progress = makeNode('div');
+      const stageNode = makeNode('div');
+      stageNode.className = 'jdl-progress__stage';
+      progress.appendChild(stageNode);
+      return {
+        progress, list: makeNode('div'), summary: makeNode('div'), log: makeNode('pre'),
+        note: makeNode('div'), hint: makeNode('div'), tasks: makeNode('div'),
+        onlyEpisode: null, strictLabel: null, packLabel: null,
+        kindFilter: 'magnet', seasonFilter: 'all', cacheOnly: false, form: null, item: docItem,
+        categorySelect: { value: 'Records' }, showAll: false, includePacks: false,
+        hidePacks: false, fromCache: false, dirtySpec: false
+      };
+    };
+    const primaryButton = (panel) => {
+      const walk = (node) => {
+        for (const child of node.children || []) {
+          if (String(child.className || '').indexOf('jdl-btn--primary') >= 0) { return child; }
+          const found = walk(child);
+          if (found) { return found; }
+        }
+        return null;
+      };
+      return walk(panel.list);
+    };
+    const labelOf = (button) => {
+      const node = button && button.querySelector ? button.querySelector('.jdl-btn__label') : null;
+      return node ? String(node.textContent) : '';
+    };
+    const iconOf = (button) => {
+      const node = button && button.querySelector ? button.querySelector('.material-icons') : null;
+      return node ? String(node.textContent) : '';
+    };
+    const submitPosts = (doc) => doc.calls.filter((c) => String(c.url).indexOf('/api/submit') >= 0).length;
+    const renderRowDoc = () => {
+      stages = {};                 // 每块都用一份干净的「后端阶段」起步（块之间不串味）
+      const doc = stageDoc();
+      const panel = rowPanel();
+      doc.t.setPanel(panel);
+      doc.t.setSnapshot({
+        slug: 'stage-test', kind: 'record', year: '2024', query: '里斯本丸沉没', final_dir: '/x/y',
+        candidates: [{ ih: HASH, name: '有种-A', score: 70, kind: 'magnet', seeds: 5, title_match: true }],
+        rejected: []
+      });
+      doc.t.renderCandidates();   // 内部会立刻拉一次 /api/stages（异步，下面用 await tick() 收）
+      return { doc, panel, button: primaryButton(panel) };
+    };
+    const feed = async (doc, stage) => {
+      stages = {};
+      stages[HASH] = { stage: stage, taskid: '307', updated_at: 1, reason: '' };
+      await doc.t.pollStages();
+      await tick();
+    };
+
+    // ① 进度四态：提交中 → 下载监控中 → 检测归档中 → 下载完成
+    {
+      const { doc, button } = renderRowDoc();
+      await feed(doc, 'submitting');
+      ok('R12-label-submitting', labelOf(button) === '提交中' && iconOf(button) === 'autorenew',
+        'label=' + labelOf(button) + ' icon=' + iconOf(button));
+      await feed(doc, 'monitoring');
+      ok('R12-label-monitoring', labelOf(button) === '下载监控中' && iconOf(button) === 'download',
+        'label=' + labelOf(button) + ' icon=' + iconOf(button));
+      await feed(doc, 'verifying');
+      ok('R12-label-verifying', labelOf(button) === '检测归档中' && iconOf(button) === 'fact_check',
+        'label=' + labelOf(button) + ' icon=' + iconOf(button));
+      await feed(doc, 'done');
+      ok('R12-label-done-and-not-clickable', labelOf(button) === '下载完成' && button.disabled === true,
+        'label=' + labelOf(button) + ' disabled=' + button.disabled);
+      const before = submitPosts(doc);
+      button.click();
+      await tick();
+      ok('R12-done-click-sends-nothing', submitPosts(doc) === before, 'submit posts=' + submitPosts(doc));
+    }
+
+    // ② 四种失败 + 暂停：标签映射（删除=下载失败 走 failed_download）
+    {
+      const { doc, button } = renderRowDoc();
+      const expect = [
+        ['failed_submit', '提交失败'],
+        ['failed_download', '下载失败'],
+        ['failed_eta', '下载超时'],
+        ['failed_verify', '归档失败'],
+        ['paused', '已暂停']
+      ];
+      for (const [stage, label] of expect) {
+        await feed(doc, stage);
+        ok('R12-label-' + stage.replace(/_/g, '-'), labelOf(button) === label,
+          stage + ' -> ' + labelOf(button));
+      }
+    }
+
+    // ③ 冻结：提交中/下载监控中/检测归档中 三种阶段点击都不发请求
+    {
+      const { doc, panel, button } = renderRowDoc();
+      button.click();                       // 先制造一个真实提交（桩立即回 stage=monitoring）
+      await tick(); await tick();
+      const afterSubmit = submitPosts(doc);
+      ok('R12-submit-response-moves-to-monitoring',
+        afterSubmit === 1 && labelOf(button) === '下载监控中',
+        'posts=' + afterSubmit + ' label=' + labelOf(button));
+      for (const stage of ['monitoring', 'verifying', 'submitting']) {
+        await feed(doc, stage);
+        button.click();
+        await tick();
+      }
+      ok('R12-frozen-clicks-send-nothing', submitPosts(doc) === afterSubmit,
+        'posts=' + submitPosts(doc) + '（冻结期望 ' + afterSubmit + '）');
+      ok('R12-row-still-there', panel.list.children.length > 0, 'rows=' + panel.list.children.length);
+    }
+
+    // ④ 失败态点击 = 一次新的完整提交；暂停态同样可重试
+    {
+      const { doc, button } = renderRowDoc();
+      await feed(doc, 'failed_download');
+      const before = submitPosts(doc);
+      button.click();
+      await tick();
+      ok('R12-failed-click-resubmits-once', submitPosts(doc) === before + 1,
+        'posts=' + submitPosts(doc) + '（期望 ' + (before + 1) + '）');
+      // 取最后一次 /api/submit 的载荷（重试成功后还会跟一个 /api/stages GET，不能拿最后一条）
+      const submitCall = doc.calls.filter((c) => String(c.url).indexOf('/api/submit') >= 0).pop();
+      const payload = submitCall ? JSON.parse(submitCall.data) : {};
+      ok('R12-retry-payload-defers-eta', payload.wait_eta === false, JSON.stringify(payload));
+      await feed(doc, 'paused');
+      const beforePaused = submitPosts(doc);
+      button.click();
+      await tick();
+      ok('R12-paused-click-resubmits-once', submitPosts(doc) === beforePaused + 1,
+        'posts=' + submitPosts(doc));
+    }
+
+    // ⑤ 轮询来源端点：阶段只从 /api/stages 读
+    {
+      const { doc } = renderRowDoc();
+      const before = doc.calls.length;
+      await doc.t.pollStages();
+      const polled = doc.calls.slice(before).map((c) => String(c.url)).join(',');
+      ok('R12-stages-endpoint-polled', polled.indexOf('/JellyfinDownloader/api/stages') >= 0, polled || '(no call)');
+    }
+  }
+
+  return { failures, checks: 69 };
 }
 
 const MUTATIONS = [
@@ -675,7 +852,16 @@ const MUTATIONS = [
     '  function renderBusyLabel(button) {\n    if (true) { return; }\n    var info = button && button.__jdlBusy;'],
   ['「已用」时长不再随时钟增长',
     '    var elapsed = Math.max(0, (Date.now() - info.startedAt) / 1000);',
-    '    var elapsed = 0;']
+    '    var elapsed = 0;'],
+  ['阶段标签不再写进按钮',
+    '    if (label) { label.textContent = view.label; }',
+    '    if (false) { label.textContent = view.label; }'],
+  ['进行中的冻结被拆掉',
+    '        if (stageView(stage) && stageView(stage).freeze) { return; }',
+    '        if (false) { return; }'],
+  ['提交响应不再落阶段',
+    "          setStageForHash(candidate.ih, result.stage || 'monitoring', button);",
+    '          /* MUTATED: 阶段不再落地 */']
 ];
 
 const EXPECT = {
@@ -691,7 +877,10 @@ const EXPECT = {
   '提交按钮的旋转指示器被拆掉': 'R10-spinner-on-click',
   '已过滤提示行被拆掉': 'R10-zero-seed-notice-shown',
   '进行中文案的「已用」后缀被拆掉': 'R11-submit-label-honest-and-elapsed',
-  '「已用」时长不再随时钟增长': 'R11-elapsed-grows-with-the-clock'
+  '「已用」时长不再随时钟增长': 'R11-elapsed-grows-with-the-clock',
+  '阶段标签不再写进按钮': 'R12-label-submitting',
+  '进行中的冻结被拆掉': 'R12-frozen-clicks-send-nothing',
+  '提交响应不再落阶段': 'R12-submit-response-moves-to-monitoring'
 };
 
 // A shard that cannot be read is a failure of this guard, not a crash of the command that
@@ -720,7 +909,7 @@ try {
   console.log(failures.length === 0 ? 'P2 UI CHECK PASS' : 'P2 UI CHECK FAIL');
   process.exit(failures.length === 0 ? 0 : 1);
 } catch (error) {
-  console.log('检查项 54，失败 1');
+  console.log('检查项 69，失败 1');
   console.log('FAIL  LOAD :: ' + (error && error.message ? error.message : String(error)));
   console.log(MUTATE ? 'MUTATION CHECK FAIL' : 'P2 UI CHECK FAIL');
   process.exit(1);

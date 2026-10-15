@@ -44,6 +44,7 @@
   }
 
   function closePanel() {
+    stopStagePolling();   // 关面板就停掉阶段轮询（否则离开页面还在打 /api/stages）
     if (state.timer) { clearInterval(state.timer); state.timer = null; }
     if (state.monitorTimer) { clearInterval(state.monitorTimer); state.monitorTimer = null; }
     var opened = state.panel;
