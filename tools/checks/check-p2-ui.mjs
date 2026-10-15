@@ -1,6 +1,6 @@
 // Behaviour guard for the P2 UI fixes (evidence directory → repository, task t28).
 //
-// What it guards (45 checks, one failure each):
+// What it guards (50 checks, one failure each):
 //   R1 threshold is read-only: no 60/65/70/75/80 dial, nothing reads panel.threshold,
 //      the note node carries jdl-threshold-note, and configuredMinScore() falls back to
 //      60 for a missing, zero, or non-numeric config value.
@@ -18,14 +18,17 @@
 //      响应放行后恢复可点；失败 toast 带 rc 与耗时秒数，成功 toast 仍是既有文案。
 //   R9 搜索停滞反馈：进行中阶段文案带「已用 N s」；超过阈值（1260 s）仍无任何新行且未 done
 //      时判定「搜索无进展」并给「重试」入口且停掉轮询；done:true 的正常收尾不受影响。
+//   R10 进行中旋转指示器（点下去就插 .jdl-spinner，响应后摘掉）+ 0 种子候选的一行提示
+//      （候选已在 backend/probe/probe_round.py 交付前丢弃，面板只报「已过滤 N 条 0 种子候选」，
+//      不列行、不给开关；N=0 时不显示）。
 //
 // How it works: the five Web shards are concatenated in the controller's ScriptSegments
 // order and run in node:vm against a minimal DOM stub; a ApiClient.ajax stub captures the
 // payload the panel really posts. No browser, no Jellyfin, no network.
 //
 // How to run (from the repository root):
-//   node tools/checks/check-p2-ui.mjs                 # green iff all 45 checks hold
-//   node tools/checks/check-p2-ui.mjs --mutate        # revert nine fixed behaviours, one
+//   node tools/checks/check-p2-ui.mjs                 # green iff all 50 checks hold
+//   node tools/checks/check-p2-ui.mjs --mutate        # revert eleven fixed behaviours, one
 //                                                     # at a time, and require each to go red
 //   node tools/checks/check-p2-ui.mjs --web-dir DIR   # check another copy of the shards
 //
@@ -87,6 +90,7 @@ const EXPORT_HOOK = `
     runSearch: runSearch,
     refreshTasks: refreshTasks,
     searchTick: searchTick,
+    renderCandidates: renderCandidates,
     setConfig: function (c) { state.config = c; },
     setManual: function (m) { for (var k in m) { manual[k] = m[k]; } },
     setPanel: function (p) { state.panel = p; },
@@ -114,16 +118,39 @@ function readBundle() {
 function makeNode(tag) {
   const node = {
     tagName: tag, children: [], style: {}, attributes: {}, className: '', textContent: '',
-    innerHTML: '', title: '', value: '', checked: false, type: '', dataset: {},
+    // innerHTML 在面板里既当「读名字」（renderRow 用 esc(name) + chips）又当「清空列表」
+    // （panel.list.innerHTML = ''）：桩必须两头都像样，否则行数会一直累加。
+    _html: '',
+    get innerHTML() { return this._html; },
+    set innerHTML(v) { this._html = String(v == null ? '' : v); if (this._html === '') { this.children.length = 0; } },
+    title: '', value: '', checked: false, type: '', dataset: {},
     // disabled 在 DOM 里是 reflected 属性：getAttribute('disabled') 也要跟着变，
     // 否则「点一下就禁用」这种断言在桩里看不见。
     classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
     appendChild(c) { this.children.push(c); c.parentElement = this; return c; },
+    insertBefore(c, ref) {
+      const at = ref ? this.children.indexOf(ref) : -1;
+      if (at < 0) { this.children.push(c); } else { this.children.splice(at, 0, c); }
+      c.parentElement = this; return c;
+    },
+    removeChild(c) {
+      const at = this.children.indexOf(c);
+      if (at >= 0) { this.children.splice(at, 1); c.parentElement = null; }
+      return c;
+    },
+    get firstChild() { return this.children[0] || null; },
     setAttribute(k, v) { this.attributes[k] = v; if (k === 'disabled') { this.disabled = true; } },
     getAttribute(k) { return Object.prototype.hasOwnProperty.call(this.attributes, k) ? this.attributes[k] : null; },
     removeAttribute(k) { delete this.attributes[k]; if (k === 'disabled') { this.disabled = false; } },
     remove() {}, focus() {},
-    addEventListener() {},
+    // 记住监听器并允许 click() 触发：面板的「显示/收起」开关只有点了才看得出接线对不对。
+    _handlers: {},
+    addEventListener(type, fn) {
+      (this._handlers[type] = this._handlers[type] || []).push(fn);
+    },
+    click() {
+      (this._handlers.click || []).forEach((fn) => fn({ preventDefault() {}, stopPropagation() {}, target: this }));
+    },
     // 只支持 ".class" 选择器（够面板用）：按类名递归找第一个后代。
     querySelector(sel) {
       const want = String(sel || '').replace(/^\./, '');
@@ -201,7 +228,7 @@ async function runChecks(bundleSrc) {
   const { t, calls, loadError } = load(bundleSrc);
   if (loadError) {
     failures.push('LOAD :: the Web shards did not load: ' + loadError.message);
-    return { failures, checks: 45 };
+    return { failures, checks: 50 };
   }
 
   // ---- acceptance 1：不再暴露阈值档位，阈值只取配置 ----
@@ -407,7 +434,7 @@ async function runChecks(bundleSrc) {
   // 早期阶段（check/pool/probe）可以几分钟不产出行，job 还可能是永不完成的空壳；
   // 没有这两条时面板会一直显示「正在连接后端…」，看起来就是卡死。
   const collectText = (node) => {
-    let out = String(node.textContent || '');
+    let out = String(node.textContent || '') + ' ' + String(node.innerHTML || '');
     for (const child of node.children || []) { out += ' ' + collectText(child); }
     return out;
   };
@@ -475,7 +502,88 @@ async function runChecks(bundleSrc) {
       'stage=' + ui.stage.textContent + ' search=' + doc.t.getSearch() + ' list=' + collectText(ui.panel.list).slice(0, 80));
   }
 
-  return { failures, checks: 45 };
+  // ---- R10 旋转的进行中指示器 + 0 种子候选默认隐藏 ----
+  const findButton = (node, label) => {
+    for (const child of node.children || []) {
+      if (String(child.tagName) === 'button' && String(child.textContent) === label) { return child; }
+      const deeper = findButton(child, label);
+      if (deeper) { return deeper; }
+    }
+    return null;
+  };
+  {
+    // ① 点击同一帧插入 .jdl-spinner（且按钮 disabled、文案保留）
+    const doc = load(bundleSrc, null, { hold: true, reply: { ok: false, rc: 3 } });
+    doc.t.setPanel({ categorySelect: { value: 'Records' }, trustMagnet: false, form: null, item: docItem });
+    const ui = busyButton('提交迅雷');
+    doc.t.submitAction({ ih: 'I'.repeat(40) }, docSnapshot('record'), 'submit', '已提交迅雷', ui.button);
+    ok('R10-spinner-on-click',
+      !!ui.button.querySelector('.jdl-spinner') && ui.button.disabled === true,
+      'spinner=' + !!ui.button.querySelector('.jdl-spinner') + ' disabled=' + ui.button.disabled);
+    ok('R10-spinner-keeps-busy-label', ui.text.textContent.indexOf('提交中') >= 0, ui.text.textContent);
+    doc.release();
+    await tick(); await tick();
+    ok('R10-spinner-gone-after-reply',
+      !ui.button.querySelector('.jdl-spinner') && ui.button.disabled === false
+        && ui.text.textContent === '提交迅雷',
+      'spinner=' + !!ui.button.querySelector('.jdl-spinner') + ' disabled=' + ui.button.disabled
+        + ' label=' + ui.text.textContent);
+  }
+  {
+    // ② 0 种子候选已在后端交付前丢弃（不进快照）：面板只报一行条数，不列行、不给开关
+    const listPanel = () => {
+      const progress = makeNode('div');
+      const stage = makeNode('div');
+      stage.className = 'jdl-progress__stage';
+      progress.appendChild(stage);
+      return {
+        progress,
+        list: makeNode('div'), summary: makeNode('div'), log: makeNode('pre'),
+        note: makeNode('div'), hint: makeNode('div'), tasks: makeNode('div'),
+        onlyEpisode: null, strictLabel: null, packLabel: null,
+        segAll: null, segMagnet: null, segPan: null,
+        kindFilter: 'magnet', seasonFilter: 'all', cacheOnly: false, form: null, item: docItem,
+        categorySelect: { value: 'TV Shows' },
+        showAll: false, includePacks: false, hidePacks: false, fromCache: false, dirtySpec: false
+      };
+    };
+    const cand = (name, seeds) => ({ ih: name, name: name, score: 70, kind: 'magnet', seeds: seeds, title_match: true });
+    const rejectedZero = (n) => Array.from({ length: n }, (_, i) => ({
+      ih: 'dead-' + i, name: '零种子-' + i, reason: 'dead_swarm_filtered', error: ''
+    }));
+    const rows = (panel) => panel.list.children.filter((c) => String(c.className || '').indexOf('jdl-row') >= 0).length;
+
+    const doc = load(bundleSrc);
+    const panel = listPanel();
+    doc.t.setPanel(panel);
+    doc.t.setSnapshot({
+      slug: 'zero-seed', kind: 'record', year: '2024', query: '里斯本丸沉没', final_dir: '/x/y',
+      candidates: [cand('有种-A', 5), cand('有种-B', 2)],
+      rejected: rejectedZero(2)
+    });
+    doc.t.renderCandidates();
+    const noteText = collectText(panel.note).replace(/\s+/g, ' ').trim();
+    ok('R10-zero-seed-notice-shown',
+      noteText.indexOf('已过滤 2 条 0 种子候选') >= 0
+        && rows(panel) === 2
+        && !findButton(panel.note, '显示零种子候选'),
+      'note=' + noteText + ' rows=' + rows(panel));
+
+    const clean = load(bundleSrc);
+    const cleanPanel = listPanel();
+    clean.t.setPanel(cleanPanel);
+    clean.t.setSnapshot({
+      slug: 'no-filter', kind: 'record', year: '2024', query: '里斯本丸沉没', final_dir: '/x/y',
+      candidates: [cand('有种-A', 5)],
+      rejected: [{ ih: 'x', name: 'y', reason: 'metadata unavailable', error: '' }]
+    });
+    clean.t.renderCandidates();
+    ok('R10-zero-seed-notice-absent-when-zero',
+      collectText(cleanPanel.note).indexOf('已过滤') < 0,
+      collectText(cleanPanel.note).replace(/\s+/g, ' ').trim() || '(note 空)');
+  }
+
+  return { failures, checks: 50 };
 }
 
 const MUTATIONS = [
@@ -499,7 +607,13 @@ const MUTATIONS = [
     '      if (false) {'],
   ['已用时长的显示被拆掉',
     '  function searchElapsedSeconds() {\n    var search = state.search;',
-    '  function searchElapsedSeconds() {\n    return 0;\n    var search = state.search;']
+    '  function searchElapsedSeconds() {\n    return 0;\n    var search = state.search;'],
+  ['提交按钮的旋转指示器被拆掉',
+    "    if (button.querySelector && !button.querySelector('.jdl-spinner')) {",
+    '    if (false) {'],
+  ['已过滤提示行被拆掉',
+    '    if (zeroSeedFiltered(state.snapshot)) {',
+    '    if (false) {']
 ];
 
 const EXPECT = {
@@ -511,7 +625,9 @@ const EXPECT = {
   '提交/监控的进行中状态被拆掉': 'R8-submit-busy-disabled-on-click',
   '响应到达后的恢复可点被拆掉': 'R8-submit-restored-after-reply',
   '搜索停滞判定被拆掉': 'R9-stall-enters-retry',
-  '已用时长的显示被拆掉': 'R9-elapsed-shown'
+  '已用时长的显示被拆掉': 'R9-elapsed-shown',
+  '提交按钮的旋转指示器被拆掉': 'R10-spinner-on-click',
+  '已过滤提示行被拆掉': 'R10-zero-seed-notice-shown'
 };
 
 // A shard that cannot be read is a failure of this guard, not a crash of the command that
@@ -540,7 +656,7 @@ try {
   console.log(failures.length === 0 ? 'P2 UI CHECK PASS' : 'P2 UI CHECK FAIL');
   process.exit(failures.length === 0 ? 0 : 1);
 } catch (error) {
-  console.log('检查项 45，失败 1');
+  console.log('检查项 50，失败 1');
   console.log('FAIL  LOAD :: ' + (error && error.message ? error.message : String(error)));
   console.log(MUTATE ? 'MUTATION CHECK FAIL' : 'P2 UI CHECK FAIL');
   process.exit(1);

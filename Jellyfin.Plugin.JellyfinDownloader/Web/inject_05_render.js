@@ -1,6 +1,8 @@
   // 一道筛选：阈值 → 只看本集 → 该季 → 同名噪音 → 没标季号的整剧包。
   // 返回 {kept, hiddenSeason, hiddenPack, hiddenNoise, singles, packs}；
   // 计数只统计 kept；singles/packs 只在单集页（season+episode 都有）时有意义。
+  // 注意：0 种子候选**不在这里过滤** —— 它们在 backend/probe/probe_round.py 组装交付候选时
+  // 就被丢弃了（使用方口径：这类候选永远用不到，不进快照），面板只在提示行里报一行条数。
   function candidatePool() {
     var snapshot = state.snapshot || {};
     var panel = state.panel;
@@ -58,6 +60,17 @@
       pool.kept = singles.concat(packs);
     }
     return pool;
+  }
+
+  // 「0 种子候选」（后端判定的 dead-swarm）在交付前就被丢弃（backend/probe/probe_round.py），
+  // 快照 candidates 里已经没有这些行；后端把它们记进快照 rejected（reason='dead_swarm_filtered'），
+  // 这里只数条数，用来在提示行报一句「已过滤 N 条 0 种子候选」——不列行、不给开关。
+  function zeroSeedFiltered(snapshot) {
+    var count = 0;
+    ((snapshot && snapshot.rejected) || []).forEach(function (entry) {
+      if (entry && entry.reason === 'dead_swarm_filtered') { count += 1; }
+    });
+    return count;
   }
 
   function eligibleCandidates() {
@@ -242,7 +255,7 @@
           refetchEp.addEventListener('click', function () { checkBackendThenSearch(state.item); });
           below.appendChild(refetchEp);
         } else if (pool.hiddenNoise || pool.hiddenPack) {
-          // 达标候选全都因为「同名噪音 / 没标季号」被折叠了 → 直接给出放行入口
+          // 达标候选全都因为「同名噪音 / 没标季号 / 0 种子」被折叠了 → 直接给出放行入口
           var hiddenBits = [];
           if (pool.hiddenNoise) { hiddenBits.push('\u540c\u540d\u566a\u97f3 ' + pool.hiddenNoise + ' \u6761'); }
           if (pool.hiddenPack) { hiddenBits.push('\u672a\u6807\u5b63\u53f7 ' + pool.hiddenPack + ' \u6761'); }
@@ -304,6 +317,10 @@
     if (pool.hiddenPack) {
       bits.push((panel.includePacks ? '\u5df2\u542b\u672a\u6807\u5b63\u53f7 ' : '\u5df2\u9690\u85cf\u672a\u6807\u5b63\u53f7 ')
         + pool.hiddenPack + ' \u6761');
+    }
+    // 0 种子候选已经在后端交付前被丢弃（不进快照）→ 这里只报一行条数，不列行、不给开关
+    if (zeroSeedFiltered(state.snapshot)) {
+      bits.push('\u5df2\u8fc7\u6ee4 ' + zeroSeedFiltered(state.snapshot) + ' \u6761 0 \u79cd\u5b50\u5019\u9009');
     }
     if (!bits.length) { note.style.display = 'none'; return; }
     note.style.display = '';
@@ -479,6 +496,14 @@
     }
     button.disabled = true;
     if (button.classList) { button.classList.add('jdl-btn--busy'); }
+    // 可见的旋转指示器：闸门最长 25 s+，只有变灰+换文案还不够「看得出在转」。
+    // 节点插在文案前面；prefers-reduced-motion: reduce 时由 CSS 降级成静态指示。
+    if (button.querySelector && !button.querySelector('.jdl-spinner')) {
+      var spinner = el('span', 'jdl-spinner');
+      spinner.setAttribute('aria-hidden', 'true');
+      if (button.insertBefore) { button.insertBefore(spinner, button.firstChild || null); }
+      else if (button.appendChild) { button.appendChild(spinner); }
+    }
     return idle;
   }
 
@@ -486,6 +511,11 @@
     if (!button) { return; }
     var label = button.querySelector ? button.querySelector('.jdl-btn__label') : null;
     if (label && idleLabel) { label.textContent = idleLabel; }
+    // 响应到达 → 停转并摘掉指示器
+    var spinner = button.querySelector ? button.querySelector('.jdl-spinner') : null;
+    if (spinner) {
+      if (button.removeChild) { button.removeChild(spinner); } else { spinner.remove(); }
+    }
     button.disabled = false;
     if (button.classList) { button.classList.remove('jdl-btn--busy'); }
   }

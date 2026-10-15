@@ -17,6 +17,8 @@ from candidate_score import (
     score_band,
     structural_reject,
 )
+# 可达性判决（「0 种子候选」= dead-swarm）用产品自己那一个，别在这里另拼一套 seeds 规则。
+from candidate_score.speed import is_dead_swarm
 from media_download_lib import GB
 
 from probe.probe_health import (
@@ -32,6 +34,26 @@ from probe.probe_pool import is_fresh, pool_metadata, save_pool, update_pool_ent
 HEALTH_TTL_SECONDS = 3600
 # announce 的 external peer 不超过这个数就算「都是本机」，判死种。
 DEAD_SWARM_PEER_CEILING = 3
+
+# 「0 种子候选」的丢弃理由（写进快照 rejected，前端只按它数一行提示条数）。
+# 用户口径叫「0 种子候选」，判定用的是产品自己的可达性判决 `candidate_score.is_dead_swarm`
+# —— announce/live-check 没看到任何非本机 peer ⇒ 提交必然种子解析失败（这类候选永远用不到）。
+# 不按「seeds 数字为 0/缺失」判：云盘（pan）候选根本没有 seeds；而 `mode == "unknown"`
+# （tracker 抓不到读数）按 speed.py 的注释是「不知道」而不是「不可达」，不能被丢掉。
+DEAD_SWARM_REASON = "dead_swarm_filtered"
+
+
+def is_dead_candidate(item) -> bool:
+    """交付前该丢掉吗：产品判定的 dead-swarm（不可达）候选。"""
+    return is_dead_swarm(item)
+
+
+def drop_dead_candidates(candidates):
+    """拆成 (保留, 丢弃)；丢弃的候选不进交付列表，只把条数与理由留给上层。"""
+    kept, dropped = [], []
+    for item in candidates or []:
+        (dropped if is_dead_candidate(item) else kept).append(item)
+    return kept, dropped
 
 
 def build_policy(args, duration_seconds):
@@ -504,6 +526,29 @@ def rank_phase(args, budget, timers, pool, now, enriched, extras, rejected, poli
             )
         )
 
+    # 「0 种子候选」（dead-swarm：announce/live-check 没看到任何非本机 peer，提交必然
+    # 种子解析失败）不再交付 —— 使用方口径：永远用不到、不保存在数据里。丢弃的候选不进
+    # ranked，但在 rejected 里留一条 reason 记录，好让面板只报一行「已过滤 N 条 0 种子候选」。
+    kept, dead_dropped = drop_dead_candidates(ranked)
+    if not kept and dead_dropped:
+        # 整轮都是死种：这一支**保持原样**，让 deliver() 走它既有的 BEST_DEAD_SWARM 分支
+        # （rc=8 + best_dead_swarm）。原因：deliver 与既有的退出码矩阵依赖 ranked[0]，
+        # 而 probe_magnets.main（不在本任务改动范围）只在 rc 非空时提前返回 —— 从
+        # rank_phase 里抛退出码会绕过那条契约。混合轮（有可提交候选）里死种一律丢弃。
+        kept, dead_dropped = dead_dropped, []
+    ranked = kept
+    if dead_dropped:
+        print(f"DEAD_SWARM_FILTERED {len(dead_dropped)}")
+    for item in dead_dropped:
+        rejected.append(
+            {
+                "ih": item.get("ih") or item.get("id") or "",
+                "name": item.get("name", ""),
+                "reason": DEAD_SWARM_REASON,
+                "error": "",
+            }
+        )
+
     best = ranked[0]
     output = {
         "query": args.query,
@@ -558,6 +603,7 @@ def rank_phase(args, budget, timers, pool, now, enriched, extras, rejected, poli
         ],
         "rejected": rejected,
         "best": None,
+        "dead_swarm_filtered": len(dead_dropped),
     }
     output["all_eligible"] = output["ranked"]
 
