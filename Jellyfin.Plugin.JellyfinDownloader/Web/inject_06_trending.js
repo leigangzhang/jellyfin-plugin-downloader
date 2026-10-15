@@ -11,8 +11,8 @@
   var TRENDING_POSTER_BASE = 'https://image.tmdb.org/t/p/w300';
   var TRENDING_GUIDANCE_FALLBACK = '尚未配置 TMDb API Key：'
     + '在插件配置页的「热门」分组里填好后再打开本面板（榜单与海报都需要它）。';
-  // 关注成功后卡片上的徽标：占位入库 / 只记进关注清单 / 库里已经有
-  var TRENDING_BADGE = { anchored: '已占位', listed: '仅记录', inLibrary: '已在库' };
+  // 关注成功后卡片上的徽标：占位入库 / 只记进关注清单 / 库里已经有 / 从榜单回填的已关注
+  var TRENDING_BADGE = { anchored: '已占位', listed: '仅记录', inLibrary: '已在库', watched: '已关注' };
 
   var trending = {
     open: false,
@@ -160,6 +160,8 @@
           return;
         }
         renderTrending();
+        // 先按榜单回填「已关注」，再问「已在库」：两个都是只读请求
+        applyWatched(payload);
         askLibraryStatus();
       }).catch(function (error) {
         // 后端不可达/接口报错：在面板里说清楚，不留白屏
@@ -484,6 +486,28 @@
     record.watch.disabled = true;
     record.watch.textContent = '已关注';
     record.badge.textContent = badge;
+  }
+
+  // GET /api/trending 会把关注清单里的 tmdb_id 一并回给客户端（watched）。
+  // 刷新页面或新会话后靠它把卡片直接恢复成「已关注」态：不回填的话外观会丢
+  //（数据本身由后端幂等兜着，这里丢的只是外观）。
+  // 这一路只读不写：一个 watch / anchor 请求都不发。
+  // watched 缺失或不是数组时按空集合处理（老后端也不能崩）。
+  // 徽标只能写「已关注」：watched 只说「在关注清单里」，「已占位」与「仅记录」
+  // 的区别只有当场点关注的那条路径分得清。
+  function applyWatched(payload) {
+    var watched = payload && payload.watched;
+    if (!Array.isArray(watched) || !watched.length) { return; }
+    var ids = {};
+    watched.forEach(function (item) {
+      var id = item;
+      if (item && typeof item === 'object') { id = item.tmdb_id != null ? item.tmdb_id : item.id; }
+      if (id != null) { ids[String(id)] = true; }
+    });
+    trending.cards.forEach(function (record) {
+      var tmdbId = record.entry.tmdbId;
+      if (tmdbId != null && ids[String(tmdbId)]) { markWatched(record, TRENDING_BADGE.watched); }
+    });
   }
 
   function renderTrendingNotice(text) {
