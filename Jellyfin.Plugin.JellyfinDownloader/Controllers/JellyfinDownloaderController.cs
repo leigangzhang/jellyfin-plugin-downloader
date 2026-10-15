@@ -1,11 +1,14 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyfinDownloader.Configuration;
@@ -33,6 +36,8 @@ public class JellyfinDownloaderController : ControllerBase
     private static readonly string[] AllowedPrefixes =
     {
         "search", "snapshot", "submit", "watch", "mark", "cleanup", "pan/",
+        // 热门：/api/trending（TMDb 榜单代理）与 /api/trending/watch（关注）都走后端。
+        "trending",
     };
 
     /// <summary>
@@ -49,6 +54,47 @@ public class JellyfinDownloaderController : ControllerBase
     };
 
     private static readonly string[] DefaultKeywords = { "高清剧集网", "DDHDTV", "BBHDTV" };
+
+    // 「关注」占位文件的命名（相对媒体根）：{0} = 清洗后的片名，{1} = 年份段。
+    //   movie  → Movies/<safeTitle><year>/<safeTitle><year> - zz placeholder.mp4
+    //   series → TV Shows/<safeTitle><year>/Season 01/<safeTitle> S01E01 - zz placeholder.mp4
+    // PlaceholderLabel 是占位与后端归档真文件之间**唯一**的区分（同名同目录，只差这一段），
+    // 少了它就会撞名、静默丢文件。守卫逐条对照两边落点，见
+    // tests/backend_retired/test_backend_retired_trending_anchor_naming.py。
+    private const string PlaceholderLabel = " - zz placeholder";
+    private const string PlaceholderExtension = ".mp4";
+
+    /// <summary>年份段模板（<c>{0}</c> = 4 位年份）：目录与文件名共用它。</summary>
+    private const string YearSegmentTemplate = " ({0})";
+
+    private static readonly string MovieRelativeTemplate =
+        "Movies/{0}{1}/{0}{1}" + PlaceholderLabel + PlaceholderExtension;
+
+    private static readonly string SeriesRelativeTemplate =
+        "TV Shows/{0}{1}/Season 01/{0} S01E01" + PlaceholderLabel + PlaceholderExtension;
+
+    /// <summary>内嵌占位模板资源（<c>Web/placeholder.mp4</c>，csproj 登记）。</summary>
+    private const string PlaceholderResource = "Jellyfin.Plugin.JellyfinDownloader.Web.placeholder.mp4";
+
+    /// <summary>文件名里不许出现的字符：路径分隔符与保留字符。</summary>
+    private const string ForbiddenTitleChars = "\\/:*?\"<>|";
+
+    /// <summary>连续空白折叠成单个空格（片名里的换行不该进入文件名）。</summary>
+    private const string WhitespaceRunPattern = "\\s+";
+
+    /// <summary>年份必须是 4 位数字（「片名 (2024)」里的那个年份）。</summary>
+    private const string FourDigitYearPattern = "^[0-9]{4}$";
+
+    /// <summary>
+    /// 片名归一化（查库匹配用）：小写 + 只留 ASCII 字母数字与 CJK。字符类与
+    /// <c>backend/download/check_exists.py</c> 的 <c>CLEAN_RE</c> 逐字相同（守卫盯着），
+    /// 但不剥年份——我们额外按 ProductionYear 精确比对，剥了会把「1917」这类片名抹平。
+    /// </summary>
+    private const string TitleCleanPattern = "[^a-z0-9\\u4e00-\\u9fff]";
+
+    private static readonly Regex WhitespaceRunRegex = new(WhitespaceRunPattern, RegexOptions.Compiled);
+    private static readonly Regex FourDigitYearRegex = new(FourDigitYearPattern, RegexOptions.Compiled);
+    private static readonly Regex TitleCleanRegex = new(TitleCleanPattern, RegexOptions.Compiled);
 
     /// <summary>Gets the injected client script (fragments joined in <see cref="ScriptSegments"/> order).</summary>
     [HttpGet("script")]
@@ -103,6 +149,12 @@ public class JellyfinDownloaderController : ControllerBase
             resolvedMediaRoot = MediaPaths.MediaRoot,
             // 生效端口与状态接口同一个事实源：端口被占用时这里是自增后的那个值。
             backendPort = BackendManager.EffectivePort,
+            // 热门（TMDb）：只回「配没配」，绝不下发 key 本身（浏览器不需要它）。
+            tmdbApiKeyConfigured = (config?.TmdbApiKey ?? string.Empty).Trim().Length > 0,
+            tmdbLanguage = LanguageOrDefault(config?.TmdbLanguage),
+            // 回显生效的榜单清单：留空时就是内置默认那四个。
+            trendingLists = TrendingListsOrDefault(config?.TrendingLists),
+            anchorEnabled = config?.AnchorEnabled ?? false,
         });
     }
 
@@ -164,6 +216,33 @@ public class JellyfinDownloaderController : ControllerBase
                 .ToList();
         }
 
+        // 热门（TMDb）：null 跳过；TmdbApiKey 允许空串 = 清除（配置页永远提交这个字段）。
+        if (body.TmdbApiKey is not null)
+        {
+            config.TmdbApiKey = body.TmdbApiKey.Trim();
+        }
+
+        if (body.TmdbLanguage is not null)
+        {
+            config.TmdbLanguage = LanguageOrDefault(body.TmdbLanguage);
+        }
+
+        if (body.TrendingLists is not null)
+        {
+            // 空串过滤 + 去重；一个都不剩就回到内置四榜单（空列表 = 热门页一个都不显示）。
+            var lists = body.TrendingLists
+                .Select(item => (item ?? string.Empty).Trim())
+                .Where(item => item.Length > 0)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            config.TrendingLists = lists.Count > 0 ? lists : new List<string>(PluginConfiguration.DefaultTrendingLists);
+        }
+
+        if (body.AnchorEnabled is not null)
+        {
+            config.AnchorEnabled = body.AnchorEnabled.Value;
+        }
+
         plugin.SaveConfiguration();
 
         // 这个页面上的每个字段最终都是后端**启动时**的参数：端口是命令行参数，
@@ -183,7 +262,30 @@ public class JellyfinDownloaderController : ControllerBase
             l1Keywords = config.L1Keywords,
             // 重启后真正监听的那个端口：被占用时它是自增后的值。
             backendPort = BackendManager.EffectivePort,
+            // 与 GET config 同一套语义：key 只回「配没配」，不回值。
+            tmdbApiKeyConfigured = config.TmdbApiKey.Trim().Length > 0,
+            tmdbLanguage = LanguageOrDefault(config.TmdbLanguage),
+            trendingLists = TrendingListsOrDefault(config.TrendingLists),
+            anchorEnabled = config.AnchorEnabled,
         });
+    }
+
+    /// <summary>TMDb 语言标签：空串（或全空白）回落到内置默认 <c>zh-CN</c>。</summary>
+    private static string LanguageOrDefault(string? language)
+    {
+        var value = (language ?? string.Empty).Trim();
+        return value.Length > 0 ? value : PluginConfiguration.DefaultTmdbLanguage;
+    }
+
+    /// <summary>生效的榜单清单：空列表（或全空白项）回落到内置四榜单。</summary>
+    private static List<string> TrendingListsOrDefault(List<string>? lists)
+    {
+        var cleaned = (lists ?? new List<string>())
+            .Select(item => (item ?? string.Empty).Trim())
+            .Where(item => item.Length > 0)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        return cleaned.Count > 0 ? cleaned : new List<string>(PluginConfiguration.DefaultTrendingLists);
     }
 
     /// <summary>
@@ -344,6 +446,380 @@ public class JellyfinDownloaderController : ControllerBase
             .ToArray();
 
         return new JsonResult(seasons);
+    }
+
+    /// <summary>
+    /// 「热门」页的批量查库：按 标题(+年份) 回答条目是否已在媒体库里，只回真假、不写任何
+    /// 东西。请求 {"items":[{"title","year","kind"}]}，响应同序同长；items 缺失/非法
+    /// （不是数组、某项缺 title/kind 或类别/年份不合法）时整批回 {"items":[]}，不半答。
+    /// </summary>
+    [HttpPost("trending/library-status")]
+    [Authorize(Policy = "RequiresElevation")]
+    public IActionResult TrendingLibraryStatus([FromBody] TrendingStatusRequest? body)
+    {
+        NoCache();
+        var queries = ReadTrendingQueries(body);
+        if (queries is null)
+        {
+            return new JsonResult(new { items = Array.Empty<object>() });
+        }
+
+        var library = HttpContext.RequestServices.GetService(typeof(ILibraryManager)) as ILibraryManager;
+        var known = library is null ? new List<(string Kind, string Title, int? Year)>() : LoadKnownTitles(library);
+        var items = queries
+            .Select(query => (object)new
+            {
+                title = query.Title,
+                year = query.Year,
+                kind = query.Kind,
+                exists = known.Any(item => item.Kind == query.Kind
+                    && item.Title == query.Normalized
+                    && (!query.Year.HasValue || item.Year == query.Year.Value)),
+            })
+            .ToList();
+
+        return new JsonResult(new { items });
+    }
+
+    /// <summary>
+    /// 「关注」时在媒体库里写一个占位文件，让条目先在 Jellyfin 里可见（管理员端点）。
+    /// AnchorEnabled = false 时**零写入**（不解析媒体根、不建目录、不落文件）回 disabled。
+    /// </summary>
+    [HttpPost("trending/anchor")]
+    [Authorize(Policy = "RequiresElevation")]
+    public IActionResult TrendingAnchor([FromBody] TrendingAnchorRequest? body)
+    {
+        NoCache();
+        if (body is null
+            || !TryReadStringValue(body.Title, out var title)
+            || !TryReadStringValue(body.Kind, out var kind)
+            || !TryReadYearValue(body.Year, out var year))
+        {
+            return BadRequest(new { error = "invalid title or year" });
+        }
+
+        if (title.Length == 0)
+        {
+            return BadRequest(new { error = "title is required" });
+        }
+
+        var normalizedKind = kind.Length == 0 ? "movie" : kind.ToLowerInvariant();
+        if (normalizedKind is not ("movie" or "series"))
+        {
+            return BadRequest(new { error = "invalid kind" });
+        }
+
+        var yearText = year.HasValue ? year.Value.ToString(CultureInfo.InvariantCulture) : string.Empty;
+        var safeTitle = CleanTitle(title);
+        if (safeTitle.Length == 0
+            || title.Contains("..", StringComparison.Ordinal)
+            || (yearText.Length > 0 && !FourDigitYearRegex.IsMatch(yearText)))
+        {
+            return BadRequest(new { error = "invalid title or year" });
+        }
+
+        var config = Plugin.Instance?.Configuration;
+        if (config is null || !config.AnchorEnabled)
+        {
+            // 开关关着 = 只记录关注，对媒体库零写入。这里连 MediaPaths 都不刷新。
+            return new JsonResult(new { anchored = false, exists = false, reason = "disabled" });
+        }
+
+        // 媒体根是静态缓存（平时由配置页/启动后端刷新），这条链路要自己刷。
+        RefreshMediaPaths();
+        var root = Path.GetFullPath(MediaPaths.MediaRoot);
+        var relative = PlaceholderRelativePath(safeTitle, yearText, normalizedKind == "series");
+        var finalPath = Path.GetFullPath(Path.Combine(root, relative));
+        if (!IsWithinRoot(finalPath, root))
+        {
+            return BadRequest(new { error = "invalid title or year" });
+        }
+
+        if (System.IO.File.Exists(finalPath))
+        {
+            // 重复 anchor（或上一次已经写成功）：**不重写**。重写只搅动 mtime，
+            // 对 Jellyfin 没有任何好处，还会把并发写入变成非幂等。
+            return new JsonResult(new { anchored = false, exists = true, path = finalPath });
+        }
+
+        var bytes = ReadPlaceholderBytes();
+        if (bytes is null || bytes.Length == 0)
+        {
+            // 读不到模板就响亮失败：0 字节的 mp4 会被 Jellyfin 当坏媒体扫进去。
+            return StatusCode(
+                StatusCodes.Status500InternalServerError,
+                new { error = "placeholder resource missing" });
+        }
+
+        var directory = Path.GetDirectoryName(finalPath);
+        if (string.IsNullOrEmpty(directory))
+        {
+            return BadRequest(new { error = "invalid title or year" });
+        }
+
+        // 先写同目录临时文件再原子改名：Jellyfin 的扫描器永远不会看到半写好的文件。
+        var temporary = finalPath + ".tmp-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            System.IO.Directory.CreateDirectory(directory);
+            System.IO.File.WriteAllBytes(temporary, bytes);
+            System.IO.File.Move(temporary, finalPath);
+        }
+        catch (Exception ex)
+        {
+            TryDelete(temporary);
+            if (System.IO.File.Exists(finalPath))
+            {
+                // 并发重复 anchor：另一次写赢了，结果一样。
+                return new JsonResult(new { anchored = false, exists = true, path = finalPath });
+            }
+
+            return StatusCode(
+                StatusCodes.Status500InternalServerError,
+                new { error = "anchor failed: " + ex.Message });
+        }
+
+        return new JsonResult(new { anchored = true, exists = false, path = finalPath });
+    }
+
+    /// <summary>
+    /// 解析 {"items":[…]}：标题/类别必须是非空字符串（类别只认 movie|series），年份要么
+    /// 缺失/空串、要么是能解析成整数的数字（`"2024"` 与 `2024` 都收）。非法返回 null。
+    /// </summary>
+    private static List<(string Title, int? Year, string Kind, string Normalized)>? ReadTrendingQueries(
+        TrendingStatusRequest? body)
+    {
+        if (body?.Items is not { } items || items.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var queries = new List<(string Title, int? Year, string Kind, string Normalized)>();
+        foreach (var element in items.EnumerateArray())
+        {
+            if (element.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            if (!TryGetField(element, "title", out var titleField)
+                || !TryReadStringValue(titleField, out var title)
+                || title.Length == 0)
+            {
+                return null;
+            }
+
+            if (!TryGetField(element, "kind", out var kindField)
+                || !TryReadStringValue(kindField, out var kind))
+            {
+                return null;
+            }
+
+            kind = kind.ToLowerInvariant();
+            if (kind is not ("movie" or "series"))
+            {
+                return null;
+            }
+
+            // 年份是**可选**的：字段缺失（或 null/空串）就是「没有年份」，不算非法。
+            int? year = null;
+            if (TryGetField(element, "year", out var yearField) && !TryReadYearValue(yearField, out year))
+            {
+                return null;
+            }
+
+            queries.Add((title, year, kind, NormalizeTitle(title)));
+        }
+
+        return queries;
+    }
+
+    /// <summary>
+    /// 库里的 Movie / Series 两类条目（Recursive = true）。库很小，一次取回在内存里匹配。
+    /// </summary>
+    private static List<(string Kind, string Title, int? Year)> LoadKnownTitles(ILibraryManager library)
+    {
+        var known = new List<(string Kind, string Title, int? Year)>();
+        foreach (var (kind, itemKind) in new[] { ("movie", BaseItemKind.Movie), ("series", BaseItemKind.Series) })
+        {
+            var query = new InternalItemsQuery
+            {
+                Recursive = true,
+                IncludeItemTypes = new[] { itemKind },
+            };
+
+            foreach (var item in library.GetItemList(query))
+            {
+                var title = NormalizeTitle(item.Name);
+                if (title.Length > 0)
+                {
+                    known.Add((kind, title, item.ProductionYear));
+                }
+            }
+        }
+
+        return known;
+    }
+
+    /// <summary>取字段（先精确、再忽略大小写）；字段不存在时 value = null。</summary>
+    private static bool TryGetField(JsonElement element, string name, out JsonElement? value)
+    {
+        value = null;
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        if (element.TryGetProperty(name, out var exact))
+        {
+            value = exact;
+            return true;
+        }
+
+        foreach (var property in element.EnumerateObject())
+        {
+            if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+            {
+                value = property.Value;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>可缺省的 JSON 值 → 字符串：缺失 / null = 空串；非字符串 = 失败。</summary>
+    private static bool TryReadStringValue(JsonElement? property, out string value)
+    {
+        value = string.Empty;
+        if (property is not { } element || element.ValueKind == JsonValueKind.Null)
+        {
+            return true;
+        }
+
+        if (element.ValueKind != JsonValueKind.String)
+        {
+            return false;
+        }
+
+        value = (element.GetString() ?? string.Empty).Trim();
+        return true;
+    }
+
+    /// <summary>
+    /// JSON 值 → 年份：缺失/null/空串 = 无年份；数字或数字串 = 有年份；其余 = 失败。
+    /// </summary>
+    private static bool TryReadYearValue(JsonElement? property, out int? year)
+    {
+        year = null;
+        if (property is not { } element || element.ValueKind == JsonValueKind.Null)
+        {
+            return true;
+        }
+
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Number:
+                if (!element.TryGetInt32(out var number))
+                {
+                    return false;
+                }
+
+                year = number;
+                return true;
+            case JsonValueKind.String:
+                var text = (element.GetString() ?? string.Empty).Trim();
+                if (text.Length == 0)
+                {
+                    return true;
+                }
+
+                if (int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var parsed))
+                {
+                    year = parsed;
+                    return true;
+                }
+
+                return false;
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// 片名清洗：剥掉路径分隔符与文件名字符、折叠连续空白、去首尾空白。纯函数，A7 守卫
+    /// 直接读这里的常量与函数体做断言。
+    /// </summary>
+    private static string CleanTitle(string title)
+    {
+        var stripped = new StringBuilder(title.Length);
+        foreach (var character in title)
+        {
+            if (ForbiddenTitleChars.IndexOf(character, StringComparison.Ordinal) >= 0)
+            {
+                continue;
+            }
+
+            stripped.Append(character);
+        }
+
+        return WhitespaceRunRegex.Replace(stripped.ToString(), " ").Trim();
+    }
+
+    /// <summary>
+    /// 占位文件的相对路径（相对 <see cref="MediaPaths.MediaRoot"/>）。纯函数，模板/标签/
+    /// 年份段都是显式常量，守卫按名字读出来逐条对照后端落点。
+    /// </summary>
+    private static string PlaceholderRelativePath(string safeTitle, string year, bool series)
+    {
+        var segment = year.Length > 0
+            ? string.Format(CultureInfo.InvariantCulture, YearSegmentTemplate, year)
+            : string.Empty;
+        var template = series ? SeriesRelativeTemplate : MovieRelativeTemplate;
+        return string.Format(CultureInfo.InvariantCulture, template, safeTitle, segment);
+    }
+
+    /// <summary>拼接后的路径必须真的落在媒体根之内（越界一律拒，不写库外）。</summary>
+    private static bool IsWithinRoot(string path, string root)
+    {
+        var normalizedRoot = root.TrimEnd(Path.DirectorySeparatorChar);
+        return path.Length > normalizedRoot.Length
+            && path.StartsWith(normalizedRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+    }
+
+    /// <summary>读内嵌的占位模板字节；读不到返回 null（调用方回 500）。</summary>
+    private static byte[]? ReadPlaceholderBytes()
+    {
+        using var stream = typeof(Plugin).Assembly.GetManifestResourceStream(PlaceholderResource);
+        if (stream is null)
+        {
+            return null;
+        }
+
+        using var buffer = new MemoryStream();
+        stream.CopyTo(buffer);
+        return buffer.ToArray();
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (System.IO.File.Exists(path))
+            {
+                System.IO.File.Delete(path);
+            }
+        }
+        catch (Exception)
+        {
+            // 清理失败不影响结论：.tmp-<guid> 后缀不会被 Jellyfin 扫成媒体。
+        }
+    }
+
+    /// <summary>片名归一化（查库匹配用）：见 <see cref="TitleCleanPattern"/> 的说明。</summary>
+    private static string NormalizeTitle(string? title)
+    {
+        return TitleCleanRegex.Replace((title ?? string.Empty).ToLowerInvariant(), string.Empty);
     }
 
     /// <summary>Self-hosted plugin manifest so Jellyfin can resolve /Packages/{name}.</summary>
@@ -580,6 +1056,10 @@ public class JellyfinDownloaderController : ControllerBase
         "03_panel",
         "04_search",
         "05_render",
+        // 06_trending（「热门」页签 + 关注按钮）由同批的客户端改动提供：
+        // Web/inject_06_trending.js 与 csproj 里那一行 EmbeddedResource 都在那个改动里，
+        // 本清单按契约先登记（合并后三处一致，同批的 inject_parts 守卫盯着）。
+        "06_trending",
     };
 
     private static string ReadResource(string name)
@@ -728,6 +1208,42 @@ public class ConfigUpdate
 
     /// <summary>Gets or sets the L1 keyword combinations (optional; empty list = backend defaults).</summary>
     public List<string>? L1Keywords { get; set; }
+
+    /// <summary>
+    /// Gets or sets the TMDb API key (optional). 空串 = **清除**（配置页永远提交这个字段，
+    /// 用户不改就是空串）；null = 本次请求没带，保持原值。
+    /// </summary>
+    public string? TmdbApiKey { get; set; }
+
+    /// <summary>Gets or sets the TMDb language tag (optional; empty = 回到内置默认 zh-CN).</summary>
+    public string? TmdbLanguage { get; set; }
+
+    /// <summary>Gets or sets the trending list ids (optional; 空列表 = 回到内置四榜单).</summary>
+    public List<string>? TrendingLists { get; set; }
+
+    /// <summary>Gets or sets the library placeholder switch (optional; null = keep).</summary>
+    public bool? AnchorEnabled { get; set; }
+}
+
+/// <summary>Payload for POST /JellyfinDownloader/trending/library-status; 形状不对由 action
+/// 回 {"items":[]}，而不是让模型绑定抛异常变成一个 ProblemDetails 400。</summary>
+public class TrendingStatusRequest
+{
+    /// <summary>Gets or sets the batch to look up: [{"title","year","kind"}].</summary>
+    public JsonElement? Items { get; set; }
+}
+
+/// <summary>Payload for POST /JellyfinDownloader/trending/anchor: {"title","year","kind"}.</summary>
+public class TrendingAnchorRequest
+{
+    /// <summary>Gets or sets the item title (required).</summary>
+    public JsonElement? Title { get; set; }
+
+    /// <summary>Gets or sets the release year (optional; 4 digits when given).</summary>
+    public JsonElement? Year { get; set; }
+
+    /// <summary>Gets or sets the kind: "movie" | "series" (optional; 缺省按 movie).</summary>
+    public JsonElement? Kind { get; set; }
 }
 
 /// <summary>
