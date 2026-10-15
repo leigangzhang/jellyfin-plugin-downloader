@@ -117,11 +117,17 @@
     });
   }
 
-  // 搜索停滞判定：前端阈值必须 ≥ 后端自己的看门狗，否则会把「后端还在合法跑」的
-  // 长搜索误判成无进展。后端上界（console_server.py:71-73）：
-  //   SEARCH_POOL_TIMEOUT = 600 s（搜池阶段）、SEARCH_TIMEOUT = 900 s（整个 job）
-  // 搜索早期（check / pool / probe）可以几分钟不产出任何行，所以这里取 900 + 60 余量。
-  var SEARCH_STALL_SECONDS = 960;
+  // 搜索停滞判定：阈值必须**大于后端看门狗**，让后端先以自己的话收尾（按符号查，不按行号）：
+  //   * `STALL_TIMEOUT_SECS = 1200`（backend/console_server/jobs.py）是后端看门狗：job 心跳
+  //     超时会被它收成终态，并带 error「搜索无进展（已超时）」经 /api/search/status 直接送到
+  //     面板。正确分工是「后端先给结论」，所以前端阈值取 1200 + 60 余量 = 1260 —— 不能小于
+  //     看门狗，否则会抢在后端前面判死：后台其实还活着时，用户先看到「无进展 / 重试」。
+  //   * 前端这条只兜「后端进程还在、状态接口还活、却迟迟没有新行」的情形（连看门狗都没跑起来
+  //     时的兜底），不是替代后端下结论。
+  //   * 1260 也远大于最长的合法静默：单阶段上界 `SEARCH_TIMEOUT = 900`、搜池阶段
+  //     `SEARCH_POOL_TIMEOUT = 600`（backend/console_server.py），而 run_cli_stream 逐行回调
+  //     on_line，真在干活的阶段会持续刷心跳 ⇒ 合法长阶段不会被误报成停滞。
+  var SEARCH_STALL_SECONDS = 1260;
 
   function searchElapsedSeconds() {
     var search = state.search;

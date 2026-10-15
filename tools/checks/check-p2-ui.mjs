@@ -16,7 +16,7 @@
 //      后端快照 kind 是探针口径 movie）之后提交第 2 条仍是 record；TV Shows 路径不变。
 //   R8 提交/监控的进行中状态：点下去同一帧就 disabled 且文案含「提交中… 正在探测元数据」，
 //      响应放行后恢复可点；失败 toast 带 rc 与耗时秒数，成功 toast 仍是既有文案。
-//   R9 搜索停滞反馈：进行中阶段文案带「已用 N s」；超过阈值（960 s）仍无任何新行且未 done
+//   R9 搜索停滞反馈：进行中阶段文案带「已用 N s」；超过阈值（1260 s）仍无任何新行且未 done
 //      时判定「搜索无进展」并给「重试」入口且停掉轮询；done:true 的正常收尾不受影响。
 //
 // How it works: the five Web shards are concatenated in the controller's ScriptSegments
@@ -442,11 +442,11 @@ async function runChecks(bundleSrc) {
       'stage=' + ui.stage.textContent + ' list=' + ui.panel.list.children.length);
   }
   {
-    // ② 超过阈值（960 s）仍无任何新行 → failSearch + 「重试」，并停掉轮询
+    // ② 超过阈值（1260 s）仍无任何新行 → failSearch + 「重试」，并停掉轮询
     const doc = load(bundleSrc, null, { respond: searchRespond() });
     const ui = searchUi();
     doc.t.setPanel(ui.panel);
-    doc.t.setSearch({ job: 'j1', seen: 0, misses: 0, startedAt: Date.now() - 1000000, lastProgressAt: Date.now() - 1000000, stage: '正在连接后端…' });
+    doc.t.setSearch({ job: 'j1', seen: 0, misses: 0, startedAt: Date.now() - 1300000, lastProgressAt: Date.now() - 1300000, stage: '正在连接后端…' });
     doc.t.searchTick();
     await tick(); await tick();
     const text = collectText(ui.panel.list);
