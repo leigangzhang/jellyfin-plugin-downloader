@@ -19,7 +19,7 @@
 //   R9 搜索停滞反馈：进行中阶段文案带「已用 N s」；超过阈值（1260 s）仍无任何新行且未 done
 //      时判定「搜索无进展」并给「重试」入口且停掉轮询；done:true 的正常收尾不受影响。
 //
-// How it works: the five Web shards are concatenated in the controller's ScriptSegments
+// How it works: the six Web shards are concatenated in the controller's ScriptSegments
 // order and run in node:vm against a minimal DOM stub; a ApiClient.ajax stub captures the
 // payload the panel really posts. No browser, no Jellyfin, no network.
 //
@@ -71,7 +71,8 @@ const SHARDS = [
   'inject_02_entry.js',
   'inject_03_panel.js',
   'inject_04_search.js',
-  'inject_05_render.js'
+  'inject_05_render.js',
+  'inject_06_trending.js'
 ];
 
 const EXPORT_HOOK = `
